@@ -16,8 +16,8 @@ foreign melodica {
 }
 
 main :: proc() {
-    if melodica_version() != 768 {
-        panic("unexpected melodica version")
+    if melodica_version() == 0 {
+        panic("invalid melodica version")
     }
 
     body: [128]u8
