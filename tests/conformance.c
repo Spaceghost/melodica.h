@@ -79,6 +79,86 @@ int main(void) {
   }
 
   {
+    const char duplicate[] =
+      "{\"songTitle\":\"first\",\"songTitle\":\"second\"}";
+    melodica_track_view track;
+    CHECK(melodica_parse_track(duplicate, sizeof duplicate - 1, &track) == MELODICA_OK);
+    CHECK(track.present == MELODICA_TRACK_SONG_TITLE);
+  }
+
+  {
+    const char station_json[] =
+      "{\"stationId\":\"s1\",\"pandoraId\":\"p1\",\"artId\":\"a1\","
+      "\"name\":\"First Station\",\"creatorWebname\":\"creator\"}";
+    melodica_station_view station;
+    CHECK(melodica_parse_station(station_json, sizeof station_json - 1, &station) == MELODICA_OK);
+    CHECK(station.present == MELODICA_STATION_ALL);
+    CHECK(slice_eq(station_json, station.station_id, "s1"));
+    CHECK(slice_eq(station_json, station.pandora_id, "p1"));
+    CHECK(slice_eq(station_json, station.art_id, "a1"));
+    CHECK(slice_eq(station_json, station.name, "First Station"));
+    CHECK(slice_eq(station_json, station.creator_webname, "creator"));
+  }
+
+  {
+    const char stations_json[] =
+      "{\"totalStations\":2,\"stations\":["
+      "{\"stationId\":\"s1\",\"pandoraId\":\"p1\",\"artId\":\"a1\","
+      "\"name\":\"First\",\"creatorWebname\":\"creator\","
+      "\"art\":[{\"url\":\"https://example.invalid/art\"}]},"
+      "{\"stationId\":\"s2\",\"name\":\"Second\"}]}";
+    melodica_station_view station;
+    size_t cursor = 0;
+    CHECK(melodica_station_next(stations_json, sizeof stations_json - 1, &cursor, &station) == MELODICA_OK);
+    CHECK(station.present == MELODICA_STATION_ALL);
+    CHECK(slice_eq(stations_json, station.station_id, "s1"));
+    CHECK(slice_eq(stations_json, station.name, "First"));
+    CHECK(melodica_station_next(stations_json, sizeof stations_json - 1, &cursor, &station) == MELODICA_OK);
+    CHECK(station.present == (MELODICA_STATION_ID | MELODICA_STATION_NAME));
+    CHECK(slice_eq(stations_json, station.station_id, "s2"));
+    CHECK(slice_eq(stations_json, station.name, "Second"));
+    CHECK(melodica_station_next(stations_json, sizeof stations_json - 1, &cursor, &station) == MELODICA_NOT_FOUND);
+  }
+
+  {
+    const char tracks_json[] =
+      "{\"tracks\":["
+      "{\"songTitle\":\"One\",\"trackToken\":\"t1\",\"trackLength\":1,"
+      "\"allowSkip\":true,\"trackKey\":{\"trackId\":\"nested\"}},"
+      "{\"songTitle\":\"Two\",\"audioURL\":\"https://example.invalid/two\","
+      "\"rights\":[\"allowReplay\"]}]}";
+    melodica_track_view track;
+    size_t cursor = 0;
+    CHECK(melodica_track_next(tracks_json, sizeof tracks_json - 1, &cursor, &track) == MELODICA_OK);
+    CHECK(slice_eq(tracks_json, track.song_title, "One"));
+    CHECK(slice_eq(tracks_json, track.track_token, "t1"));
+    CHECK(track.track_length == 1);
+    CHECK(track.allow_skip == 1);
+    CHECK(melodica_track_next(tracks_json, sizeof tracks_json - 1, &cursor, &track) == MELODICA_OK);
+    CHECK(slice_eq(tracks_json, track.song_title, "Two"));
+    CHECK(slice_eq(tracks_json, track.audio_url, "https://example.invalid/two"));
+    CHECK(melodica_track_next(tracks_json, sizeof tracks_json - 1, &cursor, &track) == MELODICA_NOT_FOUND);
+  }
+
+  {
+    const char empty_tracks[] = "{\"tracks\":[]}";
+    const char no_tracks[] = "{\"stations\":[]}";
+    melodica_track_view track;
+    size_t cursor = 0;
+    CHECK(melodica_track_next(empty_tracks, sizeof empty_tracks - 1, &cursor, &track) == MELODICA_NOT_FOUND);
+    cursor = 0;
+    CHECK(melodica_track_next(no_tracks, sizeof no_tracks - 1, &cursor, &track) == MELODICA_NOT_FOUND);
+  }
+
+  {
+    const char bad_collection[] = "{\"tracks\":[{\"songTitle\":\"x\"},]}";
+    melodica_track_view track;
+    size_t cursor = 0;
+    CHECK(melodica_track_next(bad_collection, sizeof bad_collection - 1, &cursor, &track) == MELODICA_OK);
+    CHECK(melodica_track_next(bad_collection, sizeof bad_collection - 1, &cursor, &track) == MELODICA_INVALID_JSON);
+  }
+
+  {
     const char bad_track[] = "{\"songTitle\":\"fine\",\"trackLength\":123oops}";
     melodica_track_view track;
     CHECK(melodica_parse_track(bad_track, sizeof bad_track - 1, &track) == MELODICA_INVALID_JSON);
@@ -143,6 +223,7 @@ int main(void) {
   }
 
   CHECK(melodica_parse_track(NULL, 0, (melodica_track_view *)out) == MELODICA_BAD_ARGUMENT);
+  CHECK(melodica_parse_station(NULL, 0, (melodica_station_view *)out) == MELODICA_BAD_ARGUMENT);
   CHECK(melodica_find_string(NULL, 0, "x", 1, &off, &len) == MELODICA_BAD_ARGUMENT);
   CHECK(melodica_json_escape(NULL, 0, out, sizeof out, &written) == MELODICA_BAD_ARGUMENT);
 
