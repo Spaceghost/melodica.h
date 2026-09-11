@@ -1,0 +1,54 @@
+require 'src.value'
+
+local OK: cint <comptime> = 0
+local NOT_FOUND: cint <comptime> = 1
+local BAD_ARGUMENT: cint <comptime> = 4
+
+local function quote_is_escaped(json: *[0]cchar, pos: csize): boolean
+  if pos == 0 then return false end
+  local n: csize = 0
+  local i = pos
+  while i > 0 do
+    i = i - 1
+    if json[i] ~= 92 then break end
+    n = n + 1
+  end
+  return n % 2 ~= 0
+end
+
+local function locate(json: *[0]cchar, json_len: csize,
+                      key: *[0]cchar, key_len: csize,
+                      value_pos: *csize): cint
+  if key_len + 2 > json_len then return NOT_FOUND end
+  local i: csize = 0
+  while i + key_len + 2 <= json_len do
+    if json[i] == 34 and not quote_is_escaped(json, i) then
+      local k: csize = 0
+      while k < key_len and json[i+1+k] == key[k] do k = k + 1 end
+      if k == key_len and json[i+1+key_len] == 34 then
+        local after = melodica_skip_ws(json, json_len, i + key_len + 2)
+        if after < json_len and json[after] == 58 then
+          $value_pos = after + 1
+          return OK
+        end
+      end
+    end
+    i = i + 1
+  end
+  return NOT_FOUND
+end
+
+global function lab_find_string(json: cstring <const>, json_len: csize,
+                                key: cstring <const>, key_len: csize,
+                                value_offset: *csize, value_len: *csize): cint
+                                <cexport, codename 'lab_find_string'>
+  if json == nilptr or key == nilptr or value_offset == nilptr or
+     value_len == nilptr then return BAD_ARGUMENT end
+  local json_bytes: *[0]cchar = (@*[0]cchar)(json)
+  local key_bytes: *[0]cchar = (@*[0]cchar)(key)
+  local pos: csize = 0
+  local status = locate(json_bytes, json_len, key_bytes, key_len, &pos)
+  if status ~= OK then return status end
+  return melodica_parse_string_at(json_bytes, json_len, pos,
+                                  value_offset, value_len)
+end
