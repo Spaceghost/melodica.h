@@ -66,6 +66,22 @@ typedef struct melodica_track_view {
     int allow_skip;
 } melodica_track_view;
 
+#define MELODICA_STATION_ID               UINT32_C(1)
+#define MELODICA_STATION_PANDORA_ID       UINT32_C(2)
+#define MELODICA_STATION_ART_ID           UINT32_C(4)
+#define MELODICA_STATION_NAME             UINT32_C(8)
+#define MELODICA_STATION_CREATOR_WEBNAME  UINT32_C(16)
+#define MELODICA_STATION_ALL              UINT32_C(31)
+
+typedef struct melodica_station_view {
+    uint32_t present;
+    melodica_slice station_id;
+    melodica_slice pandora_id;
+    melodica_slice art_id;
+    melodica_slice name;
+    melodica_slice creator_webname;
+} melodica_station_view;
+
 MELODICA_API unsigned melodica_version(void);
 
 MELODICA_API int melodica_find_string(const char *json, size_t json_len,
@@ -82,6 +98,18 @@ MELODICA_API int melodica_find_u64(const char *json, size_t json_len,
 
 MELODICA_API int melodica_parse_track(const char *json, size_t json_len,
                                       melodica_track_view *track);
+
+MELODICA_API int melodica_parse_station(const char *json, size_t json_len,
+                                        melodica_station_view *station);
+
+/* Initialize *cursor to zero, then call until MELODICA_NOT_FOUND. */
+MELODICA_API int melodica_track_next(const char *json, size_t json_len,
+                                     size_t *cursor,
+                                     melodica_track_view *track);
+
+MELODICA_API int melodica_station_next(const char *json, size_t json_len,
+                                       size_t *cursor,
+                                       melodica_station_view *station);
 
 MELODICA_API int melodica_json_escape(const char *input, size_t input_len,
                                       char *output, size_t output_cap,
@@ -160,6 +188,15 @@ static void m_clear_track(melodica_track_view_ptr track);
 static int m_capture_string(nlcchar_arr0_ptr json, size_t json_len, size_t pos, melodica_slice_ptr dst, melodica_track_view_ptr track, uint32_t flag);
 static int m_capture_u64(nlcchar_arr0_ptr json, size_t json_len, size_t pos, nluint64_ptr dst, melodica_track_view_ptr track, uint32_t flag);
 static int m_capture_bool(nlcchar_arr0_ptr json, size_t json_len, size_t pos, nlcint_ptr dst, melodica_track_view_ptr track, uint32_t flag);
+static void m_station_clear_slice(melodica_slice_ptr dst);
+typedef melodica_station_view* melodica_station_view_ptr;
+static int m_station_capture_string(const char* json, size_t json_len, const char* key, size_t key_len, melodica_slice_ptr dst, melodica_station_view_ptr station, uint32_t flag);
+static bool m_collection_key_equal(nlcchar_arr0_ptr json, size_t start, nlcchar_arr0_ptr key, size_t key_len);
+static int m_collection_find_array(nlcchar_arr0_ptr json, size_t json_len, nlcchar_arr0_ptr key, size_t key_len, nlcsize_ptr cursor);
+static int m_collection_skip_string(nlcchar_arr0_ptr json, size_t json_len, size_t pos, nlcsize_ptr after);
+static int m_collection_next_object(nlcchar_arr0_ptr json, size_t json_len, nlcsize_ptr cursor, nlcsize_ptr object_start, nlcsize_ptr object_end);
+static void m_collection_rebase_track(melodica_track_view_ptr track, size_t base);
+static void m_collection_rebase_station(melodica_station_view_ptr station, size_t base);
 /* ------------------------------ DEFINITIONS ------------------------------- */
 bool m_is_ws(char c) {
   return (((c == 32 || c == 9) || c == 10) || c == 13);
@@ -626,6 +663,272 @@ int melodica_parse_track(const char* json, size_t json_len, melodica_track_view_
     }
     i = (j + 1);
   }
+  return 0;
+}
+void m_station_clear_slice(melodica_slice_ptr dst) {
+  dst->offset = 0U;
+  dst->length = 0U;
+}
+int m_station_capture_string(const char* json, size_t json_len, const char* key, size_t key_len, melodica_slice_ptr dst, melodica_station_view_ptr station, uint32_t flag) {
+  size_t offset = 0U;
+  size_t length = 0U;
+  int status = melodica_find_string(json, json_len, key, key_len, (&offset), (&length));
+  if(status == 0) {
+    dst->offset = offset;
+    dst->length = length;
+    station->present = (station->present | flag);
+    return 0;
+  }
+  if(status == 1) {
+    return 0;
+  }
+  return status;
+}
+int melodica_parse_station(const char* json, size_t json_len, melodica_station_view_ptr station) {
+  if((json == (char*)NULL || station == ((melodica_station_view_ptr)NULL))) {
+    return 4;
+  }
+  station->present = 0U;
+  m_station_clear_slice((&station->station_id));
+  m_station_clear_slice((&station->pandora_id));
+  m_station_clear_slice((&station->art_id));
+  m_station_clear_slice((&station->name));
+  m_station_clear_slice((&station->creator_webname));
+  int status = m_station_capture_string(json, json_len, (char*)"stationId", 9U, (&station->station_id), station, 1U);
+  if(status != 0) {
+    return status;
+  }
+  status = m_station_capture_string(json, json_len, (char*)"pandoraId", 9U, (&station->pandora_id), station, 2U);
+  if(status != 0) {
+    return status;
+  }
+  status = m_station_capture_string(json, json_len, (char*)"artId", 5U, (&station->art_id), station, 4U);
+  if(status != 0) {
+    return status;
+  }
+  status = m_station_capture_string(json, json_len, (char*)"name", 4U, (&station->name), station, 8U);
+  if(status != 0) {
+    return status;
+  }
+  status = m_station_capture_string(json, json_len, (char*)"creatorWebname", 14U, (&station->creator_webname), station, 16U);
+  if(status != 0) {
+    return status;
+  }
+  return 0;
+}
+bool m_collection_key_equal(nlcchar_arr0_ptr json, size_t start, nlcchar_arr0_ptr key, size_t key_len) {
+  size_t i = 0U;
+  while(i < key_len) {
+    if(json[(start + i)] != key[i]) {
+      return false;
+    }
+    i = (i + 1);
+  }
+  return true;
+}
+int m_collection_find_array(nlcchar_arr0_ptr json, size_t json_len, nlcchar_arr0_ptr key, size_t key_len, nlcsize_ptr cursor) {
+  size_t i = 0U;
+  while(i < json_len) {
+    if(json[i] != 34) {
+      i = (i + 1);
+      continue;
+    }
+    size_t start = (i + 1);
+    size_t j = start;
+    bool escaped = false;
+    while(j < json_len) {
+      char c = json[j];
+      if(c == 92) {
+        escaped = true;
+        j = (j + 1);
+        if(j >= json_len) {
+          return 2;
+        }
+        j = (j + 1);
+      } else if(c == 34) {
+        break;
+      } else if((c >= 0 && c < 32)) {
+        return 2;
+      } else {
+        j = (j + 1);
+      }
+    }
+    if(j >= json_len) {
+      return 2;
+    }
+    size_t after = m_melodica_skip_ws(json, json_len, (j + 1));
+    if((((((!escaped) && (j - start) == key_len) && after < json_len) && json[after] == 58) && m_collection_key_equal(json, start, key, key_len))) {
+      size_t value = m_melodica_skip_ws(json, json_len, (after + 1));
+      if((value >= json_len || json[value] != 91)) {
+        return 2;
+      }
+      (*cursor) = (value + 1);
+      return 0;
+    }
+    i = (j + 1);
+  }
+  return 1;
+}
+int m_collection_skip_string(nlcchar_arr0_ptr json, size_t json_len, size_t pos, nlcsize_ptr after) {
+  size_t i = (pos + 1);
+  while(i < json_len) {
+    char c = json[i];
+    if(c == 92) {
+      i = (i + 1);
+      if(i >= json_len) {
+        return 2;
+      }
+      i = (i + 1);
+    } else if(c == 34) {
+      (*after) = (i + 1);
+      return 0;
+    } else if((c >= 0 && c < 32)) {
+      return 2;
+    } else {
+      i = (i + 1);
+    }
+  }
+  return 2;
+}
+int m_collection_next_object(nlcchar_arr0_ptr json, size_t json_len, nlcsize_ptr cursor, nlcsize_ptr object_start, nlcsize_ptr object_end) {
+  size_t i = m_melodica_skip_ws(json, json_len, (*cursor));
+  if(i >= json_len) {
+    return 2;
+  }
+  if(json[i] == 93) {
+    return 1;
+  }
+  if(json[i] == 44) {
+    i = m_melodica_skip_ws(json, json_len, (i + 1));
+    if(i >= json_len) {
+      return 2;
+    }
+    if(json[i] == 93) {
+      return 2;
+    }
+  }
+  if(json[i] != 123) {
+    return 2;
+  }
+  (*object_start) = i;
+  size_t depth = 0U;
+  while(i < json_len) {
+    char c = json[i];
+    if(c == 34) {
+      size_t after = 0U;
+      int status = m_collection_skip_string(json, json_len, i, (&after));
+      if(status != 0) {
+        return status;
+      }
+      i = after;
+      continue;
+    } else if(c == 123) {
+      depth = (depth + 1);
+    } else if(c == 125) {
+      if(depth == 0) {
+        return 2;
+      }
+      depth = (depth - 1);
+      if(depth == 0) {
+        (*object_end) = (i + 1);
+        (*cursor) = (i + 1);
+        return 0;
+      }
+    }
+    i = (i + 1);
+  }
+  return 2;
+}
+void m_collection_rebase_track(melodica_track_view_ptr track, size_t base) {
+  if((track->present & 1U) != 0) {
+    track->song_title.offset = (track->song_title.offset + base);
+  }
+  if((track->present & 2U) != 0) {
+    track->artist_name.offset = (track->artist_name.offset + base);
+  }
+  if((track->present & 4U) != 0) {
+    track->album_title.offset = (track->album_title.offset + base);
+  }
+  if((track->present & 8U) != 0) {
+    track->track_token.offset = (track->track_token.offset + base);
+  }
+  if((track->present & 16U) != 0) {
+    track->station_id.offset = (track->station_id.offset + base);
+  }
+  if((track->present & 32U) != 0) {
+    track->audio_url.offset = (track->audio_url.offset + base);
+  }
+  if((track->present & 64U) != 0) {
+    track->audio_encoding.offset = (track->audio_encoding.offset + base);
+  }
+}
+void m_collection_rebase_station(melodica_station_view_ptr station, size_t base) {
+  if((station->present & 1U) != 0) {
+    station->station_id.offset = (station->station_id.offset + base);
+  }
+  if((station->present & 2U) != 0) {
+    station->pandora_id.offset = (station->pandora_id.offset + base);
+  }
+  if((station->present & 4U) != 0) {
+    station->art_id.offset = (station->art_id.offset + base);
+  }
+  if((station->present & 8U) != 0) {
+    station->name.offset = (station->name.offset + base);
+  }
+  if((station->present & 16U) != 0) {
+    station->creator_webname.offset = (station->creator_webname.offset + base);
+  }
+}
+int melodica_track_next(const char* json, size_t json_len, nlcsize_ptr cursor, melodica_track_view_ptr track) {
+  if(((json == (char*)NULL || cursor == (nlcsize_ptr)NULL) || track == ((melodica_track_view_ptr)NULL))) {
+    return 4;
+  }
+  nlcchar_arr0_ptr bytes = ((nlcchar_arr0_ptr)json);
+  if((*cursor) == 0) {
+    nlcchar_arr0_ptr key = (nlcchar_arr0_ptr)(char*)"tracks";
+    int status = m_collection_find_array(bytes, json_len, key, 6U, cursor);
+    if(status != 0) {
+      return status;
+    }
+  }
+  size_t start = 0U;
+  size_t finish = 0U;
+  int status = m_collection_next_object(bytes, json_len, cursor, (&start), (&finish));
+  if(status != 0) {
+    return status;
+  }
+  char* object_json = (&bytes[start]);
+  status = melodica_parse_track(object_json, (finish - start), track);
+  if(status != 0) {
+    return status;
+  }
+  m_collection_rebase_track(track, start);
+  return 0;
+}
+int melodica_station_next(const char* json, size_t json_len, nlcsize_ptr cursor, melodica_station_view_ptr station) {
+  if(((json == (char*)NULL || cursor == (nlcsize_ptr)NULL) || station == ((melodica_station_view_ptr)NULL))) {
+    return 4;
+  }
+  nlcchar_arr0_ptr bytes = ((nlcchar_arr0_ptr)json);
+  if((*cursor) == 0) {
+    nlcchar_arr0_ptr key = (nlcchar_arr0_ptr)(char*)"stations";
+    int status = m_collection_find_array(bytes, json_len, key, 8U, cursor);
+    if(status != 0) {
+      return status;
+    }
+  }
+  size_t start = 0U;
+  size_t finish = 0U;
+  int status = m_collection_next_object(bytes, json_len, cursor, (&start), (&finish));
+  if(status != 0) {
+    return status;
+  }
+  char* object_json = (&bytes[start]);
+  status = melodica_parse_station(object_json, (finish - start), station);
+  if(status != 0) {
+    return status;
+  }
+  m_collection_rebase_station(station, start);
   return 0;
 }
 
