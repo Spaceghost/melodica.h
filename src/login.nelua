@@ -1,0 +1,63 @@
+-- Zero-copy login response view. Strings remain slices into the caller's JSON
+-- buffer; missing optional fields simply leave their present bits clear.
+require 'src.types'
+
+local OK: cint <comptime> = 0
+local NOT_FOUND: cint <comptime> = 1
+local BAD_ARGUMENT: cint <comptime> = 4
+
+local AUTH_TOKEN: uint32 <comptime> = 1
+local USERNAME: uint32 <comptime> = 2
+local WEB_NAME: uint32 <comptime> = 4
+local USER_ID: uint32 <comptime> = 8
+
+local function clear_slice(dst: *melodica_slice)
+  dst.offset = 0
+  dst.length = 0
+end
+
+local function capture(json: cstring <const>, json_len: csize,
+                       key: cstring <const>, key_len: csize,
+                       dst: *melodica_slice,
+                       login: *melodica_login_view,
+                       flag: uint32): cint
+  local offset: csize = 0
+  local length: csize = 0
+  local status = melodica_find_string(json, json_len, key, key_len,
+                                      &offset, &length)
+  if status == OK then
+    dst.offset = offset
+    dst.length = length
+    login.present = login.present | flag
+    return OK
+  end
+  if status == NOT_FOUND then return OK end
+  return status
+end
+
+global function melodica_parse_login(json: cstring <const>, json_len: csize,
+                                     login: *melodica_login_view): cint
+                                     <cexport, codename 'melodica_parse_login'>
+  if json == nilptr or login == nilptr then return BAD_ARGUMENT end
+
+  login.present = 0
+  clear_slice(&login.auth_token)
+  clear_slice(&login.username)
+  clear_slice(&login.web_name)
+  clear_slice(&login.user_id)
+
+  local status = capture(json, json_len, "authToken", 9,
+                         &login.auth_token, login, AUTH_TOKEN)
+  if status ~= OK then return status end
+  status = capture(json, json_len, "username", 8,
+                   &login.username, login, USERNAME)
+  if status ~= OK then return status end
+  status = capture(json, json_len, "webName", 7,
+                   &login.web_name, login, WEB_NAME)
+  if status ~= OK then return status end
+  status = capture(json, json_len, "userId", 6,
+                   &login.user_id, login, USER_ID)
+  if status ~= OK then return status end
+
+  return OK
+end
