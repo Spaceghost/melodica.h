@@ -10,6 +10,7 @@ NELUA=${NELUA:-$(./tools/bootstrap-nelua.sh)}
 
 mkdir -p build/c build/headers build/bin build/metrics dist
 : > build/metrics/raw.tsv
+: > build/metrics/sizes.tsv
 
 candidates=(scan hash tiny dispatch)
 for name in "${candidates[@]}"; do
@@ -30,25 +31,52 @@ for name in "${candidates[@]}"; do
   ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 \
     "build/bin/sanitize-$name" >/dev/null
 
-  echo "==> benchmark $name"
+  echo "==> preparing benchmark $name"
   "$ZIG" cc -std=c99 -O3 -DNDEBUG -I. \
     -DMELODICA_HEADER=\"build/headers/$name.h\" \
     bench/bench.c -o "build/bin/bench-$name"
-
-  : > "build/metrics/times-lookup-$name.txt"
-  : > "build/metrics/times-track-$name.txt"
-  for _ in 1 2 3 4 5 6 7; do
-    "build/bin/bench-$name" lookup >> "build/metrics/times-lookup-$name.txt"
-    "build/bin/bench-$name" track >> "build/metrics/times-track-$name.txt"
-  done
-  lookup_ns=$(sort -n "build/metrics/times-lookup-$name.txt" | sed -n '4p')
-  track_ns=$(sort -n "build/metrics/times-track-$name.txt" | sed -n '4p')
 
   "$ZIG" cc -std=c99 -Os -DNDEBUG -I. \
     -DMELODICA_HEADER=\"build/headers/$name.h\" \
     -c tests/size.c -o "build/metrics/$name.o"
   obj_bytes=$(wc -c < "build/metrics/$name.o" | tr -d ' ')
   header_bytes=$(wc -c < "build/headers/$name.h" | tr -d ' ')
+  printf '%s\t%s\t%s\n' "$name" "$obj_bytes" "$header_bytes" >> build/metrics/sizes.tsv
+
+  : > "build/metrics/times-lookup-$name.txt"
+  : > "build/metrics/times-track-$name.txt"
+done
+
+# Warm every binary before collecting numbers. More importantly, time candidates
+# round-robin instead of finishing all seven trials for one candidate first.
+# The starting candidate rotates each round, and lookup/track order alternates,
+# spreading runner frequency and transient load across all implementations.
+for name in "${candidates[@]}"; do
+  "build/bin/bench-$name" lookup >/dev/null
+  "build/bin/bench-$name" track >/dev/null
+done
+
+trials=7
+count=${#candidates[@]}
+for ((round=0; round<trials; round++)); do
+  echo "==> benchmark round $((round+1))/$trials"
+  for ((step=0; step<count; step++)); do
+    idx=$(((round + step) % count))
+    name=${candidates[$idx]}
+    if ((round % 2 == 0)); then
+      "build/bin/bench-$name" lookup >> "build/metrics/times-lookup-$name.txt"
+      "build/bin/bench-$name" track >> "build/metrics/times-track-$name.txt"
+    else
+      "build/bin/bench-$name" track >> "build/metrics/times-track-$name.txt"
+      "build/bin/bench-$name" lookup >> "build/metrics/times-lookup-$name.txt"
+    fi
+  done
+done
+
+for name in "${candidates[@]}"; do
+  lookup_ns=$(sort -n "build/metrics/times-lookup-$name.txt" | sed -n '4p')
+  track_ns=$(sort -n "build/metrics/times-track-$name.txt" | sed -n '4p')
+  read -r _ obj_bytes header_bytes < <(awk -F '\t' -v n="$name" '$1==n {print $1, $2, $3}' build/metrics/sizes.tsv)
   printf '%s\t%s\t%s\t%s\t%s\n' "$name" "$lookup_ns" "$track_ns" "$obj_bytes" "$header_bytes" >> build/metrics/raw.tsv
 done
 
