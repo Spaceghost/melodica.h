@@ -1,0 +1,121 @@
+-- Zero-copy high-level track view built from the candidate's scalar lookup
+-- engine. This intentionally starts as the boring repeated-lookup baseline;
+-- specialized one-pass candidates must beat it in the bake-off to replace it.
+require 'src.types'
+
+local OK: cint <comptime> = 0
+local NOT_FOUND: cint <comptime> = 1
+local BAD_ARGUMENT: cint <comptime> = 4
+
+local SONG_TITLE: uint32 <comptime> = 1
+local ARTIST_NAME: uint32 <comptime> = 2
+local ALBUM_TITLE: uint32 <comptime> = 4
+local TRACK_TOKEN: uint32 <comptime> = 8
+local STATION_ID: uint32 <comptime> = 16
+local AUDIO_URL: uint32 <comptime> = 32
+local AUDIO_ENCODING: uint32 <comptime> = 64
+local TRACK_LENGTH: uint32 <comptime> = 128
+local ALLOW_SKIP: uint32 <comptime> = 256
+
+local function clear_slice(dst: *melodica_slice)
+  dst.offset = 0
+  dst.length = 0
+end
+
+local function capture_string(json: cstring <const>, json_len: csize,
+                              key: cstring <const>, key_len: csize,
+                              dst: *melodica_slice,
+                              track: *melodica_track_view,
+                              flag: uint32): cint
+  local offset: csize = 0
+  local length: csize = 0
+  local status = melodica_find_string(json, json_len, key, key_len,
+                                      &offset, &length)
+  if status == OK then
+    dst.offset = offset
+    dst.length = length
+    track.present = track.present + flag
+    return OK
+  end
+  if status == NOT_FOUND then return OK end
+  return status
+end
+
+local function capture_u64(json: cstring <const>, json_len: csize,
+                           key: cstring <const>, key_len: csize,
+                           dst: *uint64,
+                           track: *melodica_track_view,
+                           flag: uint32): cint
+  local value: uint64 = 0
+  local status = melodica_find_u64(json, json_len, key, key_len, &value)
+  if status == OK then
+    $dst = value
+    track.present = track.present + flag
+    return OK
+  end
+  if status == NOT_FOUND then return OK end
+  return status
+end
+
+local function capture_bool(json: cstring <const>, json_len: csize,
+                            key: cstring <const>, key_len: csize,
+                            dst: *cint,
+                            track: *melodica_track_view,
+                            flag: uint32): cint
+  local value: cint = 0
+  local status = melodica_find_bool(json, json_len, key, key_len, &value)
+  if status == OK then
+    $dst = value
+    track.present = track.present + flag
+    return OK
+  end
+  if status == NOT_FOUND then return OK end
+  return status
+end
+
+local function parse_track(json: cstring <const>, json_len: csize,
+                           track: *melodica_track_view): cint
+                           <cexport, codename 'melodica_parse_track'>
+  if json == nilptr or track == nilptr then return BAD_ARGUMENT end
+
+  track.present = 0
+  clear_slice(&track.song_title)
+  clear_slice(&track.artist_name)
+  clear_slice(&track.album_title)
+  clear_slice(&track.track_token)
+  clear_slice(&track.station_id)
+  clear_slice(&track.audio_url)
+  clear_slice(&track.audio_encoding)
+  track.track_length = 0
+  track.allow_skip = 0
+
+  local status = capture_string(json, json_len, "songTitle", 9,
+                                &track.song_title, track, SONG_TITLE)
+  if status ~= OK then return status end
+  status = capture_string(json, json_len, "artistName", 10,
+                          &track.artist_name, track, ARTIST_NAME)
+  if status ~= OK then return status end
+  status = capture_string(json, json_len, "albumTitle", 10,
+                          &track.album_title, track, ALBUM_TITLE)
+  if status ~= OK then return status end
+  status = capture_string(json, json_len, "trackToken", 10,
+                          &track.track_token, track, TRACK_TOKEN)
+  if status ~= OK then return status end
+  status = capture_string(json, json_len, "stationId", 9,
+                          &track.station_id, track, STATION_ID)
+  if status ~= OK then return status end
+  status = capture_string(json, json_len, "audioURL", 8,
+                          &track.audio_url, track, AUDIO_URL)
+  if status ~= OK then return status end
+  status = capture_string(json, json_len, "audioEncoding", 13,
+                          &track.audio_encoding, track, AUDIO_ENCODING)
+  if status ~= OK then return status end
+  status = capture_u64(json, json_len, "trackLength", 11,
+                       &track.track_length, track, TRACK_LENGTH)
+  if status ~= OK then return status end
+  status = capture_bool(json, json_len, "allowSkip", 9,
+                        &track.allow_skip, track, ALLOW_SKIP)
+  if status ~= OK then return status end
+
+  return OK
+end

@@ -1,0 +1,21 @@
+-- C-owned ABI records. The canonical declarations live in melodica.h before
+-- the generated implementation. Nelua knows their fields but emits no duplicate
+-- declaration, keeping one ABI definition for every consumer language.
+
+global melodica_slice: type <cimport,nodecl> = @record{
+  offset: csize,
+  length: csize,
+}
+
+global melodica_track_view: type <cimport,nodecl> = @record{
+  present: uint32,
+  song_title: melodica_slice,
+  artist_name: melodica_slice,
+  album_title: melodica_slice,
+  track_token: melodica_slice,
+  station_id: melodica_slice,
+  audio_url: melodica_slice,
+  audio_encoding: melodica_slice,
+  track_length: uint64,
+  allow_skip: cint,
+}

@@ -29,7 +29,7 @@ static const char payload[] =
 
 static volatile uint64_t sink;
 
-int main(void) {
+static double lookup_benchmark(void) {
   const size_t loops = 250000;
   clock_t begin = clock();
   size_t off, len;
@@ -50,9 +50,29 @@ int main(void) {
   }
 
   clock_t end = clock();
-  double seconds = (double)(end - begin) / (double)CLOCKS_PER_SEC;
-  double operations = (double)loops * 5.0;
-  double ns = seconds * 1000000000.0 / operations;
+  return ((double)(end - begin) / CLOCKS_PER_SEC) * 1000000000.0 /
+         ((double)loops * 5.0);
+}
+
+static double track_benchmark(void) {
+  const size_t loops = 100000;
+  clock_t begin = clock();
+  melodica_track_view track;
+
+  for (size_t i = 0; i < loops; ++i) {
+    sink += (uint64_t)melodica_parse_track(payload, sizeof payload - 1, &track);
+    sink += track.present;
+    sink += track.track_length;
+    sink += track.audio_url.length;
+  }
+
+  clock_t end = clock();
+  return ((double)(end - begin) / CLOCKS_PER_SEC) * 1000000000.0 /
+         (double)loops;
+}
+
+int main(int argc, char **argv) {
+  double ns = (argc > 1 && argv[1][0] == 't') ? track_benchmark() : lookup_benchmark();
   printf("%.0f\n", ns);
   return sink == UINT64_MAX ? 1 : 0;
 }
