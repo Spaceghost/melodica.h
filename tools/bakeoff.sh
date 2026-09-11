@@ -110,6 +110,7 @@ fi
 
 cp "build/headers/$winner.h" dist/melodica.h
 printf '%s\n' "$winner" > dist/WINNER
+cp build/metrics/results.tsv dist/BENCHMARK.tsv
 
 for target in x86_64-linux-musl aarch64-linux-musl x86_64-windows-gnu wasm32-wasi; do
   "$ZIG" cc -target "$target" -std=c99 -Os -I. \
