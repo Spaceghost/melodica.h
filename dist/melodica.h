@@ -122,60 +122,60 @@ static bool m_key_equal(nlcchar_arr0_ptr json, size_t start, nlcchar_arr0_ptr ke
 static int m_locate(nlcchar_arr0_ptr json, size_t json_len, nlcchar_arr0_ptr key, size_t key_len, nlcsize_ptr value_pos);
 /* ------------------------------ DEFINITIONS ------------------------------- */
 bool m_is_ws(char c) {
-  return ((((c == 32) || (c == 9)) || (c == 10)) || (c == 13));
+  return (((c == 32 || c == 9) || c == 10) || c == 13);
 }
 bool m_is_hex(char c) {
-  return ((((c >= 48) && (c <= 57)) || ((c >= 65) && (c <= 70))) || ((c >= 97) && (c <= 102)));
+  return (((c >= 48 && c <= 57) || (c >= 65 && c <= 70)) || (c >= 97 && c <= 102));
 }
 bool m_is_boundary(nlcchar_arr0_ptr json, size_t json_len, size_t pos) {
-  if((pos >= json_len)) {
+  if(pos >= json_len) {
     return true;
   }
   char c = json[pos];
-  return (((m_is_ws(c) || (c == 44)) || (c == 93)) || (c == 125));
+  return (((m_is_ws(c) || c == 44) || c == 93) || c == 125);
 }
 size_t m_melodica_skip_ws(nlcchar_arr0_ptr json, size_t json_len, size_t pos) {
-  while(((pos < json_len) && m_is_ws(json[pos]))) {
+  while((pos < json_len && m_is_ws(json[pos]))) {
     pos = (pos + 1);
   }
   return pos;
 }
 int m_melodica_parse_string_at(nlcchar_arr0_ptr json, size_t json_len, size_t pos, nlcsize_ptr value_offset, nlcsize_ptr value_len) {
   pos = m_melodica_skip_ws(json, json_len, pos);
-  if(((pos >= json_len) || (json[pos] != 34))) {
+  if((pos >= json_len || json[pos] != 34)) {
     return 2;
   }
   size_t start = (pos + 1);
   pos = start;
-  while((pos < json_len)) {
+  while(pos < json_len) {
     char c = json[pos];
-    if((c == 92)) {
+    if(c == 92) {
       pos = (pos + 1);
-      if((pos >= json_len)) {
+      if(pos >= json_len) {
         return 2;
       }
       char esc = json[pos];
-      if((esc == 117)) {
-        if(((pos + 4) >= json_len)) {
+      if(esc == 117) {
+        if((pos + 4) >= json_len) {
           return 2;
         }
         if(((((!m_is_hex(json[(pos + 1)])) || (!m_is_hex(json[(pos + 2)]))) || (!m_is_hex(json[(pos + 3)]))) || (!m_is_hex(json[(pos + 4)])))) {
           return 2;
         }
         pos = (pos + 5);
-      } else if(((((((((esc == 34) || (esc == 92)) || (esc == 47)) || (esc == 98)) || (esc == 102)) || (esc == 110)) || (esc == 114)) || (esc == 116))) {
+      } else if((((((((esc == 34 || esc == 92) || esc == 47) || esc == 98) || esc == 102) || esc == 110) || esc == 114) || esc == 116)) {
         pos = (pos + 1);
       } else {
         return 2;
       }
-    } else if((c == 34)) {
+    } else if(c == 34) {
       if((!m_is_boundary(json, json_len, (pos + 1)))) {
         return 2;
       }
       (*value_offset) = start;
       (*value_len) = (pos - start);
       return 0;
-    } else if(((c >= 0) && (c < 32))) {
+    } else if((c >= 0 && c < 32)) {
       return 2;
     } else {
       pos = (pos + 1);
@@ -185,11 +185,11 @@ int m_melodica_parse_string_at(nlcchar_arr0_ptr json, size_t json_len, size_t po
 }
 int m_melodica_parse_bool_at(nlcchar_arr0_ptr json, size_t json_len, size_t pos, nlcint_ptr value) {
   pos = m_melodica_skip_ws(json, json_len, pos);
-  if((((((((pos + 4) <= json_len) && (json[pos] == 116)) && (json[(pos + 1)] == 114)) && (json[(pos + 2)] == 117)) && (json[(pos + 3)] == 101)) && m_is_boundary(json, json_len, (pos + 4)))) {
+  if(((((((pos + 4) <= json_len && json[pos] == 116) && json[(pos + 1)] == 114) && json[(pos + 2)] == 117) && json[(pos + 3)] == 101) && m_is_boundary(json, json_len, (pos + 4)))) {
     (*value) = 1;
     return 0;
   }
-  if(((((((((pos + 5) <= json_len) && (json[pos] == 102)) && (json[(pos + 1)] == 97)) && (json[(pos + 2)] == 108)) && (json[(pos + 3)] == 115)) && (json[(pos + 4)] == 101)) && m_is_boundary(json, json_len, (pos + 5)))) {
+  if((((((((pos + 5) <= json_len && json[pos] == 102) && json[(pos + 1)] == 97) && json[(pos + 2)] == 108) && json[(pos + 3)] == 115) && json[(pos + 4)] == 101) && m_is_boundary(json, json_len, (pos + 5)))) {
     (*value) = 0;
     return 0;
   }
@@ -197,20 +197,20 @@ int m_melodica_parse_bool_at(nlcchar_arr0_ptr json, size_t json_len, size_t pos,
 }
 int m_melodica_parse_u64_at(nlcchar_arr0_ptr json, size_t json_len, size_t pos, nluint64_ptr value) {
   pos = m_melodica_skip_ws(json, json_len, pos);
-  if((((pos >= json_len) || (json[pos] < 48)) || (json[pos] > 57))) {
+  if(((pos >= json_len || json[pos] < 48) || json[pos] > 57)) {
     return 2;
   }
-  if(((((json[pos] == 48) && ((pos + 1) < json_len)) && (json[(pos + 1)] >= 48)) && (json[(pos + 1)] <= 57))) {
+  if((((json[pos] == 48 && (pos + 1) < json_len) && json[(pos + 1)] >= 48) && json[(pos + 1)] <= 57)) {
     return 2;
   }
   uint64_t v = 0U;
-  while((pos < json_len)) {
+  while(pos < json_len) {
     char c = json[pos];
-    if(((c < 48) || (c > 57))) {
+    if((c < 48 || c > 57)) {
       break;
     }
     uint64_t digit = (uint64_t)(c - 48);
-    if(((v > 1844674407370955161ULL) || ((v == 1844674407370955161ULL) && (digit > 5)))) {
+    if((v > 1844674407370955161ULL || (v == 1844674407370955161ULL && digit > 5))) {
       return 5;
     }
     v = ((v * 10) + digit);
@@ -223,7 +223,7 @@ int m_melodica_parse_u64_at(nlcchar_arr0_ptr json, size_t json_len, size_t pos, 
   return 0;
 }
 bool m_putc(nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr pos, char c) {
-  if(((*pos) >= output_cap)) {
+  if((*pos) >= output_cap) {
     return false;
   }
   output[(*pos)] = c;
@@ -232,11 +232,11 @@ bool m_putc(nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr pos, char c)
 }
 bool m_append(nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr pos, const char* input, size_t input_len) {
   nlcchar_arr0_ptr bytes = ((nlcchar_arr0_ptr)input);
-  if((((*pos) > output_cap) || (input_len > (output_cap - (*pos))))) {
+  if(((*pos) > output_cap || input_len > (output_cap - (*pos)))) {
     return false;
   }
   size_t i = 0U;
-  while((i < input_len)) {
+  while(i < input_len) {
     output[(*pos)] = bytes[i];
     (*pos) = ((*pos) + 1);
     i = (i + 1);
@@ -246,11 +246,11 @@ bool m_append(nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr pos, const
 bool m_append_u64(nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr pos, uint64_t value) {
   uint64_t divisor = 1U;
   uint64_t remaining = value;
-  while((remaining >= 10)) {
+  while(remaining >= 10) {
     remaining = (remaining / 10);
     divisor = (divisor * 10);
   }
-  while((divisor > 0)) {
+  while(divisor > 0) {
     char digit = (char)(48 + ((value / divisor) % 10));
     if((!m_putc(output, output_cap, pos, digit))) {
       return false;
@@ -260,46 +260,46 @@ bool m_append_u64(nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr pos, u
   return true;
 }
 bool m_append_bool(nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr pos, int value) {
-  if((value != 0)) {
+  if(value != 0) {
     return m_append(output, output_cap, pos, (char*)"true", 4U);
   }
   return m_append(output, output_cap, pos, (char*)"false", 5U);
 }
 char m_hex_digit(uint8_t v) {
-  if((v < 10)) {
+  if(v < 10) {
     return (char)(48 + v);
   }
   return (char)(87 + v);
 }
 bool m_append_escaped(nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr pos, nlcchar_arr0_ptr input, size_t input_len) {
   size_t i = 0U;
-  while((i < input_len)) {
+  while(i < input_len) {
     char c = input[i];
-    if(((c == 34) || (c == 92))) {
+    if((c == 34 || c == 92)) {
       if(((!m_putc(output, output_cap, pos, 92)) || (!m_putc(output, output_cap, pos, c)))) {
         return false;
       }
-    } else if((c == 8)) {
+    } else if(c == 8) {
       if((!m_append(output, output_cap, pos, (char*)"\\b", 2U))) {
         return false;
       }
-    } else if((c == 12)) {
+    } else if(c == 12) {
       if((!m_append(output, output_cap, pos, (char*)"\\f", 2U))) {
         return false;
       }
-    } else if((c == 10)) {
+    } else if(c == 10) {
       if((!m_append(output, output_cap, pos, (char*)"\\n", 2U))) {
         return false;
       }
-    } else if((c == 13)) {
+    } else if(c == 13) {
       if((!m_append(output, output_cap, pos, (char*)"\\r", 2U))) {
         return false;
       }
-    } else if((c == 9)) {
+    } else if(c == 9) {
       if((!m_append(output, output_cap, pos, (char*)"\\t", 2U))) {
         return false;
       }
-    } else if(((c >= 0) && (c < 32))) {
+    } else if((c >= 0 && c < 32)) {
       if((!m_append(output, output_cap, pos, (char*)"\\u00", 4U))) {
         return false;
       }
@@ -320,7 +320,7 @@ unsigned int melodica_version(void) {
   return 256U;
 }
 int melodica_json_escape(const char* input, size_t input_len, nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr output_len) {
-  if((((input == (char*)NULL) || (output == ((nlcchar_arr0_ptr)NULL))) || (output_len == (nlcsize_ptr)NULL))) {
+  if(((input == (char*)NULL || output == ((nlcchar_arr0_ptr)NULL)) || output_len == (nlcsize_ptr)NULL)) {
     return 4;
   }
   nlcchar_arr0_ptr input_bytes = ((nlcchar_arr0_ptr)input);
@@ -333,7 +333,7 @@ int melodica_json_escape(const char* input, size_t input_len, nlcchar_arr0_ptr o
   return 0;
 }
 int melodica_login_body(const char* username, size_t username_len, const char* password, size_t password_len, nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr output_len) {
-  if(((((username == (char*)NULL) || (password == (char*)NULL)) || (output == ((nlcchar_arr0_ptr)NULL))) || (output_len == (nlcsize_ptr)NULL))) {
+  if((((username == (char*)NULL || password == (char*)NULL) || output == ((nlcchar_arr0_ptr)NULL)) || output_len == (nlcsize_ptr)NULL)) {
     return 4;
   }
   nlcchar_arr0_ptr username_bytes = ((nlcchar_arr0_ptr)username);
@@ -347,7 +347,7 @@ int melodica_login_body(const char* username, size_t username_len, const char* p
   return 0;
 }
 int melodica_stations_body(unsigned int page_size, unsigned int start_index, nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr output_len) {
-  if(((output == ((nlcchar_arr0_ptr)NULL)) || (output_len == (nlcsize_ptr)NULL))) {
+  if((output == ((nlcchar_arr0_ptr)NULL) || output_len == (nlcsize_ptr)NULL)) {
     return 4;
   }
   size_t pos = 0U;
@@ -359,7 +359,7 @@ int melodica_stations_body(unsigned int page_size, unsigned int start_index, nlc
   return 0;
 }
 int melodica_playlist_body(const char* station_id, size_t station_id_len, int station_start, const char* audio_format, size_t audio_format_len, nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr output_len) {
-  if(((((station_id == (char*)NULL) || (audio_format == (char*)NULL)) || (output == ((nlcchar_arr0_ptr)NULL))) || (output_len == (nlcsize_ptr)NULL))) {
+  if((((station_id == (char*)NULL || audio_format == (char*)NULL) || output == ((nlcchar_arr0_ptr)NULL)) || output_len == (nlcsize_ptr)NULL)) {
     return 4;
   }
   nlcchar_arr0_ptr station_bytes = ((nlcchar_arr0_ptr)station_id);
@@ -373,7 +373,7 @@ int melodica_playlist_body(const char* station_id, size_t station_id_len, int st
   return 0;
 }
 int melodica_feedback_body(const char* track_token, size_t track_token_len, int positive, nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr output_len) {
-  if((((track_token == (char*)NULL) || (output == ((nlcchar_arr0_ptr)NULL))) || (output_len == (nlcsize_ptr)NULL))) {
+  if(((track_token == (char*)NULL || output == ((nlcchar_arr0_ptr)NULL)) || output_len == (nlcsize_ptr)NULL)) {
     return 4;
   }
   nlcchar_arr0_ptr token_bytes = ((nlcchar_arr0_ptr)track_token);
@@ -387,8 +387,8 @@ int melodica_feedback_body(const char* track_token, size_t track_token_len, int 
 }
 bool m_key_equal(nlcchar_arr0_ptr json, size_t start, nlcchar_arr0_ptr key, size_t key_len) {
   size_t i = 0U;
-  while((i < key_len)) {
-    if((json[(start + i)] != key[i])) {
+  while(i < key_len) {
+    if(json[(start + i)] != key[i]) {
       return false;
     }
     i = (i + 1);
@@ -397,36 +397,36 @@ bool m_key_equal(nlcchar_arr0_ptr json, size_t start, nlcchar_arr0_ptr key, size
 }
 int m_locate(nlcchar_arr0_ptr json, size_t json_len, nlcchar_arr0_ptr key, size_t key_len, nlcsize_ptr value_pos) {
   size_t i = 0U;
-  while((i < json_len)) {
-    if((json[i] != 34)) {
+  while(i < json_len) {
+    if(json[i] != 34) {
       i = (i + 1);
       continue;
     }
     size_t start = (i + 1);
     size_t j = start;
     bool escaped = false;
-    while((j < json_len)) {
+    while(j < json_len) {
       char c = json[j];
-      if((c == 92)) {
+      if(c == 92) {
         escaped = true;
         j = (j + 1);
-        if((j >= json_len)) {
+        if(j >= json_len) {
           return 2;
         }
         j = (j + 1);
-      } else if((c == 34)) {
+      } else if(c == 34) {
         break;
-      } else if(((c >= 0) && (c < 32))) {
+      } else if((c >= 0 && c < 32)) {
         return 2;
       } else {
         j = (j + 1);
       }
     }
-    if((j >= json_len)) {
+    if(j >= json_len) {
       return 2;
     }
     size_t after = m_melodica_skip_ws(json, json_len, (j + 1));
-    if((((((!escaped) && ((j - start) == key_len)) && (after < json_len)) && (json[after] == 58)) && m_key_equal(json, start, key, key_len))) {
+    if((((((!escaped) && (j - start) == key_len) && after < json_len) && json[after] == 58) && m_key_equal(json, start, key, key_len))) {
       (*value_pos) = (after + 1);
       return 0;
     }
@@ -435,40 +435,40 @@ int m_locate(nlcchar_arr0_ptr json, size_t json_len, nlcchar_arr0_ptr key, size_
   return 1;
 }
 int melodica_find_string(const char* json, size_t json_len, const char* key, size_t key_len, nlcsize_ptr value_offset, nlcsize_ptr value_len) {
-  if(((((json == (char*)NULL) || (key == (char*)NULL)) || (value_offset == (nlcsize_ptr)NULL)) || (value_len == (nlcsize_ptr)NULL))) {
+  if((((json == (char*)NULL || key == (char*)NULL) || value_offset == (nlcsize_ptr)NULL) || value_len == (nlcsize_ptr)NULL)) {
     return 4;
   }
   nlcchar_arr0_ptr json_bytes = ((nlcchar_arr0_ptr)json);
   nlcchar_arr0_ptr key_bytes = ((nlcchar_arr0_ptr)key);
   size_t pos = 0U;
   int status = m_locate(json_bytes, json_len, key_bytes, key_len, (&pos));
-  if((status != 0)) {
+  if(status != 0) {
     return status;
   }
   return m_melodica_parse_string_at(json_bytes, json_len, pos, value_offset, value_len);
 }
 int melodica_find_bool(const char* json, size_t json_len, const char* key, size_t key_len, nlcint_ptr value) {
-  if((((json == (char*)NULL) || (key == (char*)NULL)) || (value == (nlcint_ptr)NULL))) {
+  if(((json == (char*)NULL || key == (char*)NULL) || value == (nlcint_ptr)NULL)) {
     return 4;
   }
   nlcchar_arr0_ptr json_bytes = ((nlcchar_arr0_ptr)json);
   nlcchar_arr0_ptr key_bytes = ((nlcchar_arr0_ptr)key);
   size_t pos = 0U;
   int status = m_locate(json_bytes, json_len, key_bytes, key_len, (&pos));
-  if((status != 0)) {
+  if(status != 0) {
     return status;
   }
   return m_melodica_parse_bool_at(json_bytes, json_len, pos, value);
 }
 int melodica_find_u64(const char* json, size_t json_len, const char* key, size_t key_len, nluint64_ptr value) {
-  if((((json == (char*)NULL) || (key == (char*)NULL)) || (value == (nluint64_ptr)NULL))) {
+  if(((json == (char*)NULL || key == (char*)NULL) || value == (nluint64_ptr)NULL)) {
     return 4;
   }
   nlcchar_arr0_ptr json_bytes = ((nlcchar_arr0_ptr)json);
   nlcchar_arr0_ptr key_bytes = ((nlcchar_arr0_ptr)key);
   size_t pos = 0U;
   int status = m_locate(json_bytes, json_len, key_bytes, key_len, (&pos));
-  if((status != 0)) {
+  if(status != 0) {
     return status;
   }
   return m_melodica_parse_u64_at(json_bytes, json_len, pos, value);
