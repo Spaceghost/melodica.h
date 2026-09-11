@@ -1,0 +1,4 @@
+module Melodica [system] {
+    header "../../dist/melodica.h"
+    export *
+}

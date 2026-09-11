@@ -1,0 +1,12 @@
+local function melodica_version(): cuint <cimport> end
+local function melodica_stations_body(page_size: cuint, start_index: cuint,
+                                      output: *[0]cchar, output_cap: csize,
+                                      output_len: *csize): cint <cimport> end
+
+local body: [128]cchar
+local written: csize = 0
+
+assert(melodica_version() == 768)
+local rc = melodica_stations_body(25, 0, (@*[0]cchar)(&body[0]), 128, &written)
+assert(rc == 0)
+print('Nelua:', written, 'bytes')
