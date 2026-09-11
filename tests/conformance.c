@@ -33,6 +33,10 @@ int main(void) {
   CHECK(melodica_version() == MELODICA_VERSION);
   CHECK(strcmp(MELODICA_ENDPOINT_TIRED, "/api/v1/listener/addTiredSong") == 0);
   CHECK(strcmp(MELODICA_ENDPOINT_NARRATIVE, "/api/v1/playlist/narrative") == 0);
+  CHECK(strcmp(MELODICA_ENDPOINT_TRACK_STARTED, "/api/v1/listener/trackStarted") == 0);
+  CHECK(strcmp(MELODICA_ENDPOINT_PLAYBACK_PAUSED, "/api/v1/playback/playbackPaused") == 0);
+  CHECK(strcmp(MELODICA_ENDPOINT_STATION_DETAILS, "/api/v1/station/getStationDetails") == 0);
+  CHECK(strcmp(MELODICA_ENDPOINT_STATION_FEEDBACK, "/api/v1/station/getStationFeedback") == 0);
 
   {
     const char json[] =
@@ -46,6 +50,34 @@ int main(void) {
     CHECK(melodica_find_u64(json, sizeof json - 1, "trackLength", 11, &u) == MELODICA_OK);
     CHECK(u == 188);
     CHECK(melodica_find_string(json, sizeof json - 1, "missing", 7, &off, &len) == MELODICA_NOT_FOUND);
+  }
+
+  {
+    const char login_json[] =
+      "{\"authToken\":\"auth-123\",\"username\":\"listener@example.com\","
+      "\"webName\":\"listener\",\"userId\":\"u-42\"}";
+    melodica_login_view login;
+    CHECK(melodica_parse_login(login_json, sizeof login_json - 1, &login) == MELODICA_OK);
+    CHECK(login.present == MELODICA_LOGIN_ALL);
+    CHECK(slice_eq(login_json, login.auth_token, "auth-123"));
+    CHECK(slice_eq(login_json, login.username, "listener@example.com"));
+    CHECK(slice_eq(login_json, login.web_name, "listener"));
+    CHECK(slice_eq(login_json, login.user_id, "u-42"));
+  }
+
+  {
+    const char login_json[] = "{\"authToken\":\"auth-only\"}";
+    melodica_login_view login;
+    CHECK(melodica_parse_login(login_json, sizeof login_json - 1, &login) == MELODICA_OK);
+    CHECK(login.present == MELODICA_LOGIN_AUTH_TOKEN);
+    CHECK(slice_eq(login_json, login.auth_token, "auth-only"));
+    CHECK(login.username.length == 0);
+  }
+
+  {
+    const char bad_login[] = "{\"authToken\":12}";
+    melodica_login_view login;
+    CHECK(melodica_parse_login(bad_login, sizeof bad_login - 1, &login) == MELODICA_INVALID_JSON);
   }
 
   {
@@ -224,6 +256,24 @@ int main(void) {
                                 out, sizeof out, &written) == MELODICA_OK);
   CHECK(bytes_eq(out, written, "{\"musicId\":\"m\\\"2\",\"stationId\":\"s1\"}"));
 
+  CHECK(melodica_track_started_body("t\"k", 3,
+                                    out, sizeof out, &written) == MELODICA_OK);
+  CHECK(bytes_eq(out, written, "{\"trackToken\":\"t\\\"k\"}"));
+
+  CHECK(melodica_playback_paused_body(1, out, sizeof out, &written) == MELODICA_OK);
+  CHECK(bytes_eq(out, written, "{\"sync\":true}"));
+  CHECK(melodica_playback_paused_body(0, out, sizeof out, &written) == MELODICA_OK);
+  CHECK(bytes_eq(out, written, "{\"sync\":false}"));
+
+  CHECK(melodica_station_details_body("s\"1", 3, 1,
+                                      out, sizeof out, &written) == MELODICA_OK);
+  CHECK(bytes_eq(out, written, "{\"stationId\":\"s\\\"1\",\"isCurrentStation\":true}"));
+
+  CHECK(melodica_station_feedback_body("s1", 2, 100, 25, 0,
+                                       out, sizeof out, &written) == MELODICA_OK);
+  CHECK(bytes_eq(out, written,
+    "{\"pageSize\":100,\"startIndex\":25,\"stationId\":\"s1\",\"positive\":false}"));
+
   {
     char tiny[4];
     written = 0;
@@ -233,9 +283,13 @@ int main(void) {
 
   CHECK(melodica_parse_track(NULL, 0, (melodica_track_view *)out) == MELODICA_BAD_ARGUMENT);
   CHECK(melodica_parse_station(NULL, 0, (melodica_station_view *)out) == MELODICA_BAD_ARGUMENT);
+  CHECK(melodica_parse_login(NULL, 0, (melodica_login_view *)out) == MELODICA_BAD_ARGUMENT);
   CHECK(melodica_find_string(NULL, 0, "x", 1, &off, &len) == MELODICA_BAD_ARGUMENT);
   CHECK(melodica_tired_body(NULL, 0, out, sizeof out, &written) == MELODICA_BAD_ARGUMENT);
   CHECK(melodica_narrative_body(NULL, 0, "m", 1, out, sizeof out, &written) == MELODICA_BAD_ARGUMENT);
+  CHECK(melodica_track_started_body(NULL, 0, out, sizeof out, &written) == MELODICA_BAD_ARGUMENT);
+  CHECK(melodica_station_details_body(NULL, 0, 0, out, sizeof out, &written) == MELODICA_BAD_ARGUMENT);
+  CHECK(melodica_station_feedback_body(NULL, 0, 1, 0, 0, out, sizeof out, &written) == MELODICA_BAD_ARGUMENT);
   CHECK(melodica_json_escape(NULL, 0, out, sizeof out, &written) == MELODICA_BAD_ARGUMENT);
 
   puts("ok");
