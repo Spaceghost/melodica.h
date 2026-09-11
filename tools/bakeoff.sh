@@ -16,8 +16,10 @@ for name in "${candidates[@]}"; do
   echo "==> generating $name"
   # The distributable header must be target-neutral C99. Nelua's ordinary ABI
   # assertions describe the machine that generated the C, so omit them here;
-  # cross-compilation below is the portability gate instead.
-  NELUA_INIT="require('nelua.compactc').enable{static_asserts=false}" \
+  # cross-compilation below is the portability gate instead. The public header
+  # already declares cexport functions, so duplicate generated prototypes are
+  # omitted from the implementation half of the amalgamation.
+  NELUA_INIT="require('nelua.compactc').enable{static_asserts=false,export_declarations=false}" \
     "$NELUA" -r -c -o "build/c/$name.c" "impl/$name/melodica.nelua"
   ./tools/amalgamate.sh "build/c/$name.c" "build/headers/$name.h"
 
