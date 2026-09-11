@@ -5,12 +5,11 @@ on:
     branches: [master]
     paths:
       - 'lab/**'
+      - '!lab/BENCHMARK.tsv'
+      - '!lab/WINNER'
       - 'tools/language-bakeoff.sh'
       - '.github/workflows/language-bakeoff.yml'
       - 'tools/bootstrap-nelua.sh'
-    paths-ignore:
-      - 'lab/BENCHMARK.tsv'
-      - 'lab/WINNER'
   workflow_dispatch:
 
 permissions:
