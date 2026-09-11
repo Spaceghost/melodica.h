@@ -21,16 +21,20 @@ extern "C" {
 #endif
 
 #define MELODICA_VERSION_MAJOR 0
-#define MELODICA_VERSION_MINOR 3
+#define MELODICA_VERSION_MINOR 4
 #define MELODICA_VERSION_PATCH 0
 #define MELODICA_VERSION ((MELODICA_VERSION_MAJOR << 16) | (MELODICA_VERSION_MINOR << 8) | MELODICA_VERSION_PATCH)
 
-#define MELODICA_ENDPOINT_LOGIN        "/api/v1/auth/login"
-#define MELODICA_ENDPOINT_STATIONS     "/api/v1/station/getStations"
-#define MELODICA_ENDPOINT_PLAYLIST     "/api/v1/playlist/getFragment"
-#define MELODICA_ENDPOINT_FEEDBACK     "/api/v1/station/addFeedback"
-#define MELODICA_ENDPOINT_TIRED        "/api/v1/listener/addTiredSong"
-#define MELODICA_ENDPOINT_NARRATIVE    "/api/v1/playlist/narrative"
+#define MELODICA_ENDPOINT_LOGIN             "/api/v1/auth/login"
+#define MELODICA_ENDPOINT_STATIONS          "/api/v1/station/getStations"
+#define MELODICA_ENDPOINT_PLAYLIST          "/api/v1/playlist/getFragment"
+#define MELODICA_ENDPOINT_FEEDBACK          "/api/v1/station/addFeedback"
+#define MELODICA_ENDPOINT_TIRED             "/api/v1/listener/addTiredSong"
+#define MELODICA_ENDPOINT_NARRATIVE         "/api/v1/playlist/narrative"
+#define MELODICA_ENDPOINT_TRACK_STARTED     "/api/v1/listener/trackStarted"
+#define MELODICA_ENDPOINT_PLAYBACK_PAUSED   "/api/v1/playback/playbackPaused"
+#define MELODICA_ENDPOINT_STATION_DETAILS   "/api/v1/station/getStationDetails"
+#define MELODICA_ENDPOINT_STATION_FEEDBACK  "/api/v1/station/getStationFeedback"
 
 #define MELODICA_OK             0
 #define MELODICA_NOT_FOUND      1
@@ -84,6 +88,20 @@ typedef struct melodica_station_view {
     melodica_slice creator_webname;
 } melodica_station_view;
 
+#define MELODICA_LOGIN_AUTH_TOKEN  UINT32_C(1)
+#define MELODICA_LOGIN_USERNAME    UINT32_C(2)
+#define MELODICA_LOGIN_WEB_NAME    UINT32_C(4)
+#define MELODICA_LOGIN_USER_ID     UINT32_C(8)
+#define MELODICA_LOGIN_ALL         UINT32_C(15)
+
+typedef struct melodica_login_view {
+    uint32_t present;
+    melodica_slice auth_token;
+    melodica_slice username;
+    melodica_slice web_name;
+    melodica_slice user_id;
+} melodica_login_view;
+
 MELODICA_API unsigned melodica_version(void);
 
 MELODICA_API int melodica_find_string(const char *json, size_t json_len,
@@ -103,6 +121,9 @@ MELODICA_API int melodica_parse_track(const char *json, size_t json_len,
 
 MELODICA_API int melodica_parse_station(const char *json, size_t json_len,
                                         melodica_station_view *station);
+
+MELODICA_API int melodica_parse_login(const char *json, size_t json_len,
+                                      melodica_login_view *login);
 
 /* Initialize *cursor to zero, then call until MELODICA_NOT_FOUND. */
 MELODICA_API int melodica_track_next(const char *json, size_t json_len,
@@ -145,6 +166,29 @@ MELODICA_API int melodica_narrative_body(const char *station_id, size_t station_
                                          const char *music_id, size_t music_id_len,
                                          char *output, size_t output_cap,
                                          size_t *output_len);
+
+MELODICA_API int melodica_track_started_body(const char *track_token,
+                                             size_t track_token_len,
+                                             char *output, size_t output_cap,
+                                             size_t *output_len);
+
+MELODICA_API int melodica_playback_paused_body(int sync,
+                                               char *output, size_t output_cap,
+                                               size_t *output_len);
+
+MELODICA_API int melodica_station_details_body(const char *station_id,
+                                               size_t station_id_len,
+                                               int is_current_station,
+                                               char *output, size_t output_cap,
+                                               size_t *output_len);
+
+MELODICA_API int melodica_station_feedback_body(const char *station_id,
+                                                size_t station_id_len,
+                                                unsigned page_size,
+                                                unsigned start_index,
+                                                int positive,
+                                                char *output, size_t output_cap,
+                                                size_t *output_len);
 
 #ifdef __cplusplus
 } /* extern "C" */
