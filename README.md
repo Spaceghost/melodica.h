@@ -34,24 +34,21 @@ Initialize a `size_t cursor = 0` and call `melodica_track_next` or `melodica_sta
 
 The current request surface includes login, stations, playlist fragments, thumbs feedback, tired-song, narrative/explanation, track-started reporting, playback-paused/sync, station details, and station feedback. All body writers escape caller strings and write into caller-provided buffers.
 
-## Language consumers
+## C99 emitter league
 
-The exact same generated C99 implementation is continuously exercised from:
+Language experiments have one admission rule: **the compiler implementation must emit C source that is accepted again in C99 mode**. Merely having a C ABI does not count.
 
-- C
-- C++
-- Zig
+The active common-ABI competitors are:
+
+- C99
 - Nelua
-- **Odin**
-- Rust
-- Go/cgo
-- Objective-C
-- Swift
-- WASI
+- Zig through its C backend (`-ofmt=c`)
 
-The native consumers parse the same login fixture and verify `melodica_login_view` layout, present bits, offsets, lengths, and zero-copy slices. This is intentionally stronger than merely proving a linker can find `melodica_version`.
+The generated C from every challenger is compiled again with `-std=c99` before it may enter the benchmark. Native-only Odin, ordinary Rust, Go, Swift, Objective-C, and C++ consumers are intentionally not part of this project. A surface language may return through a different implementation that emits C: for example Spinel for Ruby or `rustc_codegen_c` for Rust.
 
-See [`examples/`](examples/README.md). Bindings stay thin; there is still only one protocol implementation to debug.
+The expansion pool intentionally favors strange source-to-C systems: Spinel, Nim, Scheme-to-C compilers, V, Vala, ATS/Postiats, Mercury, Idris2 RefC, Koka, Pallene, Cython, and older research compilers when they can still be made reproducible.
+
+See [`C99_EMITTERS.md`](C99_EMITTERS.md) and [`lab/`](lab/README.md).
 
 ## The bake-off
 
@@ -77,6 +74,6 @@ Consumers need only `dist/melodica.h`; they do not need Nelua or Zig.
 
 ## Development rule
 
-`master` is the integration branch. Comparative implementations coexist in-tree rather than hiding on feature branches. Generated release commits and language/docs-only changes do not recursively wake the parser bake-off.
+`master` is the integration branch. Comparative implementations coexist in-tree rather than hiding on feature branches. Generated release commits and C99-emitter/docs-only changes do not recursively wake unrelated bake-offs.
 
 See [`DESIGN.md`](DESIGN.md) for scoring and ABI details.

@@ -7,11 +7,12 @@ on:
       - 'dist/**'
       - 'README.md'
       - 'DESIGN.md'
+      - 'C99_EMITTERS.md'
       - 'examples/**'
       - 'bindings/**'
       - 'lab/**'
-      - '.github/workflows/languages.yml'
       - '.github/workflows/language-bakeoff.yml'
+      - 'tools/language-bakeoff.sh'
   workflow_dispatch:
 
 permissions:
@@ -29,18 +30,23 @@ jobs:
         with:
           ref: master
           fetch-depth: 0
+
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
+
       - name: Cache pinned Nelua compiler
         uses: actions/cache@v4
         with:
           path: .cache/nelua-lang
           key: melodica-nelua-${{ runner.os }}-${{ hashFiles('tools/bootstrap-nelua.sh') }}
+
       - name: Build, test, compare, and select
         run: ./tools/bakeoff.sh
+
       - name: Reject whitespace damage
         run: git diff --check
+
       - name: Publish winning generated header to master
         shell: bash
         run: |
@@ -54,6 +60,7 @@ jobs:
           git add dist/melodica.h dist/WINNER dist/BENCHMARK.tsv
           git commit -m "bakeoff: promote ${winner} implementation"
           git push origin HEAD:master
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
