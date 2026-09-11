@@ -1,0 +1,15 @@
+.zig-cache/
+zig-out/
+.cache/
+build/
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.profraw
+*.profdata
+.DS_Store
