@@ -36,11 +36,14 @@ main :: proc() {
     if rc != 0 do panic("melodica_parse_login failed")
     if login.present != 15 do panic("bad login present mask")
 
+    // Odin keeps compile-time constants intentionally rigid. Copy the literal
+    // into a runtime string before slicing with offsets returned by C.
+    json := LOGIN_JSON
     auth_start := int(login.auth_token.offset)
     auth_end := auth_start + int(login.auth_token.length)
-    if LOGIN_JSON[auth_start:auth_end] != "auth-123" do panic("bad auth token slice")
+    if json[auth_start:auth_end] != "auth-123" do panic("bad auth token slice")
 
     user_start := int(login.username.offset)
     user_end := user_start + int(login.username.length)
-    if LOGIN_JSON[user_start:user_end] != "listener@example.com" do panic("bad username slice")
+    if json[user_start:user_end] != "listener@example.com" do panic("bad username slice")
 }
