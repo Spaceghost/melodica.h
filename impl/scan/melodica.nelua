@@ -58,10 +58,10 @@ local function locate(json: *[0]cchar, json_len: csize,
   return NOT_FOUND
 end
 
-local function find_string(json: cstring <const>, json_len: csize,
-                           key: cstring <const>, key_len: csize,
-                           value_offset: *csize, value_len: *csize): cint
-                           <cexport, codename 'melodica_find_string'>
+global function melodica_find_string(json: cstring <const>, json_len: csize,
+                                     key: cstring <const>, key_len: csize,
+                                     value_offset: *csize, value_len: *csize): cint
+                                     <cexport, codename 'melodica_find_string'>
   if json == nilptr or key == nilptr or value_offset == nilptr or
      value_len == nilptr then return BAD_ARGUMENT end
   local json_bytes: *[0]cchar = (@*[0]cchar)(json)
@@ -72,10 +72,10 @@ local function find_string(json: cstring <const>, json_len: csize,
   return melodica_parse_string_at(json_bytes, json_len, pos, value_offset, value_len)
 end
 
-local function find_bool(json: cstring <const>, json_len: csize,
-                         key: cstring <const>, key_len: csize,
-                         value: *cint): cint
-                         <cexport, codename 'melodica_find_bool'>
+global function melodica_find_bool(json: cstring <const>, json_len: csize,
+                                   key: cstring <const>, key_len: csize,
+                                   value: *cint): cint
+                                   <cexport, codename 'melodica_find_bool'>
   if json == nilptr or key == nilptr or value == nilptr then return BAD_ARGUMENT end
   local json_bytes: *[0]cchar = (@*[0]cchar)(json)
   local key_bytes: *[0]cchar = (@*[0]cchar)(key)
@@ -85,10 +85,10 @@ local function find_bool(json: cstring <const>, json_len: csize,
   return melodica_parse_bool_at(json_bytes, json_len, pos, value)
 end
 
-local function find_u64(json: cstring <const>, json_len: csize,
-                        key: cstring <const>, key_len: csize,
-                        value: *uint64): cint
-                        <cexport, codename 'melodica_find_u64'>
+global function melodica_find_u64(json: cstring <const>, json_len: csize,
+                                  key: cstring <const>, key_len: csize,
+                                  value: *uint64): cint
+                                  <cexport, codename 'melodica_find_u64'>
   if json == nilptr or key == nilptr or value == nilptr then return BAD_ARGUMENT end
   local json_bytes: *[0]cchar = (@*[0]cchar)(json)
   local key_bytes: *[0]cchar = (@*[0]cchar)(key)
@@ -97,3 +97,5 @@ local function find_u64(json: cstring <const>, json_len: csize,
   if status ~= OK then return status end
   return melodica_parse_u64_at(json_bytes, json_len, pos, value)
 end
+
+require 'src.track'

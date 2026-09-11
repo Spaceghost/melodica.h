@@ -46,18 +46,25 @@ A candidate is eligible only when all conformance tests pass under ASan/UBSan an
 For eligible candidates, lower is better:
 
 ```text
-score = 0.65 * speed_ratio
+score = 0.35 * generic_lookup_speed_ratio
+      + 0.30 * whole_track_speed_ratio
       + 0.20 * object_size_ratio
       + 0.15 * header_size_ratio
 ```
 
-Each ratio is relative to the best candidate in that measurement from the same run. Timing uses the median of repeated trials.
+Each ratio is relative to the best candidate in that measurement from the same run. Timing uses the median of seven trials.
 
 If a current winner exists, a challenger must beat it by at least **3%** to replace it. This prevents runner noise from turning release selection into a weather vane. A failing current winner is replaced immediately by the best passing candidate.
 
+## Zero-copy views
+
+`melodica_track_view` contains offsets and lengths into the caller's JSON buffer. It owns no memory and performs no decoding copies. Its `present` bitmask distinguishes a missing field from a field whose valid value is zero or empty. The caller must keep the JSON buffer alive while using the slices.
+
+This representation is deliberately friendly to Swift `Data`, JavaScript/WASM linear memory, mmap'd data, embedded buffers, and ordinary C arrays without inventing a library allocator.
+
 ## ABI
 
-The public ABI uses only C primitives and caller-owned pointers. Nelua records remain internal so generated type naming can change freely.
+The public ABI uses only C primitives, fixed records, and caller-owned pointers. Nelua imports the public record layouts from the hand-written declaration half of the amalgamation instead of emitting a second competing definition.
 
 Status codes:
 
@@ -83,6 +90,8 @@ The release profile therefore omits Nelua's host-ABI static assertions and inste
 `hash` is allowed additional arithmetic if it reduces expensive key comparisons on realistic large payloads.
 
 `tiny` optimizes generated/source size and may use direct pattern search, but it must still reject escaped fake keys and malformed scalar values. Small wrong code is still wrong code, merely more efficiently disappointing.
+
+A future specialized candidate may parse a whole track in one pass. It does not receive special scoring treatment: it must keep the generic API correct and its track-speed win must outweigh any source/object growth.
 
 ## Compiler fork policy
 

@@ -20,6 +20,10 @@ static int bytes_eq(const char *p, size_t n, const char *want) {
   return n == strlen(want) && memcmp(p, want, n) == 0;
 }
 
+static int slice_eq(const char *json, melodica_slice s, const char *want) {
+  return bytes_eq(json + s.offset, s.length, want);
+}
+
 int main(void) {
   size_t off = 0, len = 0, written = 0;
   int b = -1;
@@ -43,6 +47,44 @@ int main(void) {
   }
 
   {
+    const char track_json[] =
+      "{\"albumTitle\":\"An Album\",\"artistName\":\"An Artist\","
+      "\"songTitle\":\"A Song\",\"trackToken\":\"PT-token\","
+      "\"stationId\":\"3793312577613735337\",\"trackLength\":188,"
+      "\"allowSkip\":true,\"audioEncoding\":\"aacplus\","
+      "\"audioURL\":\"https://audio.example.invalid/a\"}";
+    melodica_track_view track;
+    CHECK(melodica_parse_track(track_json, sizeof track_json - 1, &track) == MELODICA_OK);
+    CHECK(track.present == MELODICA_TRACK_ALL);
+    CHECK(slice_eq(track_json, track.song_title, "A Song"));
+    CHECK(slice_eq(track_json, track.artist_name, "An Artist"));
+    CHECK(slice_eq(track_json, track.album_title, "An Album"));
+    CHECK(slice_eq(track_json, track.track_token, "PT-token"));
+    CHECK(slice_eq(track_json, track.station_id, "3793312577613735337"));
+    CHECK(slice_eq(track_json, track.audio_url, "https://audio.example.invalid/a"));
+    CHECK(slice_eq(track_json, track.audio_encoding, "aacplus"));
+    CHECK(track.track_length == 188);
+    CHECK(track.allow_skip == 1);
+  }
+
+  {
+    const char partial[] = "{\"songTitle\":\"Only a title\"}";
+    melodica_track_view track;
+    CHECK(melodica_parse_track(partial, sizeof partial - 1, &track) == MELODICA_OK);
+    CHECK(track.present == MELODICA_TRACK_SONG_TITLE);
+    CHECK(slice_eq(partial, track.song_title, "Only a title"));
+    CHECK(track.artist_name.length == 0);
+    CHECK(track.track_length == 0);
+    CHECK(track.allow_skip == 0);
+  }
+
+  {
+    const char bad_track[] = "{\"songTitle\":\"fine\",\"trackLength\":123oops}";
+    melodica_track_view track;
+    CHECK(melodica_parse_track(bad_track, sizeof bad_track - 1, &track) == MELODICA_INVALID_JSON);
+  }
+
+  {
     const char json[] = "{\"n\":18446744073709551615}";
     CHECK(melodica_find_u64(json, sizeof json - 1, "n", 1, &u) == MELODICA_OK);
     CHECK(u == UINT64_MAX);
@@ -53,7 +95,6 @@ int main(void) {
     CHECK(melodica_find_u64(json, sizeof json - 1, "n", 1, &u) == MELODICA_OVERFLOW);
   }
 
-  /* Scalar token boundaries matter. Accepting a valid prefix is still wrong. */
   {
     const char bad_bool[] = "{\"x\":trueish}";
     const char bad_num[] = "{\"x\":123oops}";
@@ -101,6 +142,7 @@ int main(void) {
     CHECK(written <= sizeof tiny);
   }
 
+  CHECK(melodica_parse_track(NULL, 0, (melodica_track_view *)out) == MELODICA_BAD_ARGUMENT);
   CHECK(melodica_find_string(NULL, 0, "x", 1, &off, &len) == MELODICA_BAD_ARGUMENT);
   CHECK(melodica_json_escape(NULL, 0, out, sizeof out, &written) == MELODICA_BAD_ARGUMENT);
 
