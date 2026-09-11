@@ -1,0 +1,233 @@
+-- Allocation-free iteration over station and track arrays. `cursor` is owned by
+-- the caller: initialize it to zero, keep passing the same value, and stop on
+-- NOT_FOUND. Returned slices are rebased to the original full JSON buffer.
+require 'src.value'
+require 'src.station'
+
+local OK: cint <comptime> = 0
+local NOT_FOUND: cint <comptime> = 1
+local INVALID_JSON: cint <comptime> = 2
+local BAD_ARGUMENT: cint <comptime> = 4
+
+local TRACK_SONG_TITLE: uint32 <comptime> = 1
+local TRACK_ARTIST_NAME: uint32 <comptime> = 2
+local TRACK_ALBUM_TITLE: uint32 <comptime> = 4
+local TRACK_TOKEN: uint32 <comptime> = 8
+local TRACK_STATION_ID: uint32 <comptime> = 16
+local TRACK_AUDIO_URL: uint32 <comptime> = 32
+local TRACK_AUDIO_ENCODING: uint32 <comptime> = 64
+
+local STATION_STATION_ID: uint32 <comptime> = 1
+local STATION_PANDORA_ID: uint32 <comptime> = 2
+local STATION_ART_ID: uint32 <comptime> = 4
+local STATION_NAME: uint32 <comptime> = 8
+local STATION_CREATOR_WEBNAME: uint32 <comptime> = 16
+
+local function collection_key_equal(json: *[0]cchar, start: csize,
+                                    key: *[0]cchar, key_len: csize): boolean
+  local i: csize = 0
+  while i < key_len do
+    if json[start+i] ~= key[i] then return false end
+    i = i + 1
+  end
+  return true
+end
+
+local function collection_find_array(json: *[0]cchar, json_len: csize,
+                                     key: *[0]cchar, key_len: csize,
+                                     cursor: *csize): cint
+  local i: csize = 0
+  while i < json_len do
+    if json[i] ~= 34 then
+      i = i + 1
+      continue
+    end
+
+    local start = i + 1
+    local j = start
+    local escaped = false
+    while j < json_len do
+      local c = json[j]
+      if c == 92 then
+        escaped = true
+        j = j + 1
+        if j >= json_len then return INVALID_JSON end
+        j = j + 1
+      elseif c == 34 then
+        break
+      elseif c >= 0 and c < 32 then
+        return INVALID_JSON
+      else
+        j = j + 1
+      end
+    end
+    if j >= json_len then return INVALID_JSON end
+
+    local after = melodica_skip_ws(json, json_len, j + 1)
+    if not escaped and j - start == key_len and after < json_len and
+       json[after] == 58 and collection_key_equal(json, start, key, key_len) then
+      local value = melodica_skip_ws(json, json_len, after + 1)
+      if value >= json_len or json[value] ~= 91 then return INVALID_JSON end
+      $cursor = value + 1
+      return OK
+    end
+    i = j + 1
+  end
+  return NOT_FOUND
+end
+
+local function collection_skip_string(json: *[0]cchar, json_len: csize,
+                                      pos: csize, after: *csize): cint
+  local i = pos + 1
+  while i < json_len do
+    local c = json[i]
+    if c == 92 then
+      i = i + 1
+      if i >= json_len then return INVALID_JSON end
+      i = i + 1
+    elseif c == 34 then
+      $after = i + 1
+      return OK
+    elseif c >= 0 and c < 32 then
+      return INVALID_JSON
+    else
+      i = i + 1
+    end
+  end
+  return INVALID_JSON
+end
+
+local function collection_next_object(json: *[0]cchar, json_len: csize,
+                                      cursor: *csize, object_start: *csize,
+                                      object_end: *csize): cint
+  local i = melodica_skip_ws(json, json_len, $cursor)
+  if i >= json_len then return INVALID_JSON end
+
+  if json[i] == 93 then return NOT_FOUND end
+  if json[i] == 44 then
+    i = melodica_skip_ws(json, json_len, i + 1)
+    if i >= json_len then return INVALID_JSON end
+    if json[i] == 93 then return INVALID_JSON end
+  end
+  if json[i] ~= 123 then return INVALID_JSON end
+
+  $object_start = i
+  local depth: csize = 0
+  while i < json_len do
+    local c = json[i]
+    if c == 34 then
+      local after: csize = 0
+      local status = collection_skip_string(json, json_len, i, &after)
+      if status ~= OK then return status end
+      i = after
+      continue
+    elseif c == 123 then
+      depth = depth + 1
+    elseif c == 125 then
+      if depth == 0 then return INVALID_JSON end
+      depth = depth - 1
+      if depth == 0 then
+        $object_end = i + 1
+        $cursor = i + 1
+        return OK
+      end
+    end
+    i = i + 1
+  end
+  return INVALID_JSON
+end
+
+local function collection_rebase_track(track: *melodica_track_view, base: csize)
+  if (track.present & TRACK_SONG_TITLE) ~= 0 then
+    track.song_title.offset = track.song_title.offset + base
+  end
+  if (track.present & TRACK_ARTIST_NAME) ~= 0 then
+    track.artist_name.offset = track.artist_name.offset + base
+  end
+  if (track.present & TRACK_ALBUM_TITLE) ~= 0 then
+    track.album_title.offset = track.album_title.offset + base
+  end
+  if (track.present & TRACK_TOKEN) ~= 0 then
+    track.track_token.offset = track.track_token.offset + base
+  end
+  if (track.present & TRACK_STATION_ID) ~= 0 then
+    track.station_id.offset = track.station_id.offset + base
+  end
+  if (track.present & TRACK_AUDIO_URL) ~= 0 then
+    track.audio_url.offset = track.audio_url.offset + base
+  end
+  if (track.present & TRACK_AUDIO_ENCODING) ~= 0 then
+    track.audio_encoding.offset = track.audio_encoding.offset + base
+  end
+end
+
+local function collection_rebase_station(station: *melodica_station_view,
+                                         base: csize)
+  if (station.present & STATION_STATION_ID) ~= 0 then
+    station.station_id.offset = station.station_id.offset + base
+  end
+  if (station.present & STATION_PANDORA_ID) ~= 0 then
+    station.pandora_id.offset = station.pandora_id.offset + base
+  end
+  if (station.present & STATION_ART_ID) ~= 0 then
+    station.art_id.offset = station.art_id.offset + base
+  end
+  if (station.present & STATION_NAME) ~= 0 then
+    station.name.offset = station.name.offset + base
+  end
+  if (station.present & STATION_CREATOR_WEBNAME) ~= 0 then
+    station.creator_webname.offset = station.creator_webname.offset + base
+  end
+end
+
+global function melodica_track_next(json: cstring <const>, json_len: csize,
+                                    cursor: *csize,
+                                    track: *melodica_track_view): cint
+                                    <cexport, codename 'melodica_track_next'>
+  if json == nilptr or cursor == nilptr or track == nilptr then
+    return BAD_ARGUMENT
+  end
+  local bytes: *[0]cchar = (@*[0]cchar)(json)
+  if $cursor == 0 then
+    local key: *[0]cchar = (@*[0]cchar)("tracks")
+    local status = collection_find_array(bytes, json_len, key, 6, cursor)
+    if status ~= OK then return status end
+  end
+
+  local start: csize = 0
+  local finish: csize = 0
+  local status = collection_next_object(bytes, json_len, cursor, &start, &finish)
+  if status ~= OK then return status end
+
+  local object_json: cstring = (@cstring)(&bytes[start])
+  status = melodica_parse_track(object_json, finish - start, track)
+  if status ~= OK then return status end
+  collection_rebase_track(track, start)
+  return OK
+end
+
+global function melodica_station_next(json: cstring <const>, json_len: csize,
+                                      cursor: *csize,
+                                      station: *melodica_station_view): cint
+                                      <cexport, codename 'melodica_station_next'>
+  if json == nilptr or cursor == nilptr or station == nilptr then
+    return BAD_ARGUMENT
+  end
+  local bytes: *[0]cchar = (@*[0]cchar)(json)
+  if $cursor == 0 then
+    local key: *[0]cchar = (@*[0]cchar)("stations")
+    local status = collection_find_array(bytes, json_len, key, 8, cursor)
+    if status ~= OK then return status end
+  end
+
+  local start: csize = 0
+  local finish: csize = 0
+  local status = collection_next_object(bytes, json_len, cursor, &start, &finish)
+  if status ~= OK then return status end
+
+  local object_json: cstring = (@cstring)(&bytes[start])
+  status = melodica_parse_station(object_json, finish - start, station)
+  if status ~= OK then return status end
+  collection_rebase_station(station, start)
+  return OK
+end
