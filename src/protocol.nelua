@@ -13,8 +13,6 @@ local function putc(output: *[0]cchar, output_cap: csize,
   return true
 end
 
--- cstring is used for literals because Nelua emits it as a direct C char
--- pointer. Mutable unbounded pointers are used internally only for indexed I/O.
 local function append(output: *[0]cchar, output_cap: csize, pos: *csize,
                       input: cstring <const>, input_len: csize): boolean
   local bytes: *[0]cchar = (@*[0]cchar)(input)
@@ -90,7 +88,7 @@ local function append_escaped(output: *[0]cchar, output_cap: csize, pos: *csize,
 end
 
 local function version(): cuint <cexport, codename 'melodica_version'>
-  return 768 -- 0.3.0
+  return 1024 -- 0.4.0
 end
 
 local function json_escape(input: cstring <const>, input_len: csize,
@@ -232,6 +230,93 @@ local function narrative_body(station_id: cstring <const>, station_id_len: csize
      not append(output, output_cap, &pos, "\",\"stationId\":\"", 15) or
      not append_escaped(output, output_cap, &pos, station_bytes, station_id_len) or
      not append(output, output_cap, &pos, "\"}", 2) then
+    $output_len = pos
+    return NO_SPACE
+  end
+  $output_len = pos
+  return OK
+end
+
+local function track_started_body(track_token: cstring <const>,
+                                  track_token_len: csize,
+                                  output: *[0]cchar, output_cap: csize,
+                                  output_len: *csize): cint
+                                  <cexport, codename 'melodica_track_started_body'>
+  if track_token == nilptr or output == nilptr or output_len == nilptr then
+    return BAD_ARGUMENT
+  end
+  local token_bytes: *[0]cchar = (@*[0]cchar)(track_token)
+  local pos: csize = 0
+  if not append(output, output_cap, &pos, "{\"trackToken\":\"", 15) or
+     not append_escaped(output, output_cap, &pos, token_bytes, track_token_len) or
+     not append(output, output_cap, &pos, "\"}", 2) then
+    $output_len = pos
+    return NO_SPACE
+  end
+  $output_len = pos
+  return OK
+end
+
+local function playback_paused_body(sync: cint,
+                                    output: *[0]cchar, output_cap: csize,
+                                    output_len: *csize): cint
+                                    <cexport, codename 'melodica_playback_paused_body'>
+  if output == nilptr or output_len == nilptr then return BAD_ARGUMENT end
+  local pos: csize = 0
+  if not append(output, output_cap, &pos, "{\"sync\":", 8) or
+     not append_bool(output, output_cap, &pos, sync) or
+     not putc(output, output_cap, &pos, 125) then
+    $output_len = pos
+    return NO_SPACE
+  end
+  $output_len = pos
+  return OK
+end
+
+local function station_details_body(station_id: cstring <const>,
+                                    station_id_len: csize,
+                                    is_current_station: cint,
+                                    output: *[0]cchar, output_cap: csize,
+                                    output_len: *csize): cint
+                                    <cexport, codename 'melodica_station_details_body'>
+  if station_id == nilptr or output == nilptr or output_len == nilptr then
+    return BAD_ARGUMENT
+  end
+  local station_bytes: *[0]cchar = (@*[0]cchar)(station_id)
+  local pos: csize = 0
+  if not append(output, output_cap, &pos, "{\"stationId\":\"", 14) or
+     not append_escaped(output, output_cap, &pos, station_bytes, station_id_len) or
+     not append(output, output_cap, &pos, "\",\"isCurrentStation\":", 21) or
+     not append_bool(output, output_cap, &pos, is_current_station) or
+     not putc(output, output_cap, &pos, 125) then
+    $output_len = pos
+    return NO_SPACE
+  end
+  $output_len = pos
+  return OK
+end
+
+local function station_feedback_body(station_id: cstring <const>,
+                                     station_id_len: csize,
+                                     page_size: cuint, start_index: cuint,
+                                     positive: cint,
+                                     output: *[0]cchar, output_cap: csize,
+                                     output_len: *csize): cint
+                                     <cexport, codename 'melodica_station_feedback_body'>
+  if station_id == nilptr or output == nilptr or output_len == nilptr then
+    return BAD_ARGUMENT
+  end
+  local station_bytes: *[0]cchar = (@*[0]cchar)(station_id)
+  local pos: csize = 0
+  if not append(output, output_cap, &pos, "{\"pageSize\":", 12) or
+     not append_u64(output, output_cap, &pos, (@uint64)(page_size)) or
+     not append(output, output_cap, &pos, ",\"startIndex\":", 14) or
+     not append_u64(output, output_cap, &pos, (@uint64)(start_index)) or
+     not append(output, output_cap, &pos, ",\"stationId\":\"", 14) or
+     not append_escaped(output, output_cap, &pos, station_bytes, station_id_len) or
+     not append(output, output_cap, &pos, "\",\"positive\":", 13) or
+     not append_bool(output, output_cap, &pos, positive) or
+     not putc(output, output_cap, &pos, 125) then
     $output_len = pos
     return NO_SPACE
   end
