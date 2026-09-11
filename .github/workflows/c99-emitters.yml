@@ -1,0 +1,107 @@
+name: C99 emitter census
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'lab/emitters/**'
+      - '.github/workflows/c99-emitters.yml'
+      - 'C99_EMITTERS.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  spinel-ruby:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Spinel and emit C
+        shell: bash
+        run: |
+          set -euxo pipefail
+          out="$GITHUB_WORKSPACE/build/emitter-census"
+          mkdir -p "$out"
+          git clone --depth=1 https://github.com/matz/spinel.git /tmp/spinel
+          make -C /tmp/spinel deps
+          make -C /tmp/spinel -j2 bin/spinel
+          /tmp/spinel/bin/spinel "$GITHUB_WORKSPACE/lab/emitters/spinel/smoke.rb" \
+            -c -o "$out/spinel.c"
+          test -s "$out/spinel.c"
+          cc -std=c99 -I/tmp/spinel/lib -c "$out/spinel.c" -o "$out/spinel.o"
+          wc -c "$out/spinel.c" "$out/spinel.o"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: emitter-spinel-ruby
+          path: build/emitter-census/
+
+  nim:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Emit and compile Nim C in C99 mode
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y nim
+          out="$GITHUB_WORKSPACE/build/emitter-census"
+          mkdir -p "$out/nimcache"
+          nim c -d:release --passC:-std=c99 --nimcache:"$out/nimcache" \
+            -o:"$out/nim-smoke" "$GITHUB_WORKSPACE/lab/emitters/nim/smoke.nim"
+          test "$("$out/nim-smoke")" = 81
+          find "$out/nimcache" -type f -name '*.c' -print -exec wc -c {} \;
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: emitter-nim
+          path: build/emitter-census/
+
+  chicken-scheme:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Translate CHICKEN Scheme and compile emitted C99
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y chicken-bin libchicken-dev
+          out="$GITHUB_WORKSPACE/build/emitter-census"
+          mkdir -p "$out"
+          chicken "$GITHUB_WORKSPACE/lab/emitters/chicken/smoke.scm" \
+            -output-file "$out/chicken.c"
+          test -s "$out/chicken.c"
+          chicken_h=$(dpkg -L libchicken-dev | grep '/chicken\.h$' | head -n1)
+          cc -std=c99 -I"$(dirname "$chicken_h")" -c "$out/chicken.c" -o "$out/chicken.o"
+          wc -c "$out/chicken.c" "$out/chicken.o"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: emitter-chicken-scheme
+          path: build/emitter-census/
+
+  gambit-scheme:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Translate Gambit Scheme and compile emitted C99
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gambc libgambit4-dev
+          out="$GITHUB_WORKSPACE/build/emitter-census"
+          mkdir -p "$out"
+          gsc -c -o "$out/gambit.c" "$GITHUB_WORKSPACE/lab/emitters/gambit/smoke.scm"
+          test -s "$out/gambit.c"
+          gambit_h=$(dpkg -L libgambit4-dev | grep '/gambit\.h$' | head -n1)
+          cc -std=c99 -I"$(dirname "$gambit_h")" -c "$out/gambit.c" -o "$out/gambit.o"
+          wc -c "$out/gambit.c" "$out/gambit.o"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: emitter-gambit-scheme
+          path: build/emitter-census/
