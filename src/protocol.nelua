@@ -90,7 +90,7 @@ local function append_escaped(output: *[0]cchar, output_cap: csize, pos: *csize,
 end
 
 local function version(): cuint <cexport, codename 'melodica_version'>
-  return 256 -- 0.1.0
+  return 512 -- 0.2.0
 end
 
 local function json_escape(input: cstring <const>, input_len: csize,
