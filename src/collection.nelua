@@ -231,3 +231,5 @@ global function melodica_station_next(json: cstring <const>, json_len: csize,
   collection_rebase_station(station, start)
   return OK
 end
+
+require 'src.login'
