@@ -19,82 +19,112 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  unix-languages:
+  c:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: master
-
+        with: { ref: master }
       - uses: mlugg/setup-zig@v2
-        with:
-          version: 0.16.0
+        with: { version: 0.16.0 }
+      - run: |
+          mkdir -p build/languages
+          zig cc -std=c99 -O2 -Wall -Wextra -Werror -pedantic -c bindings/melodica.c -o build/languages/melodica.o
+          zig cc -std=c99 -Wall -Wextra -Werror -pedantic examples/c/main.c build/languages/melodica.o -o build/languages/c
+          build/languages/c
 
-      - uses: laytan/setup-odin@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          release: latest
+  cpp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: master }
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
+      - run: |
+          mkdir -p build/languages
+          zig cc -std=c99 -O2 -c bindings/melodica.c -o build/languages/melodica.o
+          zig c++ -std=c++17 -Wall -Wextra -Werror examples/cpp/main.cpp build/languages/melodica.o -o build/languages/cpp
+          build/languages/cpp
 
+  zig:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: master }
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
+      - run: |
+          mkdir -p build/languages
+          zig cc -std=c99 -O2 -c bindings/melodica.c -o build/languages/melodica.o
+          zig build-exe examples/zig/main.zig build/languages/melodica.o -I . -femit-bin=build/languages/zig
+          build/languages/zig
+
+  nelua:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: master }
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
       - name: Cache pinned Nelua compiler
         uses: actions/cache@v4
         with:
           path: .cache/nelua-lang
           key: melodica-nelua-${{ runner.os }}-${{ hashFiles('tools/bootstrap-nelua.sh') }}
-
-      - name: Build common C ABI artifact
-        run: |
+      - run: |
           mkdir -p build/languages
-          zig cc -std=c99 -O2 -Wall -Wextra -Werror -pedantic -c bindings/melodica.c -o build/languages/melodica.o
-          zig ar rcs build/languages/libmelodica.a build/languages/melodica.o
-
-      - name: C
-        run: |
-          zig cc -std=c99 -Wall -Wextra -Werror -pedantic examples/c/main.c build/languages/melodica.o -o build/languages/c
-          build/languages/c
-
-      - name: C++
-        run: |
-          zig c++ -std=c++17 -Wall -Wextra -Werror examples/cpp/main.cpp build/languages/melodica.o -o build/languages/cpp
-          build/languages/cpp
-
-      - name: Zig
-        run: |
-          zig build-exe examples/zig/main.zig build/languages/melodica.o -I . -femit-bin=build/languages/zig
-          build/languages/zig
-
-      - name: Nelua
-        run: |
+          zig cc -std=c99 -O2 -c bindings/melodica.c -o build/languages/melodica.o
           NELUA=$(./tools/bootstrap-nelua.sh)
           "$NELUA" -c -o build/languages/nelua.c examples/nelua/main.nelua
           zig cc -std=c99 -O2 build/languages/nelua.c examples/nelua/driver.c build/languages/melodica.o -o build/languages/nelua
           build/languages/nelua
 
-      - name: Odin
-        run: |
+  odin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: master }
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
+      - uses: laytan/setup-odin@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          release: latest
+      - run: |
+          mkdir -p build/languages
+          zig cc -std=c99 -O2 -c bindings/melodica.c -o build/languages/melodica.o
+          zig ar rcs build/languages/libmelodica.a build/languages/melodica.o
           odin build examples/odin -out:build/languages/odin
           build/languages/odin
 
-      - name: WASI
-        run: zig cc -target wasm32-wasi -std=c99 -O2 -c bindings/melodica.c -o build/languages/melodica-wasi.o
+  wasi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: master }
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
+      - run: |
+          mkdir -p build/languages
+          zig cc -target wasm32-wasi -std=c99 -O2 -c bindings/melodica.c -o build/languages/melodica-wasi.o
 
-  apple-languages:
+  objective-c:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: master
-
-      - name: Build common C ABI artifact
-        run: |
+        with: { ref: master }
+      - run: |
           mkdir -p build/languages
           clang -std=c99 -O2 -Wall -Wextra -Werror -pedantic -c bindings/melodica.c -o build/languages/melodica.o
-
-      - name: Objective-C
-        run: |
           clang -Wall -Wextra -Werror examples/objc/main.m build/languages/melodica.o -o build/languages/objc
           build/languages/objc
 
-      - name: Swift
-        run: |
+  swift:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: master }
+      - run: |
+          mkdir -p build/languages
+          clang -std=c99 -O2 -Wall -Wextra -Werror -pedantic -c bindings/melodica.c -o build/languages/melodica.o
           swiftc -I examples/swift examples/swift/main.swift build/languages/melodica.o -o build/languages/swift
           build/languages/swift
