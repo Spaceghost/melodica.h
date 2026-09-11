@@ -11,7 +11,7 @@ NELUA=${NELUA:-$(./tools/bootstrap-nelua.sh)}
 mkdir -p build/c build/headers build/bin build/metrics dist
 : > build/metrics/raw.tsv
 
-candidates=(scan hash tiny)
+candidates=(scan hash tiny dispatch)
 for name in "${candidates[@]}"; do
   echo "==> generating $name"
   NELUA_INIT="require('nelua.compactc').enable{static_asserts=false,export_declarations=false}" \
