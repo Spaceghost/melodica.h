@@ -34,7 +34,7 @@ for name in "${candidates[@]}"; do
   echo "==> preparing benchmark $name"
   "$ZIG" cc -std=c99 -O3 -DNDEBUG -I. \
     -DMELODICA_HEADER=\"build/headers/$name.h\" \
-    bench/bench.c -o "build/bin/bench-$name"
+    bench/bench.c bench/impl.c -o "build/bin/bench-$name"
 
   "$ZIG" cc -std=c99 -Os -DNDEBUG -I. \
     -DMELODICA_HEADER=\"build/headers/$name.h\" \
