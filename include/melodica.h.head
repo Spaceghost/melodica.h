@@ -66,6 +66,22 @@ typedef struct melodica_track_view {
     int allow_skip;
 } melodica_track_view;
 
+#define MELODICA_STATION_ID               UINT32_C(1)
+#define MELODICA_STATION_PANDORA_ID       UINT32_C(2)
+#define MELODICA_STATION_ART_ID           UINT32_C(4)
+#define MELODICA_STATION_NAME             UINT32_C(8)
+#define MELODICA_STATION_CREATOR_WEBNAME  UINT32_C(16)
+#define MELODICA_STATION_ALL              UINT32_C(31)
+
+typedef struct melodica_station_view {
+    uint32_t present;
+    melodica_slice station_id;
+    melodica_slice pandora_id;
+    melodica_slice art_id;
+    melodica_slice name;
+    melodica_slice creator_webname;
+} melodica_station_view;
+
 MELODICA_API unsigned melodica_version(void);
 
 MELODICA_API int melodica_find_string(const char *json, size_t json_len,
@@ -82,6 +98,18 @@ MELODICA_API int melodica_find_u64(const char *json, size_t json_len,
 
 MELODICA_API int melodica_parse_track(const char *json, size_t json_len,
                                       melodica_track_view *track);
+
+MELODICA_API int melodica_parse_station(const char *json, size_t json_len,
+                                        melodica_station_view *station);
+
+/* Initialize *cursor to zero, then call until MELODICA_NOT_FOUND. */
+MELODICA_API int melodica_track_next(const char *json, size_t json_len,
+                                     size_t *cursor,
+                                     melodica_track_view *track);
+
+MELODICA_API int melodica_station_next(const char *json, size_t json_len,
+                                       size_t *cursor,
+                                       melodica_station_view *station);
 
 MELODICA_API int melodica_json_escape(const char *input, size_t input_len,
                                       char *output, size_t output_cap,
