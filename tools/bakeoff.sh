@@ -24,8 +24,8 @@ for name in "${candidates[@]}"; do
   ./tools/amalgamate.sh "build/c/$name.c" "build/headers/$name.h"
 
   echo "==> conformance $name"
-  "$ZIG" cc -std=c99 -O2 -Wall -Wextra -Werror -pedantic \
-    -Wno-parentheses-equality -Wno-extra-semi -I. \
+  # Generated C is part of the product. It gets no bespoke warning exemptions.
+  "$ZIG" cc -std=c99 -O2 -Wall -Wextra -Werror -pedantic -I. \
     -DMELODICA_HEADER=\"build/headers/$name.h\" \
     tests/conformance.c -o "build/bin/test-$name"
   "build/bin/test-$name" >/dev/null
