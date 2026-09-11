@@ -21,7 +21,7 @@ extern "C" {
 #endif
 
 #define MELODICA_VERSION_MAJOR 0
-#define MELODICA_VERSION_MINOR 2
+#define MELODICA_VERSION_MINOR 3
 #define MELODICA_VERSION_PATCH 0
 #define MELODICA_VERSION ((MELODICA_VERSION_MAJOR << 16) | (MELODICA_VERSION_MINOR << 8) | MELODICA_VERSION_PATCH)
 
@@ -29,6 +29,8 @@ extern "C" {
 #define MELODICA_ENDPOINT_STATIONS     "/api/v1/station/getStations"
 #define MELODICA_ENDPOINT_PLAYLIST     "/api/v1/playlist/getFragment"
 #define MELODICA_ENDPOINT_FEEDBACK     "/api/v1/station/addFeedback"
+#define MELODICA_ENDPOINT_TIRED        "/api/v1/listener/addTiredSong"
+#define MELODICA_ENDPOINT_NARRATIVE    "/api/v1/playlist/narrative"
 
 #define MELODICA_OK             0
 #define MELODICA_NOT_FOUND      1
@@ -134,6 +136,15 @@ MELODICA_API int melodica_feedback_body(const char *track_token, size_t track_to
                                         int positive,
                                         char *output, size_t output_cap,
                                         size_t *output_len);
+
+MELODICA_API int melodica_tired_body(const char *track_token, size_t track_token_len,
+                                     char *output, size_t output_cap,
+                                     size_t *output_len);
+
+MELODICA_API int melodica_narrative_body(const char *station_id, size_t station_id_len,
+                                         const char *music_id, size_t music_id_len,
+                                         char *output, size_t output_cap,
+                                         size_t *output_len);
 
 #ifdef __cplusplus
 } /* extern "C" */
@@ -394,7 +405,7 @@ bool m_append_escaped(nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr po
   return true;
 }
 unsigned int melodica_version(void) {
-  return 512U;
+  return 768U;
 }
 int melodica_json_escape(const char* input, size_t input_len, nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr output_len) {
   if(((input == (char*)NULL || output == ((nlcchar_arr0_ptr)NULL)) || output_len == (nlcsize_ptr)NULL)) {
@@ -456,6 +467,33 @@ int melodica_feedback_body(const char* track_token, size_t track_token_len, int 
   nlcchar_arr0_ptr token_bytes = ((nlcchar_arr0_ptr)track_token);
   size_t pos = 0U;
   if((((((!m_append(output, output_cap, (&pos), (char*)"{\"trackToken\":\"", 15U)) || (!m_append_escaped(output, output_cap, (&pos), token_bytes, track_token_len))) || (!m_append(output, output_cap, (&pos), (char*)"\",\"isPositive\":", 15U))) || (!m_append_bool(output, output_cap, (&pos), positive))) || (!m_putc(output, output_cap, (&pos), 125)))) {
+    (*output_len) = pos;
+    return 3;
+  }
+  (*output_len) = pos;
+  return 0;
+}
+int melodica_tired_body(const char* track_token, size_t track_token_len, nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr output_len) {
+  if(((track_token == (char*)NULL || output == ((nlcchar_arr0_ptr)NULL)) || output_len == (nlcsize_ptr)NULL)) {
+    return 4;
+  }
+  nlcchar_arr0_ptr token_bytes = ((nlcchar_arr0_ptr)track_token);
+  size_t pos = 0U;
+  if((((!m_append(output, output_cap, (&pos), (char*)"{\"trackToken\":\"", 15U)) || (!m_append_escaped(output, output_cap, (&pos), token_bytes, track_token_len))) || (!m_append(output, output_cap, (&pos), (char*)"\"}", 2U)))) {
+    (*output_len) = pos;
+    return 3;
+  }
+  (*output_len) = pos;
+  return 0;
+}
+int melodica_narrative_body(const char* station_id, size_t station_id_len, const char* music_id, size_t music_id_len, nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr output_len) {
+  if((((station_id == (char*)NULL || music_id == (char*)NULL) || output == ((nlcchar_arr0_ptr)NULL)) || output_len == (nlcsize_ptr)NULL)) {
+    return 4;
+  }
+  nlcchar_arr0_ptr station_bytes = ((nlcchar_arr0_ptr)station_id);
+  nlcchar_arr0_ptr music_bytes = ((nlcchar_arr0_ptr)music_id);
+  size_t pos = 0U;
+  if((((((!m_append(output, output_cap, (&pos), (char*)"{\"musicId\":\"", 12U)) || (!m_append_escaped(output, output_cap, (&pos), music_bytes, music_id_len))) || (!m_append(output, output_cap, (&pos), (char*)"\",\"stationId\":\"", 15U))) || (!m_append_escaped(output, output_cap, (&pos), station_bytes, station_id_len))) || (!m_append(output, output_cap, (&pos), (char*)"\"}", 2U)))) {
     (*output_len) = pos;
     return 3;
   }
