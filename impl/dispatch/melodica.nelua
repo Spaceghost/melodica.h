@@ -240,3 +240,5 @@ global function melodica_parse_track(json: cstring <const>, json_len: csize,
 
   return OK
 end
+
+require 'src.collection'
