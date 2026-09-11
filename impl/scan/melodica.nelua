@@ -1,0 +1,93 @@
+-- Reference candidate: structural single-pass key scanner.
+require 'src.value'
+require 'src.protocol'
+
+local OK: cint <comptime> = 0
+local NOT_FOUND: cint <comptime> = 1
+local INVALID_JSON: cint <comptime> = 2
+local BAD_ARGUMENT: cint <comptime> = 4
+
+local function key_equal(json: cstring, start: csize, key: cstring,
+                         key_len: csize): boolean
+  local i: csize = 0
+  while i < key_len do
+    if json[start+i] ~= key[i] then return false end
+    i = i + 1
+  end
+  return true
+end
+
+local function locate(json: cstring, json_len: csize,
+                      key: cstring, key_len: csize,
+                      value_pos: *csize): cint
+  local i: csize = 0
+  while i < json_len do
+    if json[i] ~= 34 then
+      i = i + 1
+      continue
+    end
+
+    local start = i + 1
+    local j = start
+    local escaped = false
+    while j < json_len do
+      local c = json[j]
+      if c == 92 then
+        escaped = true
+        j = j + 1
+        if j >= json_len then return INVALID_JSON end
+        j = j + 1
+      elseif c == 34 then
+        break
+      elseif c >= 0 and c < 32 then
+        return INVALID_JSON
+      else
+        j = j + 1
+      end
+    end
+    if j >= json_len then return INVALID_JSON end
+
+    local after = melodica_skip_ws(json, json_len, j + 1)
+    if not escaped and j - start == key_len and after < json_len and
+       json[after] == 58 and key_equal(json, start, key, key_len) then
+      $value_pos = after + 1
+      return OK
+    end
+    i = j + 1
+  end
+  return NOT_FOUND
+end
+
+local function find_string(json: cstring, json_len: csize,
+                           key: cstring, key_len: csize,
+                           value_offset: *csize, value_len: *csize): cint
+                           <cexport, codename 'melodica_find_string'>
+  if json == nilptr or key == nilptr or value_offset == nilptr or
+     value_len == nilptr then return BAD_ARGUMENT end
+  local pos: csize = 0
+  local status = locate(json, json_len, key, key_len, &pos)
+  if status ~= OK then return status end
+  return melodica_parse_string_at(json, json_len, pos, value_offset, value_len)
+end
+
+local function find_bool(json: cstring, json_len: csize,
+                         key: cstring, key_len: csize,
+                         value: *cint): cint
+                         <cexport, codename 'melodica_find_bool'>
+  if json == nilptr or key == nilptr or value == nilptr then return BAD_ARGUMENT end
+  local pos: csize = 0
+  local status = locate(json, json_len, key, key_len, &pos)
+  if status ~= OK then return status end
+  return melodica_parse_bool_at(json, json_len, pos, value)
+end
+
+local function find_u64(json: cstring, json_len: csize,
+                        key: cstring, key_len: csize,
+                        value: *uint64): cint
+                        <cexport, codename 'melodica_find_u64'>
+  if json == nilptr or key == nilptr or value == nilptr then return BAD_ARGUMENT end
+  local pos: csize = 0
+  local status = locate(json, json_len, key, key_len, &pos)
+  if status ~= OK then return status end
+  return melodica_parse_u64_at(json, json_len, pos, value)
+end

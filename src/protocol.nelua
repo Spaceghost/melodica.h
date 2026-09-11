@@ -1,0 +1,184 @@
+-- Shared request writers. Everything is caller-buffered; no allocator or
+-- runtime state is required.
+
+local OK: cint <comptime> = 0
+local NO_SPACE: cint <comptime> = 3
+local BAD_ARGUMENT: cint <comptime> = 4
+
+local function putc(output: cstring, output_cap: csize,
+                    pos: *csize, c: cchar): boolean
+  if $pos >= output_cap then return false end
+  output[$pos] = c
+  $pos = $pos + 1
+  return true
+end
+
+local function append(output: cstring, output_cap: csize, pos: *csize,
+                      input: cstring, input_len: csize): boolean
+  if input_len > output_cap - $pos then return false end
+  local i: csize = 0
+  while i < input_len do
+    output[$pos] = input[i]
+    $pos = $pos + 1
+    i = i + 1
+  end
+  return true
+end
+
+local function append_u64(output: cstring, output_cap: csize, pos: *csize,
+                          value: uint64): boolean
+  local digits: [20]cchar
+  local n: csize = 0
+  repeat
+    digits[n] = (@cchar)(48 + value % 10)
+    n = n + 1
+    value = value // 10
+  until value == 0
+
+  if n > output_cap - $pos then return false end
+  while n > 0 do
+    n = n - 1
+    output[$pos] = digits[n]
+    $pos = $pos + 1
+  end
+  return true
+end
+
+local function append_escaped(output: cstring, output_cap: csize, pos: *csize,
+                              input: cstring, input_len: csize): boolean
+  local hex: cstring = "0123456789abcdef"
+  local i: csize = 0
+  while i < input_len do
+    local c = input[i]
+    if c == 34 or c == 92 then
+      if not putc(output, output_cap, pos, 92) or
+         not putc(output, output_cap, pos, c) then return false end
+    elseif c == 8 then
+      if not append(output, output_cap, pos, "\\b", 2) then return false end
+    elseif c == 12 then
+      if not append(output, output_cap, pos, "\\f", 2) then return false end
+    elseif c == 10 then
+      if not append(output, output_cap, pos, "\\n", 2) then return false end
+    elseif c == 13 then
+      if not append(output, output_cap, pos, "\\r", 2) then return false end
+    elseif c == 9 then
+      if not append(output, output_cap, pos, "\\t", 2) then return false end
+    elseif c >= 0 and c < 32 then
+      if not append(output, output_cap, pos, "\\u00", 4) then return false end
+      local u: uint8 = (@uint8)(c)
+      if not putc(output, output_cap, pos, hex[u // 16]) or
+         not putc(output, output_cap, pos, hex[u % 16]) then return false end
+    else
+      if not putc(output, output_cap, pos, c) then return false end
+    end
+    i = i + 1
+  end
+  return true
+end
+
+local function version(): cuint <cexport, codename 'melodica_version'>
+  return 256 -- 0.1.0
+end
+
+local function json_escape(input: cstring, input_len: csize,
+                           output: cstring, output_cap: csize,
+                           output_len: *csize): cint
+                           <cexport, codename 'melodica_json_escape'>
+  if input == nilptr or output == nilptr or output_len == nilptr then
+    return BAD_ARGUMENT
+  end
+  local pos: csize = 0
+  if not append_escaped(output, output_cap, &pos, input, input_len) then
+    $output_len = pos
+    return NO_SPACE
+  end
+  $output_len = pos
+  return OK
+end
+
+local function login_body(username: cstring, username_len: csize,
+                          password: cstring, password_len: csize,
+                          output: cstring, output_cap: csize,
+                          output_len: *csize): cint
+                          <cexport, codename 'melodica_login_body'>
+  if username == nilptr or password == nilptr or
+     output == nilptr or output_len == nilptr then return BAD_ARGUMENT end
+  local pos: csize = 0
+  if not append(output, output_cap, &pos, "{\"username\":\"", 13) or
+     not append_escaped(output, output_cap, &pos, username, username_len) or
+     not append(output, output_cap, &pos, "\",\"password\":\"", 14) or
+     not append_escaped(output, output_cap, &pos, password, password_len) or
+     not append(output, output_cap, &pos, "\"}", 2) then
+    $output_len = pos
+    return NO_SPACE
+  end
+  $output_len = pos
+  return OK
+end
+
+local function stations_body(page_size: cuint, start_index: cuint,
+                             output: cstring, output_cap: csize,
+                             output_len: *csize): cint
+                             <cexport, codename 'melodica_stations_body'>
+  if output == nilptr or output_len == nilptr then return BAD_ARGUMENT end
+  local pos: csize = 0
+  if not append(output, output_cap, &pos, "{\"pageSize\":", 12) or
+     not append_u64(output, output_cap, &pos, (@uint64)(page_size)) or
+     not append(output, output_cap, &pos, ",\"startIndex\":", 14) or
+     not append_u64(output, output_cap, &pos, (@uint64)(start_index)) or
+     not putc(output, output_cap, &pos, 125) then
+    $output_len = pos
+    return NO_SPACE
+  end
+  $output_len = pos
+  return OK
+end
+
+local function playlist_body(station_id: cstring, station_id_len: csize,
+                             station_start: cint,
+                             audio_format: cstring, audio_format_len: csize,
+                             output: cstring, output_cap: csize,
+                             output_len: *csize): cint
+                             <cexport, codename 'melodica_playlist_body'>
+  if station_id == nilptr or audio_format == nilptr or
+     output == nilptr or output_len == nilptr then return BAD_ARGUMENT end
+  local pos: csize = 0
+  if not append(output, output_cap, &pos, "{\"stationId\":\"", 14) or
+     not append_escaped(output, output_cap, &pos, station_id, station_id_len) or
+     not append(output, output_cap, &pos, "\",\"isStationStart\":", 19) or
+     not append(output, output_cap, &pos,
+                (station_start ~= 0) and "true" or "false",
+                (station_start ~= 0) and 4 or 5) or
+     not append(output, output_cap, &pos,
+                ",\"fragmentRequestReason\":\"Normal\",\"audioFormat\":\"", 49) or
+     not append_escaped(output, output_cap, &pos, audio_format, audio_format_len) or
+     not append(output, output_cap, &pos, "\"}", 2) then
+    $output_len = pos
+    return NO_SPACE
+  end
+  $output_len = pos
+  return OK
+end
+
+local function feedback_body(track_token: cstring, track_token_len: csize,
+                             positive: cint,
+                             output: cstring, output_cap: csize,
+                             output_len: *csize): cint
+                             <cexport, codename 'melodica_feedback_body'>
+  if track_token == nilptr or output == nilptr or output_len == nilptr then
+    return BAD_ARGUMENT
+  end
+  local pos: csize = 0
+  if not append(output, output_cap, &pos, "{\"trackToken\":\"", 15) or
+     not append_escaped(output, output_cap, &pos, track_token, track_token_len) or
+     not append(output, output_cap, &pos, "\",\"isPositive\":", 15) or
+     not append(output, output_cap, &pos,
+                (positive ~= 0) and "true" or "false",
+                (positive ~= 0) and 4 or 5) or
+     not putc(output, output_cap, &pos, 125) then
+    $output_len = pos
+    return NO_SPACE
+  end
+  $output_len = pos
+  return OK
+end
