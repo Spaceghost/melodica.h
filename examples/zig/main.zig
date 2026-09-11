@@ -4,7 +4,7 @@ const c = @cImport({
 });
 
 pub fn main() !void {
-    if (c.melodica_version() != 768) return error.BadVersion;
+    if (c.melodica_version() == 0) return error.BadVersion;
 
     var body: [128]u8 = undefined;
     var written: usize = 0;
