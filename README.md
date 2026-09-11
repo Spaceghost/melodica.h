@@ -11,129 +11,72 @@ The host owns HTTPS, CSRF cookies, auth-token persistence, storage, scheduling, 
 
 ## Why this shape
 
-`melodica.h` is deliberately not a line-for-line port of libpiano. It keeps the useful protocol layer while replacing linked lists, hidden ownership, and transport policy with a small C ABI suitable for Swift/Objective-C, C/C++, Zig, Nelua, Odin, embedded firmware, and WASM.
-
-There are no mandatory dependencies, no global runtime state, no allocator, no libcurl, no JSON DOM, and no audio stack.
+`melodica.h` is deliberately not a line-for-line port of libpiano. It keeps the useful protocol layer while replacing linked lists, hidden ownership, and transport policy with a small C ABI. There are no mandatory dependencies, no global runtime state, no allocator, no libcurl, no JSON DOM, and no audio stack.
 
 The REST endpoints are unofficial and may change. The library contains no credentials, DRM circumvention, service secrets, or bundled account state.
 
-## Response views
+## Zero-copy response views
 
-Parsed strings are slices into the caller's original JSON buffer:
+Tracks, stations, and login responses are represented as offsets and lengths into the caller's original JSON buffer. `melodica_login_view` exposes `authToken`, `username`, `webName`, and `userId` without allocating or copying; track and station collection iterators use the same ownership model.
 
 ```c
-melodica_track_view track;
-if (melodica_parse_track(json, json_len, &track) == MELODICA_OK &&
-    (track.present & MELODICA_TRACK_SONG_TITLE)) {
-    const char *title = json + track.song_title.offset;
-    size_t title_len = track.song_title.length;
+melodica_login_view login;
+if (melodica_parse_login(json, json_len, &login) == MELODICA_OK &&
+    (login.present & MELODICA_LOGIN_AUTH_TOKEN)) {
+    const char *token = json + login.auth_token.offset;
+    size_t token_len = login.auth_token.length;
 }
 ```
 
-Station and playlist responses can be walked without allocation or a JSON tree:
+Initialize a `size_t cursor = 0` and call `melodica_track_next` or `melodica_station_next` until `MELODICA_NOT_FOUND` to walk playlist/station arrays without building a JSON tree.
 
-```c
-size_t cursor = 0;
-melodica_track_view track;
+## Modern REST helpers
 
-while (melodica_track_next(json, json_len, &cursor, &track) == MELODICA_OK) {
-    /* every string slice still points into json */
-}
-```
-
-`melodica_station_next` works the same way. Initialize the cursor to zero and keep it unchanged between calls; `MELODICA_NOT_FOUND` means the array is exhausted or absent.
-
-## Request helpers
-
-The current modern REST surface covers:
-
-- login: `/api/v1/auth/login`
-- stations: `/api/v1/station/getStations`
-- playlist fragments: `/api/v1/playlist/getFragment`
-- thumbs feedback: `/api/v1/station/addFeedback`
-- tired song: `/api/v1/listener/addTiredSong`
-- narrative/explanation: `/api/v1/playlist/narrative`
-
-All body writers escape caller strings and write into caller-provided buffers.
+The current request surface includes login, stations, playlist fragments, thumbs feedback, tired-song, narrative/explanation, track-started reporting, playback-paused/sync, station details, and station feedback. All body writers escape caller strings and write into caller-provided buffers.
 
 ## Language consumers
 
-The release ABI is exercised directly from:
+The exact same generated C99 implementation is continuously exercised from:
 
 - C
 - C++
 - Zig
 - Nelua
 - **Odin**
+- Rust
+- Go/cgo
 - Objective-C
 - Swift
 - WASI
 
-All examples link the same implementation compiled from `dist/melodica.h`; none reimplement the parser or protocol layer. See [`examples/`](examples/README.md). The language-consumer workflow keeps the ABI honest across those toolchains on Linux and macOS.
+The native consumers parse the same login fixture and verify `melodica_login_view` layout, present bits, offsets, lengths, and zero-copy slices. This is intentionally stronger than merely proving a linker can find `melodica_version`.
+
+See [`examples/`](examples/README.md). Bindings stay thin; there is still only one protocol implementation to debug.
 
 ## The bake-off
 
-Several implementations live together on `master` and expose exactly the same C ABI:
+Four implementations coexist on `master` behind one ABI:
 
-- `impl/scan`: structural scanner and correctness baseline.
-- `impl/hash`: structural scanner with FNV-1a key prefiltering.
-- `impl/tiny`: compact validated substring scanner.
-- `impl/dispatch`: tiny-style generic lookup plus a one-pass known-key track parser.
+- `scan`: structural correctness baseline
+- `hash`: structural scanner with FNV-1a key prefiltering
+- `tiny`: compact validated substring scanner
+- `dispatch`: tiny-style generic lookup plus a one-pass known-key track parser
 
-`tools/bakeoff.sh` generates every candidate, gates it on conformance and ASan/UBSan, benchmarks eligible builds, measures header/object size, cross-compiles the exact winner, and writes the release to `dist/melodica.h`.
+`tools/bakeoff.sh` compiles and amalgamates every candidate, gates it on conformance and ASan/UBSan, benchmarks eligible builds in rotating round-robin order, measures object/header size, cross-compiles the exact winner, and promotes the winner to `dist/melodica.h`.
 
-Timing is deliberately less gullible than a usual CI microbenchmark: all binaries are built first, warmed first, then measured in rotating round-robin order. The benchmark caller and `MELODICA_IMPLEMENTATION` live in separate translation units so unrelated generated functions cannot rewrite the caller's layout.
-
-Correctness is a gate, not a score. A fast wrong parser receives the traditional benchmark prize of **nothing**.
-
-The winner is recorded in `dist/WINNER`, and the measurements that justified it live in `dist/BENCHMARK.tsv`. A challenger must improve the weighted score by at least 3% before it displaces the incumbent.
+The winner is recorded in `dist/WINNER`; the measurements that justified it are committed as `dist/BENCHMARK.tsv`. A challenger must improve the weighted score by at least 3% before replacing the incumbent. Correctness remains a gate, not a score. A fast wrong parser wins nothing, as nature intended.
 
 ## Build
-
-The project pins our Nelua fork for compact distributable C output and uses Zig 0.16 as the C toolchain.
 
 ```sh
 ./tools/bootstrap-nelua.sh
 ./tools/bakeoff.sh
 ```
 
-The public artifact is:
-
-```text
-dist/melodica.h
-```
-
-Consumers need neither Nelua nor Zig.
-
-## API at a glance
-
-```c
-unsigned melodica_version(void);
-
-int melodica_find_string(...);   /* zero-copy offset + length */
-int melodica_find_bool(...);
-int melodica_find_u64(...);
-
-int melodica_parse_track(...);
-int melodica_parse_station(...);
-int melodica_track_next(...);
-int melodica_station_next(...);
-
-int melodica_json_escape(...);
-int melodica_login_body(...);
-int melodica_stations_body(...);
-int melodica_playlist_body(...);
-int melodica_feedback_body(...);
-int melodica_tired_body(...);
-int melodica_narrative_body(...);
-```
-
-Every function returns a `MELODICA_*` status code. There are no hidden lifetimes: views remain valid exactly as long as the caller's JSON buffer does.
+Consumers need only `dist/melodica.h`; they do not need Nelua or Zig.
 
 ## Development rule
 
-`master` is the integration branch. Comparative implementations coexist in-tree instead of hiding on feature branches. New parsing ideas enter as another candidate or improve an existing one, and the bake-off decides what deserves `dist/melodica.h`.
+`master` is the integration branch. Comparative implementations coexist in-tree rather than hiding on feature branches. Generated release commits and language/docs-only changes do not recursively wake the parser bake-off.
 
-Generated `dist/` promotion commits and documentation-only edits do not recursively rerun the bake-off. The pinned Nelua compiler is cached in Actions, so normal source pushes get directly to the useful part: proving the library still works and deciding who wins.
-
-See [`DESIGN.md`](DESIGN.md) for the scoring and ABI rules.
+See [`DESIGN.md`](DESIGN.md) for scoring and ABI details.

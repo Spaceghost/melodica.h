@@ -1,31 +1,46 @@
 package main
 
 import "core:c"
-import "core:fmt"
+
+Melodica_Slice :: struct {
+    offset: c.size_t,
+    length: c.size_t,
+}
+
+Melodica_Login_View :: struct {
+    present:    u32,
+    auth_token: Melodica_Slice,
+    username:   Melodica_Slice,
+    web_name:   Melodica_Slice,
+    user_id:    Melodica_Slice,
+}
 
 foreign import melodica "../../build/languages/libmelodica.a"
 
 foreign melodica {
     melodica_version :: proc() -> c.uint ---
-    melodica_stations_body :: proc(
-        page_size, start_index: c.uint,
-        output: rawptr,
-        output_cap: c.size_t,
-        output_len: ^c.size_t,
+    melodica_parse_login :: proc(
+        json: cstring,
+        json_len: c.size_t,
+        login: ^Melodica_Login_View,
     ) -> c.int ---
 }
 
+LOGIN_JSON :: "{\"authToken\":\"auth-123\",\"username\":\"listener@example.com\",\"webName\":\"listener\",\"userId\":\"u-42\"}"
+
 main :: proc() {
-    if melodica_version() == 0 {
-        panic("invalid melodica version")
-    }
+    if melodica_version() == 0 do panic("invalid melodica version")
 
-    body: [128]u8
-    written: c.size_t
-    rc := melodica_stations_body(25, 0, rawptr(&body[0]), c.size_t(len(body)), &written)
-    if rc != 0 {
-        panic("melodica_stations_body failed")
-    }
+    login: Melodica_Login_View
+    rc := melodica_parse_login(cstring(LOGIN_JSON), c.size_t(len(LOGIN_JSON)), &login)
+    if rc != 0 do panic("melodica_parse_login failed")
+    if login.present != 15 do panic("bad login present mask")
 
-    fmt.printf("Odin: %s\n", body[:int(written)])
+    auth_start := int(login.auth_token.offset)
+    auth_end := auth_start + int(login.auth_token.length)
+    if LOGIN_JSON[auth_start:auth_end] != "auth-123" do panic("bad auth token slice")
+
+    user_start := int(login.username.offset)
+    user_end := user_start + int(login.username.length)
+    if LOGIN_JSON[user_start:user_end] != "listener@example.com" do panic("bad username slice")
 }

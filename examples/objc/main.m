@@ -1,15 +1,21 @@
 #include "../../dist/melodica.h"
 
-#include <stdio.h>
+#include <string.h>
+
+static int slice_eq(const char *json, melodica_slice s, const char *want) {
+    return s.length == strlen(want) && memcmp(json + s.offset, want, s.length) == 0;
+}
 
 int main(void) {
-    char body[128];
-    size_t written = 0;
+    const char json[] =
+        "{\"authToken\":\"auth-123\",\"username\":\"listener@example.com\","
+        "\"webName\":\"listener\",\"userId\":\"u-42\"}";
+    melodica_login_view login = {0};
 
-    if (melodica_version() != MELODICA_VERSION) return 1;
-    if (melodica_narrative_body("station", 7, "music", 5,
-                                body, sizeof body, &written) != MELODICA_OK) return 2;
-
-    printf("Objective-C: %.*s\n", (int)written, body);
+    if (melodica_version() == 0) return 1;
+    if (melodica_parse_login(json, sizeof json - 1, &login) != MELODICA_OK) return 2;
+    if (login.present != MELODICA_LOGIN_ALL) return 3;
+    if (!slice_eq(json, login.auth_token, "auth-123")) return 4;
+    if (!slice_eq(json, login.username, "listener@example.com")) return 5;
     return 0;
 }

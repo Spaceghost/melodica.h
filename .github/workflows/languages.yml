@@ -23,7 +23,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { ref: master }
       - uses: mlugg/setup-zig@v2
         with: { version: 0.16.0 }
       - run: |
@@ -36,7 +35,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { ref: master }
       - uses: mlugg/setup-zig@v2
         with: { version: 0.16.0 }
       - run: |
@@ -49,7 +47,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { ref: master }
       - uses: mlugg/setup-zig@v2
         with: { version: 0.16.0 }
       - run: |
@@ -62,7 +59,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { ref: master }
       - uses: mlugg/setup-zig@v2
         with: { version: 0.16.0 }
       - name: Cache pinned Nelua compiler
@@ -82,7 +78,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { ref: master }
       - uses: mlugg/setup-zig@v2
         with: { version: 0.16.0 }
       - uses: laytan/setup-odin@v2
@@ -96,11 +91,37 @@ jobs:
           odin build examples/odin -out:build/languages/odin
           build/languages/odin
 
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
+      - uses: dtolnay/rust-toolchain@stable
+      - run: |
+          mkdir -p build/languages
+          zig cc -std=c99 -O2 -c bindings/melodica.c -o build/languages/melodica.o
+          rustc examples/rust/main.rs -C link-arg=build/languages/melodica.o -o build/languages/rust
+          build/languages/rust
+
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
+      - uses: actions/setup-go@v5
+        with: { go-version: stable }
+      - run: |
+          mkdir -p build/languages
+          zig cc -std=c99 -O2 -fPIC -c bindings/melodica.c -o build/languages/melodica.o
+          go build -o build/languages/go examples/go/main.go
+          build/languages/go
+
   wasi:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { ref: master }
       - uses: mlugg/setup-zig@v2
         with: { version: 0.16.0 }
       - run: |
@@ -111,7 +132,6 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-        with: { ref: master }
       - run: |
           mkdir -p build/languages
           clang -std=c99 -O2 -Wall -Wextra -Werror -pedantic -c bindings/melodica.c -o build/languages/melodica.o
@@ -122,7 +142,6 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-        with: { ref: master }
       - run: |
           mkdir -p build/languages
           clang -std=c99 -O2 -Wall -Wextra -Werror -pedantic -c bindings/melodica.c -o build/languages/melodica.o
