@@ -21,16 +21,20 @@ extern "C" {
 #endif
 
 #define MELODICA_VERSION_MAJOR 0
-#define MELODICA_VERSION_MINOR 3
+#define MELODICA_VERSION_MINOR 4
 #define MELODICA_VERSION_PATCH 0
 #define MELODICA_VERSION ((MELODICA_VERSION_MAJOR << 16) | (MELODICA_VERSION_MINOR << 8) | MELODICA_VERSION_PATCH)
 
-#define MELODICA_ENDPOINT_LOGIN        "/api/v1/auth/login"
-#define MELODICA_ENDPOINT_STATIONS     "/api/v1/station/getStations"
-#define MELODICA_ENDPOINT_PLAYLIST     "/api/v1/playlist/getFragment"
-#define MELODICA_ENDPOINT_FEEDBACK     "/api/v1/station/addFeedback"
-#define MELODICA_ENDPOINT_TIRED        "/api/v1/listener/addTiredSong"
-#define MELODICA_ENDPOINT_NARRATIVE    "/api/v1/playlist/narrative"
+#define MELODICA_ENDPOINT_LOGIN             "/api/v1/auth/login"
+#define MELODICA_ENDPOINT_STATIONS          "/api/v1/station/getStations"
+#define MELODICA_ENDPOINT_PLAYLIST          "/api/v1/playlist/getFragment"
+#define MELODICA_ENDPOINT_FEEDBACK          "/api/v1/station/addFeedback"
+#define MELODICA_ENDPOINT_TIRED             "/api/v1/listener/addTiredSong"
+#define MELODICA_ENDPOINT_NARRATIVE         "/api/v1/playlist/narrative"
+#define MELODICA_ENDPOINT_TRACK_STARTED     "/api/v1/listener/trackStarted"
+#define MELODICA_ENDPOINT_PLAYBACK_PAUSED   "/api/v1/playback/playbackPaused"
+#define MELODICA_ENDPOINT_STATION_DETAILS   "/api/v1/station/getStationDetails"
+#define MELODICA_ENDPOINT_STATION_FEEDBACK  "/api/v1/station/getStationFeedback"
 
 #define MELODICA_OK             0
 #define MELODICA_NOT_FOUND      1
@@ -84,6 +88,20 @@ typedef struct melodica_station_view {
     melodica_slice creator_webname;
 } melodica_station_view;
 
+#define MELODICA_LOGIN_AUTH_TOKEN  UINT32_C(1)
+#define MELODICA_LOGIN_USERNAME    UINT32_C(2)
+#define MELODICA_LOGIN_WEB_NAME    UINT32_C(4)
+#define MELODICA_LOGIN_USER_ID     UINT32_C(8)
+#define MELODICA_LOGIN_ALL         UINT32_C(15)
+
+typedef struct melodica_login_view {
+    uint32_t present;
+    melodica_slice auth_token;
+    melodica_slice username;
+    melodica_slice web_name;
+    melodica_slice user_id;
+} melodica_login_view;
+
 MELODICA_API unsigned melodica_version(void);
 
 MELODICA_API int melodica_find_string(const char *json, size_t json_len,
@@ -103,6 +121,9 @@ MELODICA_API int melodica_parse_track(const char *json, size_t json_len,
 
 MELODICA_API int melodica_parse_station(const char *json, size_t json_len,
                                         melodica_station_view *station);
+
+MELODICA_API int melodica_parse_login(const char *json, size_t json_len,
+                                      melodica_login_view *login);
 
 /* Initialize *cursor to zero, then call until MELODICA_NOT_FOUND. */
 MELODICA_API int melodica_track_next(const char *json, size_t json_len,
@@ -145,6 +166,29 @@ MELODICA_API int melodica_narrative_body(const char *station_id, size_t station_
                                          const char *music_id, size_t music_id_len,
                                          char *output, size_t output_cap,
                                          size_t *output_len);
+
+MELODICA_API int melodica_track_started_body(const char *track_token,
+                                             size_t track_token_len,
+                                             char *output, size_t output_cap,
+                                             size_t *output_len);
+
+MELODICA_API int melodica_playback_paused_body(int sync,
+                                               char *output, size_t output_cap,
+                                               size_t *output_len);
+
+MELODICA_API int melodica_station_details_body(const char *station_id,
+                                               size_t station_id_len,
+                                               int is_current_station,
+                                               char *output, size_t output_cap,
+                                               size_t *output_len);
+
+MELODICA_API int melodica_station_feedback_body(const char *station_id,
+                                                size_t station_id_len,
+                                                unsigned page_size,
+                                                unsigned start_index,
+                                                int positive,
+                                                char *output, size_t output_cap,
+                                                size_t *output_len);
 
 #ifdef __cplusplus
 } /* extern "C" */
@@ -208,6 +252,9 @@ static int m_collection_skip_string(nlcchar_arr0_ptr json, size_t json_len, size
 static int m_collection_next_object(nlcchar_arr0_ptr json, size_t json_len, nlcsize_ptr cursor, nlcsize_ptr object_start, nlcsize_ptr object_end);
 static void m_collection_rebase_track(melodica_track_view_ptr track, size_t base);
 static void m_collection_rebase_station(melodica_station_view_ptr station, size_t base);
+static void m_clear_slice2(melodica_slice_ptr dst);
+typedef melodica_login_view* melodica_login_view_ptr;
+static int m_capture(const char* json, size_t json_len, const char* key, size_t key_len, melodica_slice_ptr dst, melodica_login_view_ptr login, uint32_t flag);
 /* ------------------------------ DEFINITIONS ------------------------------- */
 bool m_is_ws(char c) {
   return (((c == 32 || c == 9) || c == 10) || c == 13);
@@ -405,7 +452,7 @@ bool m_append_escaped(nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr po
   return true;
 }
 unsigned int melodica_version(void) {
-  return 768U;
+  return 1024U;
 }
 int melodica_json_escape(const char* input, size_t input_len, nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr output_len) {
   if(((input == (char*)NULL || output == ((nlcchar_arr0_ptr)NULL)) || output_len == (nlcsize_ptr)NULL)) {
@@ -494,6 +541,57 @@ int melodica_narrative_body(const char* station_id, size_t station_id_len, const
   nlcchar_arr0_ptr music_bytes = ((nlcchar_arr0_ptr)music_id);
   size_t pos = 0U;
   if((((((!m_append(output, output_cap, (&pos), (char*)"{\"musicId\":\"", 12U)) || (!m_append_escaped(output, output_cap, (&pos), music_bytes, music_id_len))) || (!m_append(output, output_cap, (&pos), (char*)"\",\"stationId\":\"", 15U))) || (!m_append_escaped(output, output_cap, (&pos), station_bytes, station_id_len))) || (!m_append(output, output_cap, (&pos), (char*)"\"}", 2U)))) {
+    (*output_len) = pos;
+    return 3;
+  }
+  (*output_len) = pos;
+  return 0;
+}
+int melodica_track_started_body(const char* track_token, size_t track_token_len, nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr output_len) {
+  if(((track_token == (char*)NULL || output == ((nlcchar_arr0_ptr)NULL)) || output_len == (nlcsize_ptr)NULL)) {
+    return 4;
+  }
+  nlcchar_arr0_ptr token_bytes = ((nlcchar_arr0_ptr)track_token);
+  size_t pos = 0U;
+  if((((!m_append(output, output_cap, (&pos), (char*)"{\"trackToken\":\"", 15U)) || (!m_append_escaped(output, output_cap, (&pos), token_bytes, track_token_len))) || (!m_append(output, output_cap, (&pos), (char*)"\"}", 2U)))) {
+    (*output_len) = pos;
+    return 3;
+  }
+  (*output_len) = pos;
+  return 0;
+}
+int melodica_playback_paused_body(int sync, nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr output_len) {
+  if((output == ((nlcchar_arr0_ptr)NULL) || output_len == (nlcsize_ptr)NULL)) {
+    return 4;
+  }
+  size_t pos = 0U;
+  if((((!m_append(output, output_cap, (&pos), (char*)"{\"sync\":", 8U)) || (!m_append_bool(output, output_cap, (&pos), sync))) || (!m_putc(output, output_cap, (&pos), 125)))) {
+    (*output_len) = pos;
+    return 3;
+  }
+  (*output_len) = pos;
+  return 0;
+}
+int melodica_station_details_body(const char* station_id, size_t station_id_len, int is_current_station, nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr output_len) {
+  if(((station_id == (char*)NULL || output == ((nlcchar_arr0_ptr)NULL)) || output_len == (nlcsize_ptr)NULL)) {
+    return 4;
+  }
+  nlcchar_arr0_ptr station_bytes = ((nlcchar_arr0_ptr)station_id);
+  size_t pos = 0U;
+  if((((((!m_append(output, output_cap, (&pos), (char*)"{\"stationId\":\"", 14U)) || (!m_append_escaped(output, output_cap, (&pos), station_bytes, station_id_len))) || (!m_append(output, output_cap, (&pos), (char*)"\",\"isCurrentStation\":", 21U))) || (!m_append_bool(output, output_cap, (&pos), is_current_station))) || (!m_putc(output, output_cap, (&pos), 125)))) {
+    (*output_len) = pos;
+    return 3;
+  }
+  (*output_len) = pos;
+  return 0;
+}
+int melodica_station_feedback_body(const char* station_id, size_t station_id_len, unsigned int page_size, unsigned int start_index, int positive, nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr output_len) {
+  if(((station_id == (char*)NULL || output == ((nlcchar_arr0_ptr)NULL)) || output_len == (nlcsize_ptr)NULL)) {
+    return 4;
+  }
+  nlcchar_arr0_ptr station_bytes = ((nlcchar_arr0_ptr)station_id);
+  size_t pos = 0U;
+  if((((((((((!m_append(output, output_cap, (&pos), (char*)"{\"pageSize\":", 12U)) || (!m_append_u64(output, output_cap, (&pos), (uint64_t)page_size))) || (!m_append(output, output_cap, (&pos), (char*)",\"startIndex\":", 14U))) || (!m_append_u64(output, output_cap, (&pos), (uint64_t)start_index))) || (!m_append(output, output_cap, (&pos), (char*)",\"stationId\":\"", 14U))) || (!m_append_escaped(output, output_cap, (&pos), station_bytes, station_id_len))) || (!m_append(output, output_cap, (&pos), (char*)"\",\"positive\":", 13U))) || (!m_append_bool(output, output_cap, (&pos), positive))) || (!m_putc(output, output_cap, (&pos), 125)))) {
     (*output_len) = pos;
     return 3;
   }
@@ -967,6 +1065,52 @@ int melodica_station_next(const char* json, size_t json_len, nlcsize_ptr cursor,
     return status;
   }
   m_collection_rebase_station(station, start);
+  return 0;
+}
+void m_clear_slice2(melodica_slice_ptr dst) {
+  dst->offset = 0U;
+  dst->length = 0U;
+}
+int m_capture(const char* json, size_t json_len, const char* key, size_t key_len, melodica_slice_ptr dst, melodica_login_view_ptr login, uint32_t flag) {
+  size_t offset = 0U;
+  size_t length = 0U;
+  int status = melodica_find_string(json, json_len, key, key_len, (&offset), (&length));
+  if(status == 0) {
+    dst->offset = offset;
+    dst->length = length;
+    login->present = (login->present | flag);
+    return 0;
+  }
+  if(status == 1) {
+    return 0;
+  }
+  return status;
+}
+int melodica_parse_login(const char* json, size_t json_len, melodica_login_view_ptr login) {
+  if((json == (char*)NULL || login == ((melodica_login_view_ptr)NULL))) {
+    return 4;
+  }
+  login->present = 0U;
+  m_clear_slice2((&login->auth_token));
+  m_clear_slice2((&login->username));
+  m_clear_slice2((&login->web_name));
+  m_clear_slice2((&login->user_id));
+  int status = m_capture(json, json_len, (char*)"authToken", 9U, (&login->auth_token), login, 1U);
+  if(status != 0) {
+    return status;
+  }
+  status = m_capture(json, json_len, (char*)"username", 8U, (&login->username), login, 2U);
+  if(status != 0) {
+    return status;
+  }
+  status = m_capture(json, json_len, (char*)"webName", 7U, (&login->web_name), login, 4U);
+  if(status != 0) {
+    return status;
+  }
+  status = m_capture(json, json_len, (char*)"userId", 6U, (&login->user_id), login, 8U);
+  if(status != 0) {
+    return status;
+  }
   return 0;
 }
 
