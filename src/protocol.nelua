@@ -90,7 +90,7 @@ local function append_escaped(output: *[0]cchar, output_cap: csize, pos: *csize,
 end
 
 local function version(): cuint <cexport, codename 'melodica_version'>
-  return 512 -- 0.2.0
+  return 768 -- 0.3.0
 end
 
 local function json_escape(input: cstring <const>, input_len: csize,
@@ -191,6 +191,47 @@ local function feedback_body(track_token: cstring <const>, track_token_len: csiz
      not append(output, output_cap, &pos, "\",\"isPositive\":", 15) or
      not append_bool(output, output_cap, &pos, positive) or
      not putc(output, output_cap, &pos, 125) then
+    $output_len = pos
+    return NO_SPACE
+  end
+  $output_len = pos
+  return OK
+end
+
+local function tired_body(track_token: cstring <const>, track_token_len: csize,
+                          output: *[0]cchar, output_cap: csize,
+                          output_len: *csize): cint
+                          <cexport, codename 'melodica_tired_body'>
+  if track_token == nilptr or output == nilptr or output_len == nilptr then
+    return BAD_ARGUMENT
+  end
+  local token_bytes: *[0]cchar = (@*[0]cchar)(track_token)
+  local pos: csize = 0
+  if not append(output, output_cap, &pos, "{\"trackToken\":\"", 15) or
+     not append_escaped(output, output_cap, &pos, token_bytes, track_token_len) or
+     not append(output, output_cap, &pos, "\"}", 2) then
+    $output_len = pos
+    return NO_SPACE
+  end
+  $output_len = pos
+  return OK
+end
+
+local function narrative_body(station_id: cstring <const>, station_id_len: csize,
+                              music_id: cstring <const>, music_id_len: csize,
+                              output: *[0]cchar, output_cap: csize,
+                              output_len: *csize): cint
+                              <cexport, codename 'melodica_narrative_body'>
+  if station_id == nilptr or music_id == nilptr or
+     output == nilptr or output_len == nilptr then return BAD_ARGUMENT end
+  local station_bytes: *[0]cchar = (@*[0]cchar)(station_id)
+  local music_bytes: *[0]cchar = (@*[0]cchar)(music_id)
+  local pos: csize = 0
+  if not append(output, output_cap, &pos, "{\"musicId\":\"", 12) or
+     not append_escaped(output, output_cap, &pos, music_bytes, music_id_len) or
+     not append(output, output_cap, &pos, "\",\"stationId\":\"", 15) or
+     not append_escaped(output, output_cap, &pos, station_bytes, station_id_len) or
+     not append(output, output_cap, &pos, "\"}", 2) then
     $output_len = pos
     return NO_SPACE
   end
