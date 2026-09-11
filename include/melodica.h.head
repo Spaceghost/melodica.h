@@ -12,6 +12,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifndef MELODICA_API
+#define MELODICA_API
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -33,43 +37,43 @@ extern "C" {
 #define MELODICA_BAD_ARGUMENT   4
 #define MELODICA_OVERFLOW       5
 
-unsigned melodica_version(void);
+MELODICA_API unsigned melodica_version(void);
 
-int melodica_find_string(const char *json, size_t json_len,
-                         const char *key, size_t key_len,
-                         size_t *value_offset, size_t *value_len);
+MELODICA_API int melodica_find_string(const char *json, size_t json_len,
+                                      const char *key, size_t key_len,
+                                      size_t *value_offset, size_t *value_len);
 
-int melodica_find_bool(const char *json, size_t json_len,
-                       const char *key, size_t key_len,
-                       int *value);
+MELODICA_API int melodica_find_bool(const char *json, size_t json_len,
+                                    const char *key, size_t key_len,
+                                    int *value);
 
-int melodica_find_u64(const char *json, size_t json_len,
-                      const char *key, size_t key_len,
-                      uint64_t *value);
+MELODICA_API int melodica_find_u64(const char *json, size_t json_len,
+                                   const char *key, size_t key_len,
+                                   uint64_t *value);
 
-int melodica_json_escape(const char *input, size_t input_len,
-                         char *output, size_t output_cap,
-                         size_t *output_len);
+MELODICA_API int melodica_json_escape(const char *input, size_t input_len,
+                                      char *output, size_t output_cap,
+                                      size_t *output_len);
 
-int melodica_login_body(const char *username, size_t username_len,
-                        const char *password, size_t password_len,
-                        char *output, size_t output_cap,
-                        size_t *output_len);
+MELODICA_API int melodica_login_body(const char *username, size_t username_len,
+                                     const char *password, size_t password_len,
+                                     char *output, size_t output_cap,
+                                     size_t *output_len);
 
-int melodica_stations_body(unsigned page_size, unsigned start_index,
-                           char *output, size_t output_cap,
-                           size_t *output_len);
+MELODICA_API int melodica_stations_body(unsigned page_size, unsigned start_index,
+                                        char *output, size_t output_cap,
+                                        size_t *output_len);
 
-int melodica_playlist_body(const char *station_id, size_t station_id_len,
-                           int station_start,
-                           const char *audio_format, size_t audio_format_len,
-                           char *output, size_t output_cap,
-                           size_t *output_len);
+MELODICA_API int melodica_playlist_body(const char *station_id, size_t station_id_len,
+                                        int station_start,
+                                        const char *audio_format, size_t audio_format_len,
+                                        char *output, size_t output_cap,
+                                        size_t *output_len);
 
-int melodica_feedback_body(const char *track_token, size_t track_token_len,
-                           int positive,
-                           char *output, size_t output_cap,
-                           size_t *output_len);
+MELODICA_API int melodica_feedback_body(const char *track_token, size_t track_token_len,
+                                        int positive,
+                                        char *output, size_t output_cap,
+                                        size_t *output_len);
 
 #ifdef __cplusplus
 } /* extern "C" */
