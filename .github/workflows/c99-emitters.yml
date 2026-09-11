@@ -6,7 +6,6 @@ on:
     paths:
       - 'lab/emitters/**'
       - '.github/workflows/c99-emitters.yml'
-      - 'C99_EMITTERS.md'
   workflow_dispatch:
 
 permissions:
@@ -105,4 +104,57 @@ jobs:
         if: always()
         with:
           name: emitter-gambit-scheme
+          path: build/emitter-census/
+
+  vala:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Translate Vala and compile emitted C99
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y valac
+          out="$GITHUB_WORKSPACE/build/emitter-census/vala"
+          mkdir -p "$out"
+          cp "$GITHUB_WORKSPACE/lab/emitters/vala/smoke.vala" "$out/"
+          cd "$out"
+          valac -C smoke.vala
+          test -s smoke.c
+          cc -std=c99 $(pkg-config --cflags glib-2.0 gobject-2.0) \
+            -c smoke.c -o smoke.o
+          wc -c smoke.c smoke.o
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: emitter-vala
+          path: build/emitter-census/
+
+  ats2-postiats:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Translate ATS2/Postiats and compile emitted C99
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ats2-lang
+          out="$GITHUB_WORKSPACE/build/emitter-census/ats"
+          mkdir -p "$out"
+          cp "$GITHUB_WORKSPACE/lab/emitters/ats/smoke.dats" "$out/"
+          cd "$out"
+          patscc -ccats smoke.dats
+          generated=$(find . -maxdepth 1 -type f -name '*.c' | head -n1)
+          test -n "$generated"
+          runtime_dir=$(dpkg -L ats2-lang | grep '/ccomp/runtime$' | head -n1)
+          ats_home=${runtime_dir%/ccomp/runtime}
+          cc -std=c99 -D_XOPEN_SOURCE -I"$ats_home" -I"$runtime_dir" \
+            -c "$generated" -o smoke.o
+          wc -c "$generated" smoke.o
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: emitter-ats2-postiats
           path: build/emitter-census/

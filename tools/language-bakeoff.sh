@@ -18,11 +18,13 @@ NELUA_INIT="require('nelua.compactc').enable{static_asserts=false,export_declara
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab -c "$OUT/nelua.c" -o "$OUT/nelua.o"
 
 # Zig is admitted only through its C backend. The emitted translation unit uses
-# Zig's generated-C support header, so provide the compiler's own lib directory;
-# the source itself is still recompiled in C99 mode before it may compete.
+# Zig's generated-C support header, so provide the compiler distribution's lib/
+# directory. We still compile the emitted source from scratch in C99 mode.
 "$ZIG" build-obj lab/zig/find_string.zig -OReleaseFast -ofmt=c \
   -femit-bin="$OUT/zig.c"
-ZIG_LIB_DIR=$("$ZIG" env | python3 -c 'import json,sys; print(json.load(sys.stdin)["lib_dir"])')
+ZIG_EXE=$(readlink -f "$(command -v "$ZIG")")
+ZIG_LIB_DIR="$(dirname "$ZIG_EXE")/lib"
+test -f "$ZIG_LIB_DIR/zig.h"
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab -I"$ZIG_LIB_DIR" \
   -c "$OUT/zig.c" -o "$OUT/zig.o"
 
