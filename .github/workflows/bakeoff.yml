@@ -34,7 +34,7 @@ jobs:
       - name: Publish winning generated header to master
         shell: bash
         run: |
-          if git diff --quiet -- dist/melodica.h dist/WINNER; then
+          if [[ -z "$(git status --porcelain -- dist/melodica.h dist/WINNER)" ]]; then
             echo "release artifact already matches the winner"
             exit 0
           fi
