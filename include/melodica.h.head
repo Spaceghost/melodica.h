@@ -1,0 +1,82 @@
+/* melodica.h - generated single-header C99 library
+ *
+ * Source: https://github.com/Spaceghost/melodica.h
+ * License: MIT
+ *
+ * Define MELODICA_IMPLEMENTATION in exactly one translation unit before
+ * including this file to compile the implementation.
+ */
+#ifndef MELODICA_H_INCLUDED
+#define MELODICA_H_INCLUDED
+
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define MELODICA_VERSION_MAJOR 0
+#define MELODICA_VERSION_MINOR 1
+#define MELODICA_VERSION_PATCH 0
+#define MELODICA_VERSION ((MELODICA_VERSION_MAJOR << 16) | (MELODICA_VERSION_MINOR << 8) | MELODICA_VERSION_PATCH)
+
+#define MELODICA_ENDPOINT_LOGIN        "/api/v1/auth/login"
+#define MELODICA_ENDPOINT_STATIONS     "/api/v1/station/getStations"
+#define MELODICA_ENDPOINT_PLAYLIST     "/api/v1/playlist/getFragment"
+#define MELODICA_ENDPOINT_FEEDBACK     "/api/v1/station/addFeedback"
+
+#define MELODICA_OK             0
+#define MELODICA_NOT_FOUND      1
+#define MELODICA_INVALID_JSON   2
+#define MELODICA_NO_SPACE       3
+#define MELODICA_BAD_ARGUMENT   4
+#define MELODICA_OVERFLOW       5
+
+unsigned melodica_version(void);
+
+int melodica_find_string(const char *json, size_t json_len,
+                         const char *key, size_t key_len,
+                         size_t *value_offset, size_t *value_len);
+
+int melodica_find_bool(const char *json, size_t json_len,
+                       const char *key, size_t key_len,
+                       int *value);
+
+int melodica_find_u64(const char *json, size_t json_len,
+                      const char *key, size_t key_len,
+                      uint64_t *value);
+
+int melodica_json_escape(const char *input, size_t input_len,
+                         char *output, size_t output_cap,
+                         size_t *output_len);
+
+int melodica_login_body(const char *username, size_t username_len,
+                        const char *password, size_t password_len,
+                        char *output, size_t output_cap,
+                        size_t *output_len);
+
+int melodica_stations_body(unsigned page_size, unsigned start_index,
+                           char *output, size_t output_cap,
+                           size_t *output_len);
+
+int melodica_playlist_body(const char *station_id, size_t station_id_len,
+                           int station_start,
+                           const char *audio_format, size_t audio_format_len,
+                           char *output, size_t output_cap,
+                           size_t *output_len);
+
+int melodica_feedback_body(const char *track_token, size_t track_token_len,
+                           int positive,
+                           char *output, size_t output_cap,
+                           size_t *output_len);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
+
+#ifdef MELODICA_IMPLEMENTATION
+#ifndef MELODICA_IMPLEMENTATION_ONCE
+#define MELODICA_IMPLEMENTATION_ONCE
+
+/* ---- generated implementation follows ---- */
