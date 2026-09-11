@@ -163,3 +163,46 @@ jobs:
         with:
           name: emitter-ats2-postiats
           path: build/emitter-census/
+
+  v:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build V, emit C, and compile emitted C99
+        shell: bash
+        run: |
+          set -euxo pipefail
+          out="$GITHUB_WORKSPACE/build/emitter-census/v"
+          mkdir -p "$out"
+          git clone --depth=1 https://github.com/vlang/v.git /tmp/v
+          make -C /tmp/v -j2
+          /tmp/v/v -o "$out/v.c" "$GITHUB_WORKSPACE/lab/emitters/v/smoke.v"
+          test -s "$out/v.c"
+          cc -std=c99 -I/tmp/v -I/tmp/v/vlib -c "$out/v.c" -o "$out/v.o"
+          wc -c "$out/v.c" "$out/v.o"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: emitter-v
+          path: build/emitter-census/
+
+  cython:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Translate Cython and compile emitted C99
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 -m pip install Cython
+          out="$GITHUB_WORKSPACE/build/emitter-census/cython"
+          mkdir -p "$out"
+          cython -3 "$GITHUB_WORKSPACE/lab/emitters/cython/smoke.pyx" -o "$out/cython.c"
+          test -s "$out/cython.c"
+          cc -std=c99 $(python3-config --includes) -c "$out/cython.c" -o "$out/cython.o"
+          wc -c "$out/cython.c" "$out/cython.o"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: emitter-cython
+          path: build/emitter-census/
