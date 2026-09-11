@@ -1,7 +1,7 @@
 import Melodica
 
-if melodica_version() != 768 {
-    fatalError("unexpected melodica version")
+if melodica_version() == 0 {
+    fatalError("invalid melodica version")
 }
 
 var body = [CChar](repeating: 0, count: 128)
