@@ -1,4 +1,4 @@
-name: source-language bake-off
+name: C99 source-language bake-off
 
 on:
   push:
@@ -16,7 +16,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: melodica-language-bakeoff
+  group: melodica-c99-language-bakeoff
   cancel-in-progress: true
 
 jobs:
@@ -30,16 +30,12 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
-      - uses: laytan/setup-odin@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          release: latest
       - name: Cache pinned Nelua compiler
         uses: actions/cache@v4
         with:
           path: .cache/nelua-lang
           key: melodica-nelua-${{ runner.os }}-${{ hashFiles('tools/bootstrap-nelua.sh') }}
-      - name: Compare implementations
+      - name: Compare C99 emitters
         run: ./tools/language-bakeoff.sh
       - name: Publish lab result
         shell: bash
@@ -48,8 +44,8 @@ jobs:
             exit 0
           fi
           winner=$(cat lab/WINNER)
-          git config user.name "melodica language bake-off"
+          git config user.name "melodica C99 emitter bake-off"
           git config user.email "actions@users.noreply.github.com"
           git add lab/BENCHMARK.tsv lab/WINNER
-          git commit -m "language-bakeoff: ${winner} wins string lookup"
+          git commit -m "c99-emitter-bakeoff: ${winner} wins string lookup"
           git push origin HEAD:master

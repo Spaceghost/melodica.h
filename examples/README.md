@@ -1,20 +1,10 @@
-# Language consumers
+# C99 examples
 
-Every example calls the same C99 release in `dist/melodica.h`. The implementation is compiled from `bindings/melodica.c`; language examples link that object/static library instead of reimplementing protocol behavior.
+This directory is deliberately small now.
 
-The native examples parse the same login response and verify `melodica_login_view` layout, present bits, offsets, lengths, and zero-copy slices. This deliberately tests more than symbol linkage.
+- `c/` consumes the released single-header library directly as C99.
+- `nelua/` demonstrates the source language used by the release implementation and emits C before being linked.
 
-Exercised in CI:
+Cross-language FFI examples were removed. This project is not trying to prove that every language can call a C function; it is comparing source languages and compiler implementations that can **produce C99-compatible C**.
 
-- C
-- C++
-- Zig
-- Nelua
-- Odin, via the reusable `bindings/odin` package
-- Rust
-- Go (cgo)
-- Objective-C
-- Swift
-- WASI compile target
-
-This is intentional: `melodica.h` has one ABI and one implementation artifact. Bindings stay thin enough that bugs cannot hide in a second parser written for a fashionable language.
+Those experiments live in [`../lab/`](../lab/README.md), with the admission rule documented in [`../C99_EMITTERS.md`](../C99_EMITTERS.md).

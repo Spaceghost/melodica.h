@@ -7,28 +7,33 @@ NELUA=${NELUA:-$(./tools/bootstrap-nelua.sh)}
 OUT=build/language-bakeoff
 mkdir -p "$OUT"
 
-# Build every challenger for speed, all exposing lab_find_string with the C ABI.
-"$ZIG" cc -std=c99 -O3 -DNDEBUG -Wall -Wextra -Werror -pedantic -c lab/c/find_string.c -o "$OUT/c.o"
+# C99 is both the baseline and the final gate for every emitted translation unit.
+cp lab/c/find_string.c "$OUT/c.c"
+"$ZIG" cc -std=c99 -O3 -DNDEBUG -Wall -Wextra -Werror -pedantic -Ilab \
+  -c "$OUT/c.c" -o "$OUT/c.o"
 
+# Nelua -> C -> C99 object.
 NELUA_INIT="require('nelua.compactc').enable{static_asserts=false,export_declarations=false}" \
   "$NELUA" -r -c -o "$OUT/nelua.c" lab/nelua/find_string.nelua
-"$ZIG" cc -std=c99 -O3 -DNDEBUG -c "$OUT/nelua.c" -o "$OUT/nelua.o"
+"$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab -c "$OUT/nelua.c" -o "$OUT/nelua.o"
 
-"$ZIG" build-obj lab/zig/find_string.zig -OReleaseFast -femit-bin="$OUT/zig.o"
+# Zig is admitted only through its C backend. Native Zig objects do not count.
+"$ZIG" build-obj lab/zig/find_string.zig -OReleaseFast -ofmt=c \
+  -femit-bin="$OUT/zig.c"
+"$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab -c "$OUT/zig.c" -o "$OUT/zig.o"
 
-odin build lab/odin -build-mode:lib -o:speed -out:"$OUT/odin.a"
-
-names=(c nelua zig odin)
+names=(c nelua zig)
 for name in "${names[@]}"; do
   obj="$OUT/$name.o"
-  [[ "$name" == odin ]] && obj="$OUT/odin.a"
-  "$ZIG" cc -std=c99 -O2 -Ilab lab/conformance.c "$obj" -o "$OUT/test-$name" -lm -ldl -pthread
+  "$ZIG" cc -std=c99 -O2 -Ilab lab/conformance.c "$obj" \
+    -o "$OUT/test-$name" -lm -ldl -pthread
   "$OUT/test-$name" >/dev/null
-  "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab lab/bench.c "$obj" -o "$OUT/bench-$name" -lm -ldl -pthread
+  "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab lab/bench.c "$obj" \
+    -o "$OUT/bench-$name" -lm -ldl -pthread
   : > "$OUT/times-$name.txt"
 done
 
-# Warm first, then interleave seven trials.
+# Warm first, then interleave seven trials to reduce scheduler/thermal ordering bias.
 for name in "${names[@]}"; do "$OUT/bench-$name" >/dev/null; done
 for ((round=0; round<7; round++)); do
   for ((step=0; step<${#names[@]}; step++)); do
@@ -38,17 +43,16 @@ for ((round=0; round<7; round++)); do
   done
 done
 
-printf 'language\tns_per_lookup\timplementation_bytes\n' > "$OUT/results.tsv"
+printf 'language\tns_per_lookup\tobject_bytes\temitted_c_bytes\n' > "$OUT/results.tsv"
 for name in "${names[@]}"; do
   ns=$(sort -n "$OUT/times-$name.txt" | sed -n '4p')
-  obj="$OUT/$name.o"
-  [[ "$name" == odin ]] && obj="$OUT/odin.a"
-  bytes=$(wc -c < "$obj" | tr -d ' ')
-  printf '%s\t%s\t%s\n' "$name" "$ns" "$bytes" >> "$OUT/results.tsv"
+  object_bytes=$(wc -c < "$OUT/$name.o" | tr -d ' ')
+  emitted_c_bytes=$(wc -c < "$OUT/$name.c" | tr -d ' ')
+  printf '%s\t%s\t%s\t%s\n' "$name" "$ns" "$object_bytes" "$emitted_c_bytes" >> "$OUT/results.tsv"
 done
 
 winner=$(tail -n +2 "$OUT/results.tsv" | sort -t $'\t' -k2,2n | head -n1 | cut -f1)
 cp "$OUT/results.tsv" lab/BENCHMARK.tsv
 printf '%s\n' "$winner" > lab/WINNER
 cat "$OUT/results.tsv"
-echo "language winner: $winner"
+echo "C99 emitter winner: $winner"
