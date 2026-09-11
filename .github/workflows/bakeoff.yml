@@ -7,6 +7,9 @@ on:
       - 'dist/**'
       - 'README.md'
       - 'DESIGN.md'
+      - 'examples/**'
+      - 'bindings/**'
+      - '.github/workflows/languages.yml'
   workflow_dispatch:
 
 permissions:
