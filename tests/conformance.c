@@ -53,9 +53,26 @@ int main(void) {
     CHECK(melodica_find_u64(json, sizeof json - 1, "n", 1, &u) == MELODICA_OVERFLOW);
   }
 
+  /* Scalar token boundaries matter. Accepting a valid prefix is still wrong. */
   {
-    const char bad[] = "{\"x\":\"unterminated}";
-    CHECK(melodica_find_string(bad, sizeof bad - 1, "x", 1, &off, &len) == MELODICA_INVALID_JSON);
+    const char bad_bool[] = "{\"x\":trueish}";
+    const char bad_num[] = "{\"x\":123oops}";
+    const char leading_zero[] = "{\"x\":01}";
+    CHECK(melodica_find_bool(bad_bool, sizeof bad_bool - 1, "x", 1, &b) == MELODICA_INVALID_JSON);
+    CHECK(melodica_find_u64(bad_num, sizeof bad_num - 1, "x", 1, &u) == MELODICA_INVALID_JSON);
+    CHECK(melodica_find_u64(leading_zero, sizeof leading_zero - 1, "x", 1, &u) == MELODICA_INVALID_JSON);
+  }
+
+  {
+    const char unterminated[] = "{\"x\":\"unterminated}";
+    const char bad_escape[] = "{\"x\":\"bad\\q\"}";
+    const char bad_unicode[] = "{\"x\":\"bad\\u12xz\"}";
+    const char good_unicode[] = "{\"x\":\"ok\\u263a\"}";
+    CHECK(melodica_find_string(unterminated, sizeof unterminated - 1, "x", 1, &off, &len) == MELODICA_INVALID_JSON);
+    CHECK(melodica_find_string(bad_escape, sizeof bad_escape - 1, "x", 1, &off, &len) == MELODICA_INVALID_JSON);
+    CHECK(melodica_find_string(bad_unicode, sizeof bad_unicode - 1, "x", 1, &off, &len) == MELODICA_INVALID_JSON);
+    CHECK(melodica_find_string(good_unicode, sizeof good_unicode - 1, "x", 1, &off, &len) == MELODICA_OK);
+    CHECK(bytes_eq(good_unicode + off, len, "ok\\u263a"));
   }
 
   CHECK(melodica_json_escape("a\n\"b\\c", 6, out, sizeof out, &written) == MELODICA_OK);

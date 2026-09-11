@@ -5,17 +5,32 @@ local OK: cint <comptime> = 0
 local INVALID_JSON: cint <comptime> = 2
 local OVERFLOW: cint <comptime> = 5
 
-global function melodica_skip_ws(json: *[0]cchar <const>, json_len: csize,
+local function is_ws(c: cchar): boolean
+  return c == 32 or c == 9 or c == 10 or c == 13
+end
+
+local function is_hex(c: cchar): boolean
+  return (c >= 48 and c <= 57) or
+         (c >= 65 and c <= 70) or
+         (c >= 97 and c <= 102)
+end
+
+local function is_boundary(json: *[0]cchar, json_len: csize,
+                           pos: csize): boolean
+  if pos >= json_len then return true end
+  local c = json[pos]
+  return is_ws(c) or c == 44 or c == 93 or c == 125
+end
+
+global function melodica_skip_ws(json: *[0]cchar, json_len: csize,
                                   pos: csize): csize
-  while pos < json_len do
-    local c = json[pos]
-    if c ~= 32 and c ~= 9 and c ~= 10 and c ~= 13 then break end
+  while pos < json_len and is_ws(json[pos]) do
     pos = pos + 1
   end
   return pos
 end
 
-global function melodica_parse_string_at(json: *[0]cchar <const>, json_len: csize,
+global function melodica_parse_string_at(json: *[0]cchar, json_len: csize,
                                          pos: csize, value_offset: *csize,
                                          value_len: *csize): cint
   pos = melodica_skip_ws(json, json_len, pos)
@@ -28,8 +43,22 @@ global function melodica_parse_string_at(json: *[0]cchar <const>, json_len: csiz
     if c == 92 then
       pos = pos + 1
       if pos >= json_len then return INVALID_JSON end
-      pos = pos + 1
+      local esc = json[pos]
+      if esc == 117 then -- \\uXXXX
+        if pos + 4 >= json_len then return INVALID_JSON end
+        if not is_hex(json[pos+1]) or not is_hex(json[pos+2]) or
+           not is_hex(json[pos+3]) or not is_hex(json[pos+4]) then
+          return INVALID_JSON
+        end
+        pos = pos + 5
+      elseif esc == 34 or esc == 92 or esc == 47 or esc == 98 or
+             esc == 102 or esc == 110 or esc == 114 or esc == 116 then
+        pos = pos + 1
+      else
+        return INVALID_JSON
+      end
     elseif c == 34 then
+      if not is_boundary(json, json_len, pos + 1) then return INVALID_JSON end
       $value_offset = start
       $value_len = pos - start
       return OK
@@ -42,30 +71,36 @@ global function melodica_parse_string_at(json: *[0]cchar <const>, json_len: csiz
   return INVALID_JSON
 end
 
-global function melodica_parse_bool_at(json: *[0]cchar <const>, json_len: csize,
+global function melodica_parse_bool_at(json: *[0]cchar, json_len: csize,
                                        pos: csize, value: *cint): cint
   pos = melodica_skip_ws(json, json_len, pos)
   if pos + 4 <= json_len and
      json[pos] == 116 and json[pos+1] == 114 and
-     json[pos+2] == 117 and json[pos+3] == 101 then
+     json[pos+2] == 117 and json[pos+3] == 101 and
+     is_boundary(json, json_len, pos + 4) then
     $value = 1
     return OK
   end
   if pos + 5 <= json_len and
      json[pos] == 102 and json[pos+1] == 97 and
      json[pos+2] == 108 and json[pos+3] == 115 and
-     json[pos+4] == 101 then
+     json[pos+4] == 101 and is_boundary(json, json_len, pos + 5) then
     $value = 0
     return OK
   end
   return INVALID_JSON
 end
 
-global function melodica_parse_u64_at(json: *[0]cchar <const>, json_len: csize,
+global function melodica_parse_u64_at(json: *[0]cchar, json_len: csize,
                                       pos: csize, value: *uint64): cint
   pos = melodica_skip_ws(json, json_len, pos)
   if pos >= json_len or json[pos] < 48 or json[pos] > 57 then
     return INVALID_JSON
+  end
+
+  if json[pos] == 48 and pos + 1 < json_len and
+     json[pos+1] >= 48 and json[pos+1] <= 57 then
+    return INVALID_JSON -- JSON integers cannot have a leading zero.
   end
 
   local v: uint64 = 0
@@ -80,6 +115,7 @@ global function melodica_parse_u64_at(json: *[0]cchar <const>, json_len: csize,
     v = v * 10 + digit
     pos = pos + 1
   end
+  if not is_boundary(json, json_len, pos) then return INVALID_JSON end
   $value = v
   return OK
 end
