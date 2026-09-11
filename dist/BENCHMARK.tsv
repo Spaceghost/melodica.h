@@ -1,0 +1,5 @@
+name	lookup_ns	track_ns	object_bytes	header_bytes	score
+scan	418	3904	13864	36349	2.234310
+hash	500	4622	13984	36793	2.589141
+tiny	362	3367	13848	36073	1.975379
+dispatch	364	792	14792	37707	1.022362
