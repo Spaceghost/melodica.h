@@ -8,9 +8,9 @@ OUT=build/language-bakeoff
 mkdir -p "$OUT"
 
 # C99 is both the baseline and the final gate for every emitted translation unit.
-cp lab/c/find_string.c "$OUT/c.c"
+# Compile the baseline in place so its intentionally relative include remains valid.
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -Wall -Wextra -Werror -pedantic -Ilab \
-  -c "$OUT/c.c" -o "$OUT/c.o"
+  -c lab/c/find_string.c -o "$OUT/c.o"
 
 # Nelua -> C -> C99 object.
 NELUA_INIT="require('nelua.compactc').enable{static_asserts=false,export_declarations=false}" \
@@ -47,7 +47,11 @@ printf 'language\tns_per_lookup\tobject_bytes\temitted_c_bytes\n' > "$OUT/result
 for name in "${names[@]}"; do
   ns=$(sort -n "$OUT/times-$name.txt" | sed -n '4p')
   object_bytes=$(wc -c < "$OUT/$name.o" | tr -d ' ')
-  emitted_c_bytes=$(wc -c < "$OUT/$name.c" | tr -d ' ')
+  if [[ "$name" == c ]]; then
+    emitted_c_bytes=$(wc -c < lab/c/find_string.c | tr -d ' ')
+  else
+    emitted_c_bytes=$(wc -c < "$OUT/$name.c" | tr -d ' ')
+  fi
   printf '%s\t%s\t%s\t%s\n' "$name" "$ns" "$object_bytes" "$emitted_c_bytes" >> "$OUT/results.tsv"
 done
 
