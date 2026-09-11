@@ -11,7 +11,7 @@ The host owns HTTPS, CSRF cookies, auth-token persistence, storage, scheduling, 
 
 ## Why this shape
 
-`melodica.h` is deliberately not a line-for-line port of libpiano. It keeps the useful protocol layer while replacing linked lists, hidden ownership, and transport policy with a small C ABI suitable for Swift/Objective-C, C, Zig, embedded firmware, and WASM.
+`melodica.h` is deliberately not a line-for-line port of libpiano. It keeps the useful protocol layer while replacing linked lists, hidden ownership, and transport policy with a small C ABI suitable for Swift/Objective-C, C/C++, Zig, Nelua, Odin, embedded firmware, and WASM.
 
 There are no mandatory dependencies, no global runtime state, no allocator, no libcurl, no JSON DOM, and no audio stack.
 
@@ -56,6 +56,21 @@ The current modern REST surface covers:
 
 All body writers escape caller strings and write into caller-provided buffers.
 
+## Language consumers
+
+The release ABI is exercised directly from:
+
+- C
+- C++
+- Zig
+- Nelua
+- **Odin**
+- Objective-C
+- Swift
+- WASI
+
+All examples link the same implementation compiled from `dist/melodica.h`; none reimplement the parser or protocol layer. See [`examples/`](examples/README.md). The language-consumer workflow keeps the ABI honest across those toolchains on Linux and macOS.
+
 ## The bake-off
 
 Several implementations live together on `master` and expose exactly the same C ABI:
@@ -71,7 +86,7 @@ Timing is deliberately less gullible than a usual CI microbenchmark: all binarie
 
 Correctness is a gate, not a score. A fast wrong parser receives the traditional benchmark prize of **nothing**.
 
-The winner is recorded in `dist/WINNER`. A challenger must improve the weighted score by at least 3% before it displaces the incumbent.
+The winner is recorded in `dist/WINNER`, and the measurements that justified it live in `dist/BENCHMARK.tsv`. A challenger must improve the weighted score by at least 3% before it displaces the incumbent.
 
 ## Build
 
