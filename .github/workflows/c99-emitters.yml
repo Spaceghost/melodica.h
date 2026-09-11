@@ -98,7 +98,8 @@ jobs:
           gsc -c -o "$out/gambit.c" "$GITHUB_WORKSPACE/lab/emitters/gambit/smoke.scm"
           test -s "$out/gambit.c"
           gambit_h=$(dpkg -L libgambit4-dev | grep '/gambit\.h$' | head -n1)
-          cc -std=c99 -I"$(dirname "$gambit_h")" -c "$out/gambit.c" -o "$out/gambit.o"
+          cc -std=c99 -D_POSIX_C_SOURCE=200809L -I"$(dirname "$gambit_h")" \
+            -c "$out/gambit.c" -o "$out/gambit.o"
           wc -c "$out/gambit.c" "$out/gambit.o"
       - uses: actions/upload-artifact@v4
         if: always()
