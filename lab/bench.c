@@ -1,0 +1,42 @@
+#include "abi.h"
+
+#include <stdint.h>
+#include <stdio.h>
+#include <time.h>
+
+static const char payload[] =
+"{\"tracks\":[{\"userSeed\":\"G1473\",\"genre\":[\"Rock\"],"
+"\"monthlyListening\":0,\"listeningTimestamp\":\"1512414066099\","
+"\"shareLandingURL\":\"https://example.invalid/share\",\"isSeed\":false,"
+"\"allowStartStationFromTrack\":true,\"allowShareTrack\":true,"
+"\"allowBuyTrack\":true,\"allowTiredOfTrack\":true,"
+"\"allowSkipTrackWithoutLimit\":false,\"allowSkip\":true,"
+"\"allowFeedback\":true,\"composerName\":\"\","
+"\"artistSeoToken\":\"artist/token\",\"albumSeoToken\":\"album/token\","
+"\"isCompilation\":false,\"amazonUrl\":\"https://example.invalid/a\","
+"\"albumTitle\":\"An Album\",\"artistName\":\"An Artist\","
+"\"songTitle\":\"A Song\",\"trackToken\":\"PT-long-token-for-benchmark-0123456789\","
+"\"identity\":\"41561d0348209a43fd397f2baa1b41ad\",\"trackLength\":188,"
+"\"stationId\":\"3793312577613735337\",\"fileGain\":\"-3.75\","
+"\"audioEncoding\":\"aacplus\",\"audioTokenId\":\"jp6ta2492\","
+"\"audioURL\":\"https://audio.example.invalid/access/long/path?token=abcdef0123456789\","
+"\"rights\":[\"replayRequiresReward\",\"allowSkipAfterLimit\",\"allowReplay\"]}]}";
+
+static volatile uint64_t sink;
+
+int main(void) {
+    const size_t loops = 300000;
+    size_t off = 0, len = 0;
+    clock_t begin = clock();
+    for (size_t i = 0; i < loops; ++i) {
+        sink += (uint64_t)lab_find_string(payload, sizeof payload - 1, "audioURL", 8, &off, &len) + len;
+        sink += (uint64_t)lab_find_string(payload, sizeof payload - 1, "trackToken", 10, &off, &len) + len;
+        sink += (uint64_t)lab_find_string(payload, sizeof payload - 1, "artistName", 10, &off, &len) + len;
+        sink += (uint64_t)lab_find_string(payload, sizeof payload - 1, "songTitle", 9, &off, &len) + len;
+    }
+    clock_t end = clock();
+    const double ns = ((double)(end - begin) / CLOCKS_PER_SEC) * 1e9 /
+                      ((double)loops * 4.0);
+    printf("%.0f\n", ns);
+    return sink == UINT64_MAX ? 1 : 0;
+}
