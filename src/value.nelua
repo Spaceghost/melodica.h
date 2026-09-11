@@ -5,7 +5,8 @@ local OK: cint <comptime> = 0
 local INVALID_JSON: cint <comptime> = 2
 local OVERFLOW: cint <comptime> = 5
 
-global function melodica_skip_ws(json: cstring, json_len: csize, pos: csize): csize
+global function melodica_skip_ws(json: *[0]cchar <const>, json_len: csize,
+                                  pos: csize): csize
   while pos < json_len do
     local c = json[pos]
     if c ~= 32 and c ~= 9 and c ~= 10 and c ~= 13 then break end
@@ -14,7 +15,7 @@ global function melodica_skip_ws(json: cstring, json_len: csize, pos: csize): cs
   return pos
 end
 
-global function melodica_parse_string_at(json: cstring, json_len: csize,
+global function melodica_parse_string_at(json: *[0]cchar <const>, json_len: csize,
                                          pos: csize, value_offset: *csize,
                                          value_len: *csize): cint
   pos = melodica_skip_ws(json, json_len, pos)
@@ -41,7 +42,7 @@ global function melodica_parse_string_at(json: cstring, json_len: csize,
   return INVALID_JSON
 end
 
-global function melodica_parse_bool_at(json: cstring, json_len: csize,
+global function melodica_parse_bool_at(json: *[0]cchar <const>, json_len: csize,
                                        pos: csize, value: *cint): cint
   pos = melodica_skip_ws(json, json_len, pos)
   if pos + 4 <= json_len and
@@ -60,7 +61,7 @@ global function melodica_parse_bool_at(json: cstring, json_len: csize,
   return INVALID_JSON
 end
 
-global function melodica_parse_u64_at(json: cstring, json_len: csize,
+global function melodica_parse_u64_at(json: *[0]cchar <const>, json_len: csize,
                                       pos: csize, value: *uint64): cint
   pos = melodica_skip_ws(json, json_len, pos)
   if pos >= json_len or json[pos] < 48 or json[pos] > 57 then

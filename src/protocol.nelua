@@ -5,7 +5,7 @@ local OK: cint <comptime> = 0
 local NO_SPACE: cint <comptime> = 3
 local BAD_ARGUMENT: cint <comptime> = 4
 
-local function putc(output: cstring, output_cap: csize,
+local function putc(output: *[0]cchar, output_cap: csize,
                     pos: *csize, c: cchar): boolean
   if $pos >= output_cap then return false end
   output[$pos] = c
@@ -13,19 +13,22 @@ local function putc(output: cstring, output_cap: csize,
   return true
 end
 
-local function append(output: cstring, output_cap: csize, pos: *csize,
-                      input: cstring, input_len: csize): boolean
+-- String literals naturally convert to cstring. Cast once to an unbounded
+-- pointer so Nelua permits indexed reads while preserving a plain char* C ABI.
+local function append(output: *[0]cchar, output_cap: csize, pos: *csize,
+                      input: cstring <const>, input_len: csize): boolean
+  local bytes: *[0]cchar = (@*[0]cchar)(input)
   if input_len > output_cap - $pos then return false end
   local i: csize = 0
   while i < input_len do
-    output[$pos] = input[i]
+    output[$pos] = bytes[i]
     $pos = $pos + 1
     i = i + 1
   end
   return true
 end
 
-local function append_u64(output: cstring, output_cap: csize, pos: *csize,
+local function append_u64(output: *[0]cchar, output_cap: csize, pos: *csize,
                           value: uint64): boolean
   local digits: [20]cchar
   local n: csize = 0
@@ -44,9 +47,13 @@ local function append_u64(output: cstring, output_cap: csize, pos: *csize,
   return true
 end
 
-local function append_escaped(output: cstring, output_cap: csize, pos: *csize,
-                              input: cstring, input_len: csize): boolean
-  local hex: cstring = "0123456789abcdef"
+local function hex_digit(v: uint8): cchar
+  if v < 10 then return (@cchar)(48 + v) end
+  return (@cchar)(87 + v)
+end
+
+local function append_escaped(output: *[0]cchar, output_cap: csize, pos: *csize,
+                              input: *[0]cchar <const>, input_len: csize): boolean
   local i: csize = 0
   while i < input_len do
     local c = input[i]
@@ -66,8 +73,8 @@ local function append_escaped(output: cstring, output_cap: csize, pos: *csize,
     elseif c >= 0 and c < 32 then
       if not append(output, output_cap, pos, "\\u00", 4) then return false end
       local u: uint8 = (@uint8)(c)
-      if not putc(output, output_cap, pos, hex[u // 16]) or
-         not putc(output, output_cap, pos, hex[u % 16]) then return false end
+      if not putc(output, output_cap, pos, hex_digit(u // 16)) or
+         not putc(output, output_cap, pos, hex_digit(u % 16)) then return false end
     else
       if not putc(output, output_cap, pos, c) then return false end
     end
@@ -80,8 +87,8 @@ local function version(): cuint <cexport, codename 'melodica_version'>
   return 256 -- 0.1.0
 end
 
-local function json_escape(input: cstring, input_len: csize,
-                           output: cstring, output_cap: csize,
+local function json_escape(input: *[0]cchar <const>, input_len: csize,
+                           output: *[0]cchar, output_cap: csize,
                            output_len: *csize): cint
                            <cexport, codename 'melodica_json_escape'>
   if input == nilptr or output == nilptr or output_len == nilptr then
@@ -96,9 +103,9 @@ local function json_escape(input: cstring, input_len: csize,
   return OK
 end
 
-local function login_body(username: cstring, username_len: csize,
-                          password: cstring, password_len: csize,
-                          output: cstring, output_cap: csize,
+local function login_body(username: *[0]cchar <const>, username_len: csize,
+                          password: *[0]cchar <const>, password_len: csize,
+                          output: *[0]cchar, output_cap: csize,
                           output_len: *csize): cint
                           <cexport, codename 'melodica_login_body'>
   if username == nilptr or password == nilptr or
@@ -117,7 +124,7 @@ local function login_body(username: cstring, username_len: csize,
 end
 
 local function stations_body(page_size: cuint, start_index: cuint,
-                             output: cstring, output_cap: csize,
+                             output: *[0]cchar, output_cap: csize,
                              output_len: *csize): cint
                              <cexport, codename 'melodica_stations_body'>
   if output == nilptr or output_len == nilptr then return BAD_ARGUMENT end
@@ -134,10 +141,10 @@ local function stations_body(page_size: cuint, start_index: cuint,
   return OK
 end
 
-local function playlist_body(station_id: cstring, station_id_len: csize,
+local function playlist_body(station_id: *[0]cchar <const>, station_id_len: csize,
                              station_start: cint,
-                             audio_format: cstring, audio_format_len: csize,
-                             output: cstring, output_cap: csize,
+                             audio_format: *[0]cchar <const>, audio_format_len: csize,
+                             output: *[0]cchar, output_cap: csize,
                              output_len: *csize): cint
                              <cexport, codename 'melodica_playlist_body'>
   if station_id == nilptr or audio_format == nilptr or
@@ -160,9 +167,9 @@ local function playlist_body(station_id: cstring, station_id_len: csize,
   return OK
 end
 
-local function feedback_body(track_token: cstring, track_token_len: csize,
+local function feedback_body(track_token: *[0]cchar <const>, track_token_len: csize,
                              positive: cint,
-                             output: cstring, output_cap: csize,
+                             output: *[0]cchar, output_cap: csize,
                              output_len: *csize): cint
                              <cexport, codename 'melodica_feedback_body'>
   if track_token == nilptr or output == nilptr or output_len == nilptr then
