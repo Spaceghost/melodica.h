@@ -8,7 +8,6 @@ OUT=build/language-bakeoff
 mkdir -p "$OUT"
 
 # C99 is both the baseline and the final gate for every emitted translation unit.
-# Compile the baseline in place so its intentionally relative include remains valid.
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -Wall -Wextra -Werror -pedantic -Ilab \
   -c lab/c/find_string.c -o "$OUT/c.o"
 
@@ -17,9 +16,8 @@ NELUA_INIT="require('nelua.compactc').enable{static_asserts=false,export_declara
   "$NELUA" -r -c -o "$OUT/nelua.c" lab/nelua/find_string.nelua
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab -c "$OUT/nelua.c" -o "$OUT/nelua.o"
 
-# Zig is admitted only through its C backend. The emitted translation unit uses
-# Zig's generated-C support header, so provide the compiler distribution's lib/
-# directory. We still compile the emitted source from scratch in C99 mode.
+# Zig is admitted only through its C backend. Recompile the generated source in
+# C99 mode with only the compiler distribution's generated-C support header.
 "$ZIG" build-obj lab/zig/find_string.zig -OReleaseFast -ofmt=c \
   -femit-bin="$OUT/zig.c"
 ZIG_EXE=$(readlink -f "$(command -v "$ZIG")")
@@ -28,13 +26,24 @@ test -f "$ZIG_LIB_DIR/zig.h"
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab -I"$ZIG_LIB_DIR" \
   -c "$OUT/zig.c" -o "$OUT/zig.o"
 
-names=(c nelua zig)
+# Nim -> C -> static C library. Nim's C backend has a small runtime startup
+# contract, kept behind a C99 shim so every challenger still exposes one ABI.
+mkdir -p "$OUT/nimcache"
+nim c --app:staticLib --mm:arc -d:danger --passC:-std=c99 \
+  --nimcache:"$OUT/nimcache" -o:"$OUT/libnimlab.a" lab/nim/find_string.nim
+"$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab -c lab/nim/init.c -o "$OUT/nim-init.o"
+
+names=(c nelua zig nim)
 for name in "${names[@]}"; do
-  obj="$OUT/$name.o"
-  "$ZIG" cc -std=c99 -O2 -Ilab lab/conformance.c "$obj" \
+  if [[ "$name" == nim ]]; then
+    inputs=("$OUT/nim-init.o" "$OUT/libnimlab.a")
+  else
+    inputs=("$OUT/$name.o")
+  fi
+  "$ZIG" cc -std=c99 -O2 -Ilab lab/conformance.c "${inputs[@]}" \
     -o "$OUT/test-$name" -lm -ldl -pthread
   "$OUT/test-$name" >/dev/null
-  "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab lab/bench.c "$obj" \
+  "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab lab/bench.c "${inputs[@]}" \
     -o "$OUT/bench-$name" -lm -ldl -pthread
   : > "$OUT/times-$name.txt"
 done
@@ -49,16 +58,25 @@ for ((round=0; round<7; round++)); do
   done
 done
 
-printf 'language\tns_per_lookup\tobject_bytes\temitted_c_bytes\n' > "$OUT/results.tsv"
+printf 'language\tns_per_lookup\tlinked_bytes\temitted_c_bytes\n' > "$OUT/results.tsv"
 for name in "${names[@]}"; do
   ns=$(sort -n "$OUT/times-$name.txt" | sed -n '4p')
-  object_bytes=$(wc -c < "$OUT/$name.o" | tr -d ' ')
-  if [[ "$name" == c ]]; then
-    emitted_c_bytes=$(wc -c < lab/c/find_string.c | tr -d ' ')
-  else
-    emitted_c_bytes=$(wc -c < "$OUT/$name.c" | tr -d ' ')
-  fi
-  printf '%s\t%s\t%s\t%s\n' "$name" "$ns" "$object_bytes" "$emitted_c_bytes" >> "$OUT/results.tsv"
+  case "$name" in
+    c)
+      linked_bytes=$(wc -c < "$OUT/c.o" | tr -d ' ')
+      emitted_c_bytes=$(wc -c < lab/c/find_string.c | tr -d ' ')
+      ;;
+    nelua|zig)
+      linked_bytes=$(wc -c < "$OUT/$name.o" | tr -d ' ')
+      emitted_c_bytes=$(wc -c < "$OUT/$name.c" | tr -d ' ')
+      ;;
+    nim)
+      linked_bytes=$(( $(wc -c < "$OUT/nim-init.o") + $(wc -c < "$OUT/libnimlab.a") ))
+      emitted_c_bytes=$(find "$OUT/nimcache" -type f -name '*.c' -exec wc -c {} + | \
+        awk '$2 != "total" {s += $1} END {print s + 0}')
+      ;;
+  esac
+  printf '%s\t%s\t%s\t%s\n' "$name" "$ns" "$linked_bytes" "$emitted_c_bytes" >> "$OUT/results.tsv"
 done
 
 winner=$(tail -n +2 "$OUT/results.tsv" | sort -t $'\t' -k2,2n | head -n1 | cut -f1)

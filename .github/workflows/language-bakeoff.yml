@@ -31,6 +31,10 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
+      - name: Install Nim C emitter
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nim
       - name: Cache pinned Nelua compiler
         uses: actions/cache@v4
         with:
