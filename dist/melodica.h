@@ -152,12 +152,14 @@ static char m_hex_digit(uint8_t v);
 static bool m_append_escaped(nlcchar_arr0_ptr output, size_t output_cap, nlcsize_ptr pos, nlcchar_arr0_ptr input, size_t input_len);
 static bool m_quote_is_escaped(nlcchar_arr0_ptr json, size_t pos);
 static int m_locate(nlcchar_arr0_ptr json, size_t json_len, nlcchar_arr0_ptr key, size_t key_len, nlcsize_ptr value_pos);
+static bool m_key_equal(nlcchar_arr0_ptr json, size_t start, size_t key_len, const char* key);
 typedef melodica_slice* melodica_slice_ptr;
 static void m_clear_slice(melodica_slice_ptr dst);
 typedef melodica_track_view* melodica_track_view_ptr;
-static int m_capture_string(const char* json, size_t json_len, const char* key, size_t key_len, melodica_slice_ptr dst, melodica_track_view_ptr track, uint32_t flag);
-static int m_capture_u64(const char* json, size_t json_len, const char* key, size_t key_len, nluint64_ptr dst, melodica_track_view_ptr track, uint32_t flag);
-static int m_capture_bool(const char* json, size_t json_len, const char* key, size_t key_len, nlcint_ptr dst, melodica_track_view_ptr track, uint32_t flag);
+static void m_clear_track(melodica_track_view_ptr track);
+static int m_capture_string(nlcchar_arr0_ptr json, size_t json_len, size_t pos, melodica_slice_ptr dst, melodica_track_view_ptr track, uint32_t flag);
+static int m_capture_u64(nlcchar_arr0_ptr json, size_t json_len, size_t pos, nluint64_ptr dst, melodica_track_view_ptr track, uint32_t flag);
+static int m_capture_bool(nlcchar_arr0_ptr json, size_t json_len, size_t pos, nlcint_ptr dst, melodica_track_view_ptr track, uint32_t flag);
 /* ------------------------------ DEFINITIONS ------------------------------- */
 bool m_is_ws(char c) {
   return (((c == 32 || c == 9) || c == 10) || c == 13);
@@ -500,55 +502,22 @@ int melodica_find_u64(const char* json, size_t json_len, const char* key, size_t
   }
   return m_melodica_parse_u64_at(json_bytes, json_len, pos, value);
 }
+bool m_key_equal(nlcchar_arr0_ptr json, size_t start, size_t key_len, const char* key) {
+  nlcchar_arr0_ptr wanted = ((nlcchar_arr0_ptr)key);
+  size_t i = 0U;
+  while(i < key_len) {
+    if(json[(start + i)] != wanted[i]) {
+      return false;
+    }
+    i = (i + 1);
+  }
+  return true;
+}
 void m_clear_slice(melodica_slice_ptr dst) {
   dst->offset = 0U;
   dst->length = 0U;
 }
-int m_capture_string(const char* json, size_t json_len, const char* key, size_t key_len, melodica_slice_ptr dst, melodica_track_view_ptr track, uint32_t flag) {
-  size_t offset = 0U;
-  size_t length = 0U;
-  int status = melodica_find_string(json, json_len, key, key_len, (&offset), (&length));
-  if(status == 0) {
-    dst->offset = offset;
-    dst->length = length;
-    track->present = (track->present + flag);
-    return 0;
-  }
-  if(status == 1) {
-    return 0;
-  }
-  return status;
-}
-int m_capture_u64(const char* json, size_t json_len, const char* key, size_t key_len, nluint64_ptr dst, melodica_track_view_ptr track, uint32_t flag) {
-  uint64_t value = 0U;
-  int status = melodica_find_u64(json, json_len, key, key_len, (&value));
-  if(status == 0) {
-    (*dst) = value;
-    track->present = (track->present + flag);
-    return 0;
-  }
-  if(status == 1) {
-    return 0;
-  }
-  return status;
-}
-int m_capture_bool(const char* json, size_t json_len, const char* key, size_t key_len, nlcint_ptr dst, melodica_track_view_ptr track, uint32_t flag) {
-  int value = 0;
-  int status = melodica_find_bool(json, json_len, key, key_len, (&value));
-  if(status == 0) {
-    (*dst) = value;
-    track->present = (track->present + flag);
-    return 0;
-  }
-  if(status == 1) {
-    return 0;
-  }
-  return status;
-}
-int melodica_parse_track(const char* json, size_t json_len, melodica_track_view_ptr track) {
-  if((json == (char*)NULL || track == ((melodica_track_view_ptr)NULL))) {
-    return 4;
-  }
+void m_clear_track(melodica_track_view_ptr track) {
   track->present = 0U;
   m_clear_slice((&track->song_title));
   m_clear_slice((&track->artist_name));
@@ -559,41 +528,103 @@ int melodica_parse_track(const char* json, size_t json_len, melodica_track_view_
   m_clear_slice((&track->audio_encoding));
   track->track_length = 0U;
   track->allow_skip = 0;
-  int status = m_capture_string(json, json_len, (char*)"songTitle", 9U, (&track->song_title), track, 1U);
-  if(status != 0) {
-    return status;
+}
+int m_capture_string(nlcchar_arr0_ptr json, size_t json_len, size_t pos, melodica_slice_ptr dst, melodica_track_view_ptr track, uint32_t flag) {
+  int status = m_melodica_parse_string_at(json, json_len, pos, (&dst->offset), (&dst->length));
+  if(status == 0) {
+    track->present = (track->present | flag);
   }
-  status = m_capture_string(json, json_len, (char*)"artistName", 10U, (&track->artist_name), track, 2U);
-  if(status != 0) {
-    return status;
+  return status;
+}
+int m_capture_u64(nlcchar_arr0_ptr json, size_t json_len, size_t pos, nluint64_ptr dst, melodica_track_view_ptr track, uint32_t flag) {
+  int status = m_melodica_parse_u64_at(json, json_len, pos, dst);
+  if(status == 0) {
+    track->present = (track->present | flag);
   }
-  status = m_capture_string(json, json_len, (char*)"albumTitle", 10U, (&track->album_title), track, 4U);
-  if(status != 0) {
-    return status;
+  return status;
+}
+int m_capture_bool(nlcchar_arr0_ptr json, size_t json_len, size_t pos, nlcint_ptr dst, melodica_track_view_ptr track, uint32_t flag) {
+  int status = m_melodica_parse_bool_at(json, json_len, pos, dst);
+  if(status == 0) {
+    track->present = (track->present | flag);
   }
-  status = m_capture_string(json, json_len, (char*)"trackToken", 10U, (&track->track_token), track, 8U);
-  if(status != 0) {
-    return status;
+  return status;
+}
+int melodica_parse_track(const char* json, size_t json_len, melodica_track_view_ptr track) {
+  if((json == (char*)NULL || track == ((melodica_track_view_ptr)NULL))) {
+    return 4;
   }
-  status = m_capture_string(json, json_len, (char*)"stationId", 9U, (&track->station_id), track, 16U);
-  if(status != 0) {
-    return status;
-  }
-  status = m_capture_string(json, json_len, (char*)"audioURL", 8U, (&track->audio_url), track, 32U);
-  if(status != 0) {
-    return status;
-  }
-  status = m_capture_string(json, json_len, (char*)"audioEncoding", 13U, (&track->audio_encoding), track, 64U);
-  if(status != 0) {
-    return status;
-  }
-  status = m_capture_u64(json, json_len, (char*)"trackLength", 11U, (&track->track_length), track, 128U);
-  if(status != 0) {
-    return status;
-  }
-  status = m_capture_bool(json, json_len, (char*)"allowSkip", 9U, (&track->allow_skip), track, 256U);
-  if(status != 0) {
-    return status;
+  m_clear_track(track);
+  nlcchar_arr0_ptr bytes = ((nlcchar_arr0_ptr)json);
+  size_t i = 0U;
+  while(i < json_len) {
+    if(bytes[i] != 34) {
+      i = (i + 1);
+      continue;
+    }
+    size_t start = (i + 1);
+    size_t j = start;
+    bool escaped = false;
+    while(j < json_len) {
+      char c = bytes[j];
+      if(c == 92) {
+        escaped = true;
+        j = (j + 1);
+        if(j >= json_len) {
+          return 2;
+        }
+        j = (j + 1);
+      } else if(c == 34) {
+        break;
+      } else if((c >= 0 && c < 32)) {
+        return 2;
+      } else {
+        j = (j + 1);
+      }
+    }
+    if(j >= json_len) {
+      return 2;
+    }
+    size_t after = m_melodica_skip_ws(bytes, json_len, (j + 1));
+    if((((!escaped) && after < json_len) && bytes[after] == 58)) {
+      size_t key_len = (j - start);
+      size_t value_pos = (after + 1);
+      int status = 0;
+      if(((key_len == 8 && bytes[start] == 97) && m_key_equal(bytes, start, 8U, (char*)"audioURL"))) {
+        status = m_capture_string(bytes, json_len, value_pos, (&track->audio_url), track, 32U);
+      } else if(key_len == 9) {
+        if((bytes[start] == 97 && m_key_equal(bytes, start, 9U, (char*)"allowSkip"))) {
+          status = m_capture_bool(bytes, json_len, value_pos, (&track->allow_skip), track, 256U);
+        } else if(bytes[start] == 115) {
+          if(m_key_equal(bytes, start, 9U, (char*)"songTitle")) {
+            status = m_capture_string(bytes, json_len, value_pos, (&track->song_title), track, 1U);
+          } else if(m_key_equal(bytes, start, 9U, (char*)"stationId")) {
+            status = m_capture_string(bytes, json_len, value_pos, (&track->station_id), track, 16U);
+          }
+        }
+      } else if(key_len == 10) {
+        if((bytes[start] == 116 && m_key_equal(bytes, start, 10U, (char*)"trackToken"))) {
+          status = m_capture_string(bytes, json_len, value_pos, (&track->track_token), track, 8U);
+        } else if(bytes[start] == 97) {
+          if(m_key_equal(bytes, start, 10U, (char*)"artistName")) {
+            status = m_capture_string(bytes, json_len, value_pos, (&track->artist_name), track, 2U);
+          } else if(m_key_equal(bytes, start, 10U, (char*)"albumTitle")) {
+            status = m_capture_string(bytes, json_len, value_pos, (&track->album_title), track, 4U);
+          }
+        }
+      } else if(((key_len == 11 && bytes[start] == 116) && m_key_equal(bytes, start, 11U, (char*)"trackLength"))) {
+        status = m_capture_u64(bytes, json_len, value_pos, (&track->track_length), track, 128U);
+      } else if(((key_len == 13 && bytes[start] == 97) && m_key_equal(bytes, start, 13U, (char*)"audioEncoding"))) {
+        status = m_capture_string(bytes, json_len, value_pos, (&track->audio_encoding), track, 64U);
+      }
+      if(status != 0) {
+        return status;
+      }
+      if(track->present == 511U) {
+        return 0;
+      }
+    }
+    i = (j + 1);
   }
   return 0;
 }
