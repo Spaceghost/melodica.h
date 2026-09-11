@@ -25,13 +25,14 @@ We keep several implementations in-tree and make them compete:
 
 All candidates expose the exact same C ABI. `tools/bakeoff.sh`:
 
-1. compiles every Nelua candidate to compact C99;
+1. compiles every Nelua candidate to compact, target-neutral C99;
 2. amalgamates each into a standalone header;
-3. runs the same adversarial conformance suite;
+3. runs the same adversarial conformance suite and ASan/UBSan gate;
 4. benchmarks eligible candidates on the same runner;
 5. measures header and object size;
 6. chooses the lowest weighted score, with hysteresis so noisy CI does not flap releases;
-7. writes the winner to `dist/melodica.h`.
+7. cross-compiles the exact winner unchanged for Linux x86-64, Linux AArch64, Windows, and WASI;
+8. writes the winner to `dist/melodica.h`.
 
 Correctness is a gate, not a score. A fast wrong parser receives the traditional benchmark prize of **nothing**.
 
