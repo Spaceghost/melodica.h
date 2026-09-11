@@ -1,0 +1,84 @@
+-- Shared scalar decoders. They parse from the byte immediately after a JSON
+-- object's colon and never allocate or unescape input.
+
+local OK: cint <comptime> = 0
+local INVALID_JSON: cint <comptime> = 2
+local OVERFLOW: cint <comptime> = 5
+
+global function melodica_skip_ws(json: cstring, json_len: csize, pos: csize): csize
+  while pos < json_len do
+    local c = json[pos]
+    if c ~= 32 and c ~= 9 and c ~= 10 and c ~= 13 then break end
+    pos = pos + 1
+  end
+  return pos
+end
+
+global function melodica_parse_string_at(json: cstring, json_len: csize,
+                                         pos: csize, value_offset: *csize,
+                                         value_len: *csize): cint
+  pos = melodica_skip_ws(json, json_len, pos)
+  if pos >= json_len or json[pos] ~= 34 then return INVALID_JSON end
+
+  local start = pos + 1
+  pos = start
+  while pos < json_len do
+    local c = json[pos]
+    if c == 92 then
+      pos = pos + 1
+      if pos >= json_len then return INVALID_JSON end
+      pos = pos + 1
+    elseif c == 34 then
+      $value_offset = start
+      $value_len = pos - start
+      return OK
+    elseif c >= 0 and c < 32 then
+      return INVALID_JSON
+    else
+      pos = pos + 1
+    end
+  end
+  return INVALID_JSON
+end
+
+global function melodica_parse_bool_at(json: cstring, json_len: csize,
+                                       pos: csize, value: *cint): cint
+  pos = melodica_skip_ws(json, json_len, pos)
+  if pos + 4 <= json_len and
+     json[pos] == 116 and json[pos+1] == 114 and
+     json[pos+2] == 117 and json[pos+3] == 101 then
+    $value = 1
+    return OK
+  end
+  if pos + 5 <= json_len and
+     json[pos] == 102 and json[pos+1] == 97 and
+     json[pos+2] == 108 and json[pos+3] == 115 and
+     json[pos+4] == 101 then
+    $value = 0
+    return OK
+  end
+  return INVALID_JSON
+end
+
+global function melodica_parse_u64_at(json: cstring, json_len: csize,
+                                      pos: csize, value: *uint64): cint
+  pos = melodica_skip_ws(json, json_len, pos)
+  if pos >= json_len or json[pos] < 48 or json[pos] > 57 then
+    return INVALID_JSON
+  end
+
+  local v: uint64 = 0
+  while pos < json_len do
+    local c = json[pos]
+    if c < 48 or c > 57 then break end
+    local digit: uint64 = (@uint64)(c - 48)
+    if v > 1844674407370955161_u64 or
+       (v == 1844674407370955161_u64 and digit > 5) then
+      return OVERFLOW
+    end
+    v = v * 10 + digit
+    pos = pos + 1
+  end
+  $value = v
+  return OK
+end
