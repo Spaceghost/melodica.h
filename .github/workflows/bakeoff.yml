@@ -1,0 +1,55 @@
+name: melodica bake-off
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: melodica-master-bakeoff
+  cancel-in-progress: true
+
+jobs:
+  bakeoff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Build, test, compare, and select
+        run: ./tools/bakeoff.sh
+
+      - name: Reject whitespace damage
+        run: git diff --check
+
+      - name: Publish winning generated header to master
+        shell: bash
+        run: |
+          if git diff --quiet -- dist/melodica.h dist/WINNER; then
+            echo "release artifact already matches the winner"
+            exit 0
+          fi
+          winner=$(cat dist/WINNER)
+          git config user.name "melodica bake-off"
+          git config user.email "actions@users.noreply.github.com"
+          git add dist/melodica.h dist/WINNER
+          git commit -m "bakeoff: promote ${winner} implementation"
+          git push origin HEAD:master
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: melodica-bakeoff
+          path: |
+            build/metrics/results.tsv
+            build/metrics/times-*.txt
+            build/headers/*.h
