@@ -2,7 +2,7 @@
 
 Every example calls the same C99 release in `dist/melodica.h`. The implementation is compiled from `bindings/melodica.c`; language examples link that object/static library instead of reimplementing protocol behavior.
 
-The native examples now parse the same login response and verify `melodica_login_view` layout, present bits, offsets, lengths, and zero-copy slices. This deliberately tests more than symbol linkage.
+The native examples parse the same login response and verify `melodica_login_view` layout, present bits, offsets, lengths, and zero-copy slices. This deliberately tests more than symbol linkage.
 
 Exercised in CI:
 
@@ -10,7 +10,7 @@ Exercised in CI:
 - C++
 - Zig
 - Nelua
-- Odin
+- Odin, via the reusable `bindings/odin` package
 - Rust
 - Go (cgo)
 - Objective-C
