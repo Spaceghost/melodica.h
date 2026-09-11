@@ -3,11 +3,12 @@ local function melodica_stations_body(page_size: cuint, start_index: cuint,
                                       output: *[0]cchar, output_cap: csize,
                                       output_len: *csize): cint <cimport> end
 
-global function melodica_nelua_smoke(): cint <cexport>
+global function melodica_nelua_smoke(): cint
+  <cexport, codename 'melodica_nelua_smoke'>
   local body: [128]cchar
   local written: csize = 0
 
-  if melodica_version() ~= 768 then return 1 end
+  if melodica_version() == 0 then return 1 end
   local rc = melodica_stations_body(25, 0, (@*[0]cchar)(&body[0]), 128, &written)
   if rc ~= 0 then return 2 end
   if written ~= 30 then return 3 end
