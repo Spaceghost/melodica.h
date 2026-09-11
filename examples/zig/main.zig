@@ -17,6 +17,6 @@ pub fn main() !void {
     );
     if (rc != 0) return error.Melodica;
 
-    var out = std.fs.File.stdout().writer(&.{});
-    try out.interface.print("Zig: {s}\n", .{body[0..written]});
+    const expected = "{\"pageSize\":25,\"startIndex\":0}";
+    if (!std.mem.eql(u8, body[0..written], expected)) return error.BadBody;
 }
