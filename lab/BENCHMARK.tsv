@@ -1,0 +1,4 @@
+language	ns_per_lookup	object_bytes	emitted_c_bytes
+c	557	10992	3029
+nelua	366	12216	4719
+zig	492	24368	37839
