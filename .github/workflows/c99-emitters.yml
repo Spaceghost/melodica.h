@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: melodica-c99-emitter-census
+  cancel-in-progress: true
+
 jobs:
   spinel-ruby:
     runs-on: ubuntu-latest
@@ -28,7 +32,8 @@ jobs:
           /tmp/spinel/bin/spinel "$GITHUB_WORKSPACE/lab/emitters/spinel/smoke.rb" \
             -c -o "$out/spinel.c"
           test -s "$out/spinel.c"
-          cc -std=c99 -I/tmp/spinel/lib -c "$out/spinel.c" -o "$out/spinel.o"
+          cc -std=c99 -D_GNU_SOURCE -I/tmp/spinel/lib \
+            -c "$out/spinel.c" -o "$out/spinel.o"
           wc -c "$out/spinel.c" "$out/spinel.o"
       - uses: actions/upload-artifact@v4
         if: always()

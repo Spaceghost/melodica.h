@@ -26,10 +26,10 @@ test -f "$ZIG_LIB_DIR/zig.h"
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab -I"$ZIG_LIB_DIR" \
   -c "$OUT/zig.c" -o "$OUT/zig.o"
 
-# Nim -> C -> static C library. Nim's C backend has a small runtime startup
-# contract, kept behind a C99 shim so every challenger still exposes one ABI.
+# Nim -> C -> static C library. --noMain is essential: the benchmark harness
+# owns main(), while NimMain() remains available for the C99 startup shim.
 mkdir -p "$OUT/nimcache"
-nim c --app:staticLib --mm:arc -d:danger --passC:-std=c99 \
+nim c --app:staticLib --noMain:on --mm:arc -d:danger --passC:-std=c99 \
   --nimcache:"$OUT/nimcache" -o:"$OUT/libnimlab.a" lab/nim/find_string.nim
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab -c lab/nim/init.c -o "$OUT/nim-init.o"
 
