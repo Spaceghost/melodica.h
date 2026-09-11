@@ -31,6 +31,8 @@ int main(void) {
   char out[512];
 
   CHECK(melodica_version() == MELODICA_VERSION);
+  CHECK(strcmp(MELODICA_ENDPOINT_TIRED, "/api/v1/listener/addTiredSong") == 0);
+  CHECK(strcmp(MELODICA_ENDPOINT_NARRATIVE, "/api/v1/playlist/narrative") == 0);
 
   {
     const char json[] =
@@ -215,6 +217,13 @@ int main(void) {
   CHECK(melodica_feedback_body("tok", 3, 0, out, sizeof out, &written) == MELODICA_OK);
   CHECK(bytes_eq(out, written, "{\"trackToken\":\"tok\",\"isPositive\":false}"));
 
+  CHECK(melodica_tired_body("t\"k", 3, out, sizeof out, &written) == MELODICA_OK);
+  CHECK(bytes_eq(out, written, "{\"trackToken\":\"t\\\"k\"}"));
+
+  CHECK(melodica_narrative_body("s1", 2, "m\"2", 3,
+                                out, sizeof out, &written) == MELODICA_OK);
+  CHECK(bytes_eq(out, written, "{\"musicId\":\"m\\\"2\",\"stationId\":\"s1\"}"));
+
   {
     char tiny[4];
     written = 0;
@@ -225,6 +234,8 @@ int main(void) {
   CHECK(melodica_parse_track(NULL, 0, (melodica_track_view *)out) == MELODICA_BAD_ARGUMENT);
   CHECK(melodica_parse_station(NULL, 0, (melodica_station_view *)out) == MELODICA_BAD_ARGUMENT);
   CHECK(melodica_find_string(NULL, 0, "x", 1, &off, &len) == MELODICA_BAD_ARGUMENT);
+  CHECK(melodica_tired_body(NULL, 0, out, sizeof out, &written) == MELODICA_BAD_ARGUMENT);
+  CHECK(melodica_narrative_body(NULL, 0, "m", 1, out, sizeof out, &written) == MELODICA_BAD_ARGUMENT);
   CHECK(melodica_json_escape(NULL, 0, out, sizeof out, &written) == MELODICA_BAD_ARGUMENT);
 
   puts("ok");
