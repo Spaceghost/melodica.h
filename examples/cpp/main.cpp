@@ -1,15 +1,20 @@
 #include "../../dist/melodica.h"
 
-#include <iostream>
 #include <string_view>
 
 int main() {
-    char body[128]{};
-    size_t written = 0;
+    constexpr std::string_view json =
+        R"({"authToken":"auth-123","username":"listener@example.com","webName":"listener","userId":"u-42"})";
+    melodica_login_view login{};
 
-    if (melodica_version() != MELODICA_VERSION) return 1;
-    if (melodica_tired_body("track-token", 11, body, sizeof body, &written) != MELODICA_OK) return 2;
+    if (melodica_version() == 0) return 1;
+    if (melodica_parse_login(json.data(), json.size(), &login) != MELODICA_OK) return 2;
+    if (login.present != MELODICA_LOGIN_ALL) return 3;
 
-    std::cout << "C++: " << std::string_view(body, written) << '\n';
+    const auto slice = [&](melodica_slice s) { return json.substr(s.offset, s.length); };
+    if (slice(login.auth_token) != "auth-123") return 4;
+    if (slice(login.username) != "listener@example.com") return 5;
+    if (slice(login.web_name) != "listener") return 6;
+    if (slice(login.user_id) != "u-42") return 7;
     return 0;
 }

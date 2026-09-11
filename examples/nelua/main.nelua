@@ -1,16 +1,31 @@
+local MelodicaSlice = @record{
+  offset: csize,
+  length: csize,
+}
+
+local MelodicaLoginView = @record{
+  present: uint32,
+  auth_token: MelodicaSlice,
+  username: MelodicaSlice,
+  web_name: MelodicaSlice,
+  user_id: MelodicaSlice,
+}
+
 local function melodica_version(): cuint <cimport> end
-local function melodica_stations_body(page_size: cuint, start_index: cuint,
-                                      output: *[0]cchar, output_cap: csize,
-                                      output_len: *csize): cint <cimport> end
+local function melodica_parse_login(json: cstring <const>, json_len: csize,
+                                    login: *MelodicaLoginView): cint <cimport> end
 
 global function melodica_nelua_smoke(): cint
   <cexport, codename 'melodica_nelua_smoke'>
-  local body: [128]cchar
-  local written: csize = 0
+  local json: cstring = "{\"authToken\":\"auth-123\",\"username\":\"listener@example.com\",\"webName\":\"listener\",\"userId\":\"u-42\"}"
+  local login: MelodicaLoginView
 
   if melodica_version() == 0 then return 1 end
-  local rc = melodica_stations_body(25, 0, (@*[0]cchar)(&body[0]), 128, &written)
-  if rc ~= 0 then return 2 end
-  if written ~= 30 then return 3 end
+  if melodica_parse_login(json, 95, &login) ~= 0 then return 2 end
+  if login.present ~= 15 then return 3 end
+  if login.auth_token.offset ~= 14 or login.auth_token.length ~= 8 then return 4 end
+  if login.username.offset ~= 36 or login.username.length ~= 20 then return 5 end
+  if login.web_name.offset ~= 69 or login.web_name.length ~= 8 then return 6 end
+  if login.user_id.offset ~= 89 or login.user_id.length ~= 4 then return 7 end
   return 0
 end
