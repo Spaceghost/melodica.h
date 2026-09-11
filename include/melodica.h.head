@@ -66,7 +66,7 @@ typedef struct melodica_track_view {
     int allow_skip;
 } melodica_track_view;
 
-unsigned melodica_version(void);
+MELODICA_API unsigned melodica_version(void);
 
 MELODICA_API int melodica_find_string(const char *json, size_t json_len,
                                       const char *key, size_t key_len,
