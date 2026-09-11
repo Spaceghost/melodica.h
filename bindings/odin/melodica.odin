@@ -177,7 +177,7 @@ foreign lib {
 }
 
 parse_login :: proc(json: string, login: ^Login_View) -> c.int {
-    return melodica_parse_login(cstring(json), c.size_t(len(json)), login)
+    return melodica_parse_login(cstring(raw_data(json)), c.size_t(len(json)), login)
 }
 
 slice_string :: proc(json: string, s: Slice) -> string {
