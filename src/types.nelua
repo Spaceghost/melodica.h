@@ -19,3 +19,12 @@ global melodica_track_view: type <cimport,nodecl> = @record{
   track_length: uint64,
   allow_skip: cint,
 }
+
+global melodica_station_view: type <cimport,nodecl> = @record{
+  present: uint32,
+  station_id: melodica_slice,
+  pandora_id: melodica_slice,
+  art_id: melodica_slice,
+  name: melodica_slice,
+  creator_webname: melodica_slice,
+}
