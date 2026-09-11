@@ -3,6 +3,10 @@ name: melodica bake-off
 on:
   push:
     branches: [master]
+    paths-ignore:
+      - 'dist/**'
+      - 'README.md'
+      - 'DESIGN.md'
   workflow_dispatch:
 
 permissions:
@@ -24,6 +28,12 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
+
+      - name: Cache pinned Nelua compiler
+        uses: actions/cache@v4
+        with:
+          path: .cache/nelua-lang
+          key: melodica-nelua-${{ runner.os }}-${{ hashFiles('tools/bootstrap-nelua.sh') }}
 
       - name: Build, test, compare, and select
         run: ./tools/bakeoff.sh
@@ -51,5 +61,7 @@ jobs:
           name: melodica-bakeoff
           path: |
             build/metrics/results.tsv
+            build/metrics/raw.tsv
+            build/metrics/sizes.tsv
             build/metrics/times-*.txt
             build/headers/*.h
