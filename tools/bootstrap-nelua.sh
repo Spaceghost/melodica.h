@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 CACHE="$ROOT/.cache/nelua-lang"
-NELUA_COMMIT=bbdc6b4777da9af56a0ac8e7024288bd2179b8fa
+NELUA_COMMIT=ac6a9b6d13cd1bcd22d8e8a1e4a8665066012532
 
 if [[ -x "$CACHE/nelua" ]] && [[ "$(git -C "$CACHE" rev-parse HEAD 2>/dev/null || true)" == "$NELUA_COMMIT" ]]; then
   printf '%s\n' "$CACHE/nelua"
