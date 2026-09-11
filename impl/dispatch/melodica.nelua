@@ -1,0 +1,242 @@
+-- Candidate: keep tiny's excellent generic scalar lookup, but parse the
+-- common track view in one structural pass. Known track keys are dispatched
+-- by length and first byte before an exact comparison, avoiding nine complete
+-- rescans of the same playlist object.
+require 'src.value'
+require 'src.protocol'
+require 'src.types'
+
+local OK: cint <comptime> = 0
+local NOT_FOUND: cint <comptime> = 1
+local INVALID_JSON: cint <comptime> = 2
+local BAD_ARGUMENT: cint <comptime> = 4
+
+local SONG_TITLE: uint32 <comptime> = 1
+local ARTIST_NAME: uint32 <comptime> = 2
+local ALBUM_TITLE: uint32 <comptime> = 4
+local TRACK_TOKEN: uint32 <comptime> = 8
+local STATION_ID: uint32 <comptime> = 16
+local AUDIO_URL: uint32 <comptime> = 32
+local AUDIO_ENCODING: uint32 <comptime> = 64
+local TRACK_LENGTH: uint32 <comptime> = 128
+local ALLOW_SKIP: uint32 <comptime> = 256
+local TRACK_ALL: uint32 <comptime> = 511
+
+local function quote_is_escaped(json: *[0]cchar, pos: csize): boolean
+  if pos == 0 then return false end
+  local n: csize = 0
+  local i = pos
+  while i > 0 do
+    i = i - 1
+    if json[i] ~= 92 then break end
+    n = n + 1
+  end
+  return n % 2 ~= 0
+end
+
+local function locate(json: *[0]cchar, json_len: csize,
+                      key: *[0]cchar, key_len: csize,
+                      value_pos: *csize): cint
+  if key_len + 2 > json_len then return NOT_FOUND end
+  local i: csize = 0
+  while i + key_len + 2 <= json_len do
+    if json[i] == 34 and not quote_is_escaped(json, i) then
+      local k: csize = 0
+      while k < key_len and json[i+1+k] == key[k] do k = k + 1 end
+      if k == key_len and json[i+1+key_len] == 34 then
+        local after = melodica_skip_ws(json, json_len, i + key_len + 2)
+        if after < json_len and json[after] == 58 then
+          $value_pos = after + 1
+          return OK
+        end
+      end
+    end
+    i = i + 1
+  end
+  return NOT_FOUND
+end
+
+global function melodica_find_string(json: cstring <const>, json_len: csize,
+                                     key: cstring <const>, key_len: csize,
+                                     value_offset: *csize, value_len: *csize): cint
+                                     <cexport, codename 'melodica_find_string'>
+  if json == nilptr or key == nilptr or value_offset == nilptr or
+     value_len == nilptr then return BAD_ARGUMENT end
+  local json_bytes: *[0]cchar = (@*[0]cchar)(json)
+  local key_bytes: *[0]cchar = (@*[0]cchar)(key)
+  local pos: csize = 0
+  local status = locate(json_bytes, json_len, key_bytes, key_len, &pos)
+  if status ~= OK then return status end
+  return melodica_parse_string_at(json_bytes, json_len, pos, value_offset, value_len)
+end
+
+global function melodica_find_bool(json: cstring <const>, json_len: csize,
+                                   key: cstring <const>, key_len: csize,
+                                   value: *cint): cint
+                                   <cexport, codename 'melodica_find_bool'>
+  if json == nilptr or key == nilptr or value == nilptr then return BAD_ARGUMENT end
+  local json_bytes: *[0]cchar = (@*[0]cchar)(json)
+  local key_bytes: *[0]cchar = (@*[0]cchar)(key)
+  local pos: csize = 0
+  local status = locate(json_bytes, json_len, key_bytes, key_len, &pos)
+  if status ~= OK then return status end
+  return melodica_parse_bool_at(json_bytes, json_len, pos, value)
+end
+
+global function melodica_find_u64(json: cstring <const>, json_len: csize,
+                                  key: cstring <const>, key_len: csize,
+                                  value: *uint64): cint
+                                  <cexport, codename 'melodica_find_u64'>
+  if json == nilptr or key == nilptr or value == nilptr then return BAD_ARGUMENT end
+  local json_bytes: *[0]cchar = (@*[0]cchar)(json)
+  local key_bytes: *[0]cchar = (@*[0]cchar)(key)
+  local pos: csize = 0
+  local status = locate(json_bytes, json_len, key_bytes, key_len, &pos)
+  if status ~= OK then return status end
+  return melodica_parse_u64_at(json_bytes, json_len, pos, value)
+end
+
+local function key_equal(json: *[0]cchar, start: csize, key_len: csize,
+                         key: cstring <const>): boolean
+  local wanted: *[0]cchar = (@*[0]cchar)(key)
+  local i: csize = 0
+  while i < key_len do
+    if json[start+i] ~= wanted[i] then return false end
+    i = i + 1
+  end
+  return true
+end
+
+local function clear_slice(dst: *melodica_slice)
+  dst.offset = 0
+  dst.length = 0
+end
+
+local function clear_track(track: *melodica_track_view)
+  track.present = 0
+  clear_slice(&track.song_title)
+  clear_slice(&track.artist_name)
+  clear_slice(&track.album_title)
+  clear_slice(&track.track_token)
+  clear_slice(&track.station_id)
+  clear_slice(&track.audio_url)
+  clear_slice(&track.audio_encoding)
+  track.track_length = 0
+  track.allow_skip = 0
+end
+
+local function capture_string(json: *[0]cchar, json_len: csize, pos: csize,
+                              dst: *melodica_slice,
+                              track: *melodica_track_view,
+                              flag: uint32): cint
+  local status = melodica_parse_string_at(json, json_len, pos,
+                                          &dst.offset, &dst.length)
+  if status == OK then track.present = track.present | flag end
+  return status
+end
+
+local function capture_u64(json: *[0]cchar, json_len: csize, pos: csize,
+                           dst: *uint64, track: *melodica_track_view,
+                           flag: uint32): cint
+  local status = melodica_parse_u64_at(json, json_len, pos, dst)
+  if status == OK then track.present = track.present | flag end
+  return status
+end
+
+local function capture_bool(json: *[0]cchar, json_len: csize, pos: csize,
+                            dst: *cint, track: *melodica_track_view,
+                            flag: uint32): cint
+  local status = melodica_parse_bool_at(json, json_len, pos, dst)
+  if status == OK then track.present = track.present | flag end
+  return status
+end
+
+global function melodica_parse_track(json: cstring <const>, json_len: csize,
+                                     track: *melodica_track_view): cint
+                                     <cexport, codename 'melodica_parse_track'>
+  if json == nilptr or track == nilptr then return BAD_ARGUMENT end
+  clear_track(track)
+
+  local bytes: *[0]cchar = (@*[0]cchar)(json)
+  local i: csize = 0
+  while i < json_len do
+    if bytes[i] ~= 34 then
+      i = i + 1
+      continue
+    end
+
+    local start = i + 1
+    local j = start
+    local escaped = false
+    while j < json_len do
+      local c = bytes[j]
+      if c == 92 then
+        escaped = true
+        j = j + 1
+        if j >= json_len then return INVALID_JSON end
+        j = j + 1
+      elseif c == 34 then
+        break
+      elseif c >= 0 and c < 32 then
+        return INVALID_JSON
+      else
+        j = j + 1
+      end
+    end
+    if j >= json_len then return INVALID_JSON end
+
+    local after = melodica_skip_ws(bytes, json_len, j + 1)
+    if not escaped and after < json_len and bytes[after] == 58 then
+      local key_len = j - start
+      local value_pos = after + 1
+      local status: cint = OK
+
+      if key_len == 8 and bytes[start] == 97 and
+         key_equal(bytes, start, 8, "audioURL") then
+        status = capture_string(bytes, json_len, value_pos,
+                                &track.audio_url, track, AUDIO_URL)
+      elseif key_len == 9 then
+        if bytes[start] == 97 and key_equal(bytes, start, 9, "allowSkip") then
+          status = capture_bool(bytes, json_len, value_pos,
+                                &track.allow_skip, track, ALLOW_SKIP)
+        elseif bytes[start] == 115 then
+          if key_equal(bytes, start, 9, "songTitle") then
+            status = capture_string(bytes, json_len, value_pos,
+                                    &track.song_title, track, SONG_TITLE)
+          elseif key_equal(bytes, start, 9, "stationId") then
+            status = capture_string(bytes, json_len, value_pos,
+                                    &track.station_id, track, STATION_ID)
+          end
+        end
+      elseif key_len == 10 then
+        if bytes[start] == 116 and key_equal(bytes, start, 10, "trackToken") then
+          status = capture_string(bytes, json_len, value_pos,
+                                  &track.track_token, track, TRACK_TOKEN)
+        elseif bytes[start] == 97 then
+          if key_equal(bytes, start, 10, "artistName") then
+            status = capture_string(bytes, json_len, value_pos,
+                                    &track.artist_name, track, ARTIST_NAME)
+          elseif key_equal(bytes, start, 10, "albumTitle") then
+            status = capture_string(bytes, json_len, value_pos,
+                                    &track.album_title, track, ALBUM_TITLE)
+          end
+        end
+      elseif key_len == 11 and bytes[start] == 116 and
+             key_equal(bytes, start, 11, "trackLength") then
+        status = capture_u64(bytes, json_len, value_pos,
+                             &track.track_length, track, TRACK_LENGTH)
+      elseif key_len == 13 and bytes[start] == 97 and
+             key_equal(bytes, start, 13, "audioEncoding") then
+        status = capture_string(bytes, json_len, value_pos,
+                                &track.audio_encoding, track, AUDIO_ENCODING)
+      end
+
+      if status ~= OK then return status end
+      if track.present == TRACK_ALL then return OK end
+    end
+
+    i = j + 1
+  end
+
+  return OK
+end
