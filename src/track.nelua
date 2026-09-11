@@ -1,5 +1,5 @@
 -- Zero-copy high-level track view built from the candidate's scalar lookup
--- engine. This intentionally starts as the boring repeated-lookup baseline;
+-- engine. This intentionally remains the boring repeated-lookup baseline;
 -- specialized one-pass candidates must beat it in the bake-off to replace it.
 require 'src.types'
 
@@ -34,7 +34,7 @@ local function capture_string(json: cstring <const>, json_len: csize,
   if status == OK then
     dst.offset = offset
     dst.length = length
-    track.present = track.present + flag
+    track.present = track.present | flag
     return OK
   end
   if status == NOT_FOUND then return OK end
@@ -50,7 +50,7 @@ local function capture_u64(json: cstring <const>, json_len: csize,
   local status = melodica_find_u64(json, json_len, key, key_len, &value)
   if status == OK then
     $dst = value
-    track.present = track.present + flag
+    track.present = track.present | flag
     return OK
   end
   if status == NOT_FOUND then return OK end
@@ -66,16 +66,16 @@ local function capture_bool(json: cstring <const>, json_len: csize,
   local status = melodica_find_bool(json, json_len, key, key_len, &value)
   if status == OK then
     $dst = value
-    track.present = track.present + flag
+    track.present = track.present | flag
     return OK
   end
   if status == NOT_FOUND then return OK end
   return status
 end
 
-local function parse_track(json: cstring <const>, json_len: csize,
-                           track: *melodica_track_view): cint
-                           <cexport, codename 'melodica_parse_track'>
+global function melodica_parse_track(json: cstring <const>, json_len: csize,
+                                     track: *melodica_track_view): cint
+                                     <cexport, codename 'melodica_parse_track'>
   if json == nilptr or track == nilptr then return BAD_ARGUMENT end
 
   track.present = 0
@@ -119,3 +119,5 @@ local function parse_track(json: cstring <const>, json_len: csize,
 
   return OK
 end
+
+require 'src.collection'
