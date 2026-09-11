@@ -28,3 +28,11 @@ global melodica_station_view: type <cimport,nodecl> = @record{
   name: melodica_slice,
   creator_webname: melodica_slice,
 }
+
+global melodica_login_view: type <cimport,nodecl> = @record{
+  present: uint32,
+  auth_token: melodica_slice,
+  username: melodica_slice,
+  web_name: melodica_slice,
+  user_id: melodica_slice,
+}
