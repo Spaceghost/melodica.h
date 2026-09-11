@@ -9,6 +9,7 @@
 5. **Stable ABI beats clever internals.** Candidates may be radically different behind identical exported functions.
 6. **Correctness gates performance.** Adversarial JSON fixtures must pass before timing counts.
 7. **Generated output remains inspectable.** Compact means less compiler debris, not deliberately obfuscated C.
+8. **The release header is target-neutral.** It must compile unchanged for materially different ABIs, including 32-bit WASM.
 
 ## SQLite-style source model
 
@@ -27,9 +28,10 @@ amalgamation
        v
 candidate single headers
        |
-       +--> conformance
+       +--> conformance + sanitizers
        +--> benchmark
        +--> size measurements
+       +--> cross-ABI compile
        |
        v
 winner -> dist/melodica.h
@@ -66,7 +68,13 @@ Status codes:
 - `MELODICA_BAD_ARGUMENT`
 - `MELODICA_OVERFLOW`
 
-JSON string lookup returns the byte offset and raw JSON byte length between quotes. It validates escapes but intentionally does not allocate or unescape. Consumers can copy/unescape only when they actually need ownership.
+JSON string lookup returns the byte offset and raw JSON byte length between quotes. It validates JSON escapes but intentionally does not allocate or unescape. Consumers can copy/unescape only when they actually need ownership.
+
+### Generated ABI assertions
+
+Ordinary Nelua output embeds ABI assertions for the machine that generated the C. That is excellent for native generated-C programs but wrong for our **single portable release source**: an x86-64 generation host would intentionally reject wasm32 before the compiler could prove the header itself portable.
+
+The release profile therefore omits Nelua's host-ABI static assertions and instead compiles the exact winning header for every cross-ABI target in CI. We keep the code restricted to explicit C-compatible types so this is a stronger test of the artifact we actually ship.
 
 ## Candidate philosophy
 
@@ -79,3 +87,5 @@ JSON string lookup returns the byte offset and raw JSON byte length between quot
 ## Compiler fork policy
 
 Changes to `Spaceghost/nelua-lang` should be narrow and generally useful for distributable generated-C libraries. We prefer measuring emitted bytes before adding compiler transformations. Public `cexport`/`codename` names must never be shortened.
+
+Release generation uses the compact profile with host-ABI assertions disabled. Debug/development Nelua builds may retain them.

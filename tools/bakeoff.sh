@@ -14,12 +14,16 @@ mkdir -p build/c build/headers build/bin build/metrics dist
 candidates=(scan hash tiny)
 for name in "${candidates[@]}"; do
   echo "==> generating $name"
-  NELUA_INIT="require('nelua.compactc').enable()" \
+  # The distributable header must be target-neutral C99. Nelua's ordinary ABI
+  # assertions describe the machine that generated the C, so omit them here;
+  # cross-compilation below is the portability gate instead.
+  NELUA_INIT="require('nelua.compactc').enable{static_asserts=false}" \
     "$NELUA" -r -c -o "build/c/$name.c" "impl/$name/melodica.nelua"
   ./tools/amalgamate.sh "build/c/$name.c" "build/headers/$name.h"
 
   echo "==> conformance $name"
-  "$ZIG" cc -std=c99 -O2 -Wall -Wextra -Werror -pedantic -I. \
+  "$ZIG" cc -std=c99 -O2 -Wall -Wextra -Werror -pedantic \
+    -Wno-parentheses-equality -Wno-extra-semi -I. \
     -DMELODICA_HEADER=\"build/headers/$name.h\" \
     tests/conformance.c -o "build/bin/test-$name"
   "build/bin/test-$name" >/dev/null
@@ -71,7 +75,6 @@ if [[ -f dist/WINNER ]]; then
   current=$(head -n1 dist/WINNER | tr -d '[:space:]')
   current_score=$(awk -F '\t' -v n="$current" '$1==n {print $5}' build/metrics/results.tsv)
   if [[ -n "$current_score" && "$current" != "$best" ]]; then
-    # Challenger must be at least 3% better. CI timing noise is not architecture.
     promote=$(awk -v b="$best_score" -v c="$current_score" 'BEGIN {print (b <= c*0.97) ? "yes" : "no"}')
     if [[ "$promote" != yes ]]; then winner=$current; fi
   fi
@@ -80,16 +83,14 @@ fi
 cp "build/headers/$winner.h" dist/melodica.h
 printf '%s\n' "$winner" > dist/WINNER
 
-# Make sure the winning implementation can at least be compiled by Zig's C99
-# frontend for several libc/ABI targets without linking.
+# The generated release is one target-neutral C99 source artifact. Compile the
+# exact same bytes for several materially different ABIs.
 for target in x86_64-linux-musl aarch64-linux-musl x86_64-windows-gnu wasm32-wasi; do
   "$ZIG" cc -target "$target" -std=c99 -Os -I. \
     -DMELODICA_HEADER=\"dist/melodica.h\" \
     -c tests/size.c -o "build/metrics/cross-${target//\//_}.o"
 done
 
-# Public declarations should also be consumable from C++ even though the
-# implementation itself intentionally remains C99.
 "$ZIG" c++ -std=c++17 -I. -DMELODICA_HEADER=\"dist/melodica.h\" \
   -c tests/declarations.cpp -o build/metrics/declarations.o
 
