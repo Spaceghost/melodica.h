@@ -7,7 +7,6 @@ on:
       - 'lab/**'
       - '!lab/BENCHMARK.tsv'
       - '!lab/WINNER'
-      - '!lab/emitters/**'
       - 'tools/language-bakeoff.sh'
       - '.github/workflows/language-bakeoff.yml'
       - 'tools/bootstrap-nelua.sh'
@@ -35,10 +34,10 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           release: latest
-      - name: Install C-emitter challengers
+      - name: Install competitive C-emitter challengers
         run: |
           sudo apt-get update
-          sudo apt-get install -y nim chicken-bin libchicken-dev
+          sudo apt-get install -y nim gambc libgambit4-dev
       - name: Cache pinned Nelua compiler
         uses: actions/cache@v4
         with:
