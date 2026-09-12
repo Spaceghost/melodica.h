@@ -14,8 +14,7 @@ fn hexDigit(n: u8) u8 {
 fn jsonExtra(c: u8) usize {
     return switch (c) {
         '"', '\\', '\x08', '\x0c', '\n', '\r', '\t' => 1,
-        0...0x1f => 5,
-        else => 0,
+        else => if (c < 0x20) 5 else 0,
     };
 }
 
@@ -92,16 +91,20 @@ export fn melodica_json_escape(
             '\n' => { dst[out] = '\\'; dst[out + 1] = 'n'; out += 2; },
             '\r' => { dst[out] = '\\'; dst[out + 1] = 'r'; out += 2; },
             '\t' => { dst[out] = '\\'; dst[out + 1] = 't'; out += 2; },
-            0...0x1f => {
-                dst[out] = '\\';
-                dst[out + 1] = 'u';
-                dst[out + 2] = '0';
-                dst[out + 3] = '0';
-                dst[out + 4] = hexDigit(c >> 4);
-                dst[out + 5] = hexDigit(c & 0x0f);
-                out += 6;
+            else => {
+                if (c < 0x20) {
+                    dst[out] = '\\';
+                    dst[out + 1] = 'u';
+                    dst[out + 2] = '0';
+                    dst[out + 3] = '0';
+                    dst[out + 4] = hexDigit(c >> 4);
+                    dst[out + 5] = hexDigit(c & 0x0f);
+                    out += 6;
+                } else {
+                    dst[out] = c;
+                    out += 1;
+                }
             },
-            else => { dst[out] = c; out += 1; },
         }
     }
     return required;
