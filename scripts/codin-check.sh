@@ -1,5 +1,5 @@
 #!/bin/sh
-set -eu
+set -eux
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 CACHE=${MELODICA_CACHE:-"$ROOT/.cache"}
@@ -24,21 +24,32 @@ cp "$OVERLAY"/*.c "$CODIN_DIR/src/"
 cp "$OVERLAY"/*.h "$CODIN_DIR/src/"
 
 make -C "$CODIN_DIR" clean >/dev/null 2>&1 || true
-make -C "$CODIN_DIR"
+# Keep ASan on while the new backend is being brought up. Once this lane is
+# boringly green we switch back to the release compiler for shootout timing.
+make -C "$CODIN_DIR" DEBUG=1 ASAN=1
 
-"$CODIN_DIR/codin" dump-ast "$ROOT/impl/codin" > "$OUTDIR/ast.txt"
-"$CODIN_DIR/codin" emit-c "$ROOT/impl/codin" -o "$OUTDIR/melodica.c"
+printf '%s\n' '=== codin: dump AST ==='
+ASAN_OPTIONS=abort_on_error=1:detect_leaks=0 \
+    "$CODIN_DIR/codin" dump-ast "$ROOT/impl/codin" > "$OUTDIR/ast.txt"
 
+printf '%s\n' '=== codin: emit C99 ==='
+ASAN_OPTIONS=abort_on_error=1:detect_leaks=0 \
+    "$CODIN_DIR/codin" emit-c "$ROOT/impl/codin" -o "$OUTDIR/melodica.c"
+
+printf '%s\n' '=== generated C99: GCC ==='
 gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
     -c "$OUTDIR/melodica.c" -o "$OUTDIR/melodica.gcc.o"
+printf '%s\n' '=== generated C99: Clang ==='
 clang -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
     -c "$OUTDIR/melodica.c" -o "$OUTDIR/melodica.clang.o"
 
+printf '%s\n' '=== generated C99: ABI smoke ==='
 gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
     -I"$ROOT/include" "$ROOT/tests/smoke.c" "$OUTDIR/melodica.c" \
     -o "$OUTDIR/smoke"
 "$OUTDIR/smoke"
 
+printf '%s\n' '=== generated C99: benchmark build ==='
 gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
     -I"$ROOT/include" "$ROOT/bench/bench.c" "$OUTDIR/melodica.c" \
     -o "$OUTDIR/bench"
