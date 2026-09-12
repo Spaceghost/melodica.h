@@ -7,8 +7,9 @@ NELUA=${NELUA:-$(./tools/bootstrap-nelua.sh)}
 OUT=build/language-bakeoff
 mkdir -p "$OUT"
 
-# Core language league. Native Zig and Odin compete on algorithm/codegen even
-# though the public release remains a dependency-free C99 header.
+# Permanent core league: C99, Nelua, Zig native/C, and Odin native.
+# Active challengers stay only while they have a credible path to competing.
+
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -Wall -Wextra -Werror -pedantic -Ilab \
   -c lab/c/find_string.c -o "$OUT/c.o"
 
@@ -29,25 +30,36 @@ test -f "$ZIG_LIB_DIR/zig.h"
 
 odin build lab/odin -build-mode:lib -no-entry-point -o:speed -out:"$OUT/odin.a"
 
+# Nim C backend. Keep its startup/runtime cost visible.
 mkdir -p "$OUT/nimcache"
 nim c --app:staticLib --noMain:on --mm:arc -d:danger --passC:-std=c99 \
   --nimcache:"$OUT/nimcache" -o:"$OUT/libnimlab.a" lab/nim/find_string.nim
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab -c lab/nim/init.c -o "$OUT/nim-init.o"
 
-# CHICKEN Scheme -> C. The runtime uses alloca as a stack primitive, so include
-# the platform declaration while keeping the generated translation unit C99.
-CHICKEN_H=$(dpkg -L libchicken-dev | grep '/chicken\.h$' | head -n1)
-CHICKEN_INC=$(dirname "$CHICKEN_H")
-CHICKEN_A=$(dpkg -L libchicken-dev | grep '/libchicken\.a$' | head -n1)
-test -n "$CHICKEN_A"
-chicken lab/chicken/find_string.scm -output-file "$OUT/chicken.c"
-"$ZIG" cc -std=c99 -O3 -DNDEBUG -DC_EMBEDDED -include alloca.h -I"$CHICKEN_INC" \
-  -c "$OUT/chicken.c" -o "$OUT/chicken.o"
-"$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab -I"$CHICKEN_INC" \
-  -c lab/chicken/shim.c -o "$OUT/chicken-shim.o"
+# Gambit Scheme -> C. c-define exports a normal C function; the shim initializes
+# the Scheme library once and then every timed call goes through the shared ABI.
+# Gambit's own documentation notes that single-host C generation is faster, and
+# that lower C optimization levels can outperform aggressive optimization on its
+# generated C, so use that competitive configuration rather than a toy default.
+GAMBIT_H=$(dpkg -L libgambit4-dev | grep '/gambit\.h$' | head -n1)
+GAMBIT_INC=$(dirname "$GAMBIT_H")
+GAMBIT_SO=$(ldconfig -p | awk '/libgambit\.so/{print $NF; exit}')
+test -n "$GAMBIT_H"
+test -n "$GAMBIT_SO"
+GAMBIT_SO=$(readlink -f "$GAMBIT_SO")
 
-names=(c nelua zig-c zig-native odin nim chicken)
+gsc -:s -o "$OUT/gambit.c" -c lab/gambit/find_string.scm
+gsc -:s -o "$OUT/gambitlink.c" -link "$OUT/gambit.c"
+"$ZIG" cc -std=c99 -O1 -DNDEBUG -D___SINGLE_HOST -D_POSIX_C_SOURCE=200809L \
+  -I"$GAMBIT_INC" -c "$OUT/gambit.c" -o "$OUT/gambit.o"
+"$ZIG" cc -std=c99 -O1 -DNDEBUG -D___SINGLE_HOST -D_POSIX_C_SOURCE=200809L \
+  -I"$GAMBIT_INC" -c "$OUT/gambitlink.c" -o "$OUT/gambitlink.o"
+"$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab -I"$GAMBIT_INC" \
+  -c lab/gambit/shim.c -o "$OUT/gambit-shim.o"
+
+names=(c nelua zig-c zig-native odin nim gambit)
 for name in "${names[@]}"; do
+  extra_libs=()
   case "$name" in
     c)          inputs=("$OUT/c.o") ;;
     nelua)      inputs=("$OUT/nelua.o") ;;
@@ -55,24 +67,22 @@ for name in "${names[@]}"; do
     zig-native) inputs=("$OUT/zig-native.o") ;;
     odin)       inputs=("$OUT/odin.a") ;;
     nim)        inputs=("$OUT/nim-init.o" "$OUT/libnimlab.a") ;;
-    chicken)    inputs=("$OUT/chicken-shim.o" "$OUT/chicken.o" "$CHICKEN_A") ;;
+    gambit)
+      inputs=("$OUT/gambit-shim.o" "$OUT/gambit.o" "$OUT/gambitlink.o")
+      extra_libs=(-lgambit -lutil)
+      ;;
   esac
 
   "$ZIG" cc -std=c99 -O2 -Ilab lab/conformance.c "${inputs[@]}" \
-    -o "$OUT/test-$name" -lm -ldl -pthread
+    -o "$OUT/test-$name" "${extra_libs[@]}" -lm -ldl -pthread
   "$OUT/test-$name" >/dev/null
 
-  bench_defs=()
-  if [[ "$name" == chicken ]]; then
-    # Runtime-heavy Scheme is far slower per call; 120k lookups is still a
-    # substantial timing sample without multiplying CI duration pointlessly.
-    bench_defs=(-DLAB_LOOPS=30000)
-  fi
-  "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab "${bench_defs[@]}" \
-    lab/bench.c "${inputs[@]}" -o "$OUT/bench-$name" -lm -ldl -pthread
+  "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab lab/bench.c "${inputs[@]}" \
+    -o "$OUT/bench-$name" "${extra_libs[@]}" -lm -ldl -pthread
   : > "$OUT/times-$name.txt"
 done
 
+# Warm every implementation and then rotate trial order to spread runner noise.
 for name in "${names[@]}"; do "$OUT/bench-$name" >/dev/null; done
 for ((round=0; round<7; round++)); do
   for ((step=0; step<${#names[@]}; step++)); do
@@ -124,11 +134,10 @@ for name in "${names[@]}"; do
         awk '$2 != "total" {s += $1} END {print s + 0}')
       direct=no
       ;;
-    chicken)
-      backend=scheme-to-c-runtime
-      sample=120000
-      linked_bytes=$(( $(wc -c < "$OUT/chicken-shim.o") + $(wc -c < "$OUT/chicken.o") + $(wc -c < "$CHICKEN_A") ))
-      emitted_c_bytes=$(wc -c < "$OUT/chicken.c" | tr -d ' ')
+    gambit)
+      backend=scheme-to-c
+      linked_bytes=$(( $(wc -c < "$OUT/gambit-shim.o") + $(wc -c < "$OUT/gambit.o") + $(wc -c < "$OUT/gambitlink.o") + $(wc -c < "$GAMBIT_SO") ))
+      emitted_c_bytes=$(( $(wc -c < "$OUT/gambit.c") + $(wc -c < "$OUT/gambitlink.c") ))
       direct=no
       ;;
   esac
