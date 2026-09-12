@@ -25,7 +25,7 @@ $(BUILD)/odin/libmelodica.a: impl/odin/melodica.odin
 
 $(BUILD)/zig/libmelodica.a: impl/zig/melodica.zig
 	mkdir -p $(BUILD)/zig
-	$(ZIG) build-lib $< -O ReleaseFast -femit-bin=$@
+	$(ZIG) build-lib $< -O ReleaseFast -fPIC -femit-bin=$@
 
 $(BUILD)/codin-native/libmelodica.a: impl/codin/melodica.odin
 	mkdir -p $(BUILD)/codin-native
