@@ -21,6 +21,4 @@ Every serious contender must implement the same `lab_find_string` ABI and pass t
 
 New implementations get one baseline attempt. They remain only if they are plausibly competitive on speed/size or reveal an optimization we can realistically transfer to a release candidate.
 
-CHICKEN Scheme was removed after its first real common-ABI baseline landed around 42 us/lookup with roughly 7.5 MB of linked runtime. That measurement was useful; continuing to carry the implementation would not be.
-
 A native Odin or Zig win does not become `dist/melodica.h` directly. It becomes the target for the dependency-free C99 release implementations to catch.
