@@ -38,7 +38,7 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          codin=$(./tools/bootstrap-codin.sh)
+          codin=$(bash ./tools/bootstrap-codin.sh)
           "$codin" dump-ast lab/codin
 
   compare:
