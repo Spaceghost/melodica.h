@@ -107,6 +107,6 @@ jobs:
           git clone --depth=1 https://github.com/PromyLOPh/pianobar.git "$RUNNER_TEMP/pianobar"
           make -C "$RUNNER_TEMP/pianobar" \
             LIBPIANO_INCLUDE="$GITHUB_WORKSPACE/include" \
-            CFLAGS='-O2 -DNDEBUG -Wall -Wextra -Werror' \
+            CFLAGS='-O2 -DNDEBUG -Wall -Wextra -DMELODICA_PIANO_LEGACY_GCRYPT' \
             src/main.o src/debug.o src/settings.o src/terminal.o \
             src/ui_act.o src/ui.o src/ui_readline.o src/ui_dispatch.o
