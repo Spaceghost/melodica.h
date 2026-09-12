@@ -224,9 +224,17 @@ static Bool emit_assignment(C99 *c, const AssignmentStatement *assignment) {
 static Bool emit_if(C99 *c, const IfStatement *statement) {
 	if (statement->init) return unsupported(c, "if initializer");
 	indent(c);
-	fputs("if (", c->out);
-	if (!emit_expression(c, statement->cond)) return false;
-	fputs(") ", c->out);
+	if (statement->cond && statement->cond->kind == EXPRESSION_BINARY) {
+		/* Binary expressions already carry the parentheses needed to preserve
+		 * the Odin AST. Avoid producing clang-annoying `if ((a == b))`. */
+		fputs("if ", c->out);
+		if (!emit_expression(c, statement->cond)) return false;
+		fputc(' ', c->out);
+	} else {
+		fputs("if (", c->out);
+		if (!emit_expression(c, statement->cond)) return false;
+		fputs(") ", c->out);
+	}
 	if (!emit_block(c, statement->body)) return false;
 	if (statement->elif) {
 		indent(c);
