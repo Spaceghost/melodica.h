@@ -12,6 +12,7 @@ on:
       - 'bindings/**'
       - 'lab/**'
       - '.github/workflows/language-bakeoff.yml'
+      - '.github/workflows/sac-probation.yml'
       - '.github/workflows/c99-emitters.yml'
       - 'tools/language-bakeoff.sh'
   workflow_dispatch:
