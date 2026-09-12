@@ -1,0 +1,51 @@
+name: compare implementations
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  odin-and-codin:
+    runs-on: ubuntu-latest
+    env:
+      ODIN_VERSION: dev-2026-09
+      ODIN_SHA256: 167c3e1d7056419dad2e04bb3bd98715b7ff286d4c125f3c5a5ee337c6254283
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned Odin
+        shell: bash
+        run: |
+          set -euxo pipefail
+          archive="$RUNNER_TEMP/odin.tar.gz"
+          curl -fsSL \
+            "https://github.com/odin-lang/Odin/releases/download/${ODIN_VERSION}/odin-linux-amd64-${ODIN_VERSION}.tar.gz" \
+            -o "$archive"
+          echo "${ODIN_SHA256}  ${archive}" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/odin"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/odin" --strip-components=1
+          test -x "$RUNNER_TEMP/odin/odin"
+          echo "$RUNNER_TEMP/odin" >> "$GITHUB_PATH"
+
+      - name: Build and smoke-test both Odin source lanes
+        run: make test
+
+      - name: Check Codin parser compatibility
+        run: make codin-check
+
+      - name: Benchmark native Odin lane
+        run: make bench-odin
+
+      - name: Report artifact sizes
+        shell: bash
+        run: |
+          set -eu
+          printf '%-24s %12s\n' lane bytes
+          printf '%-24s %12s\n' odin "$(stat -c %s build/odin/libmelodica.a)"
+          printf '%-24s %12s\n' codin-subset-native "$(stat -c %s build/codin-native/libmelodica.a)"
