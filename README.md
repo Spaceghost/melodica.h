@@ -2,28 +2,46 @@
 
 A small, fast reimplementation of the useful `libpianobar`/`libpiano` core, developed as competing implementations behind one C ABI.
 
-The repo deliberately keeps the implementations side-by-side. Correctness is mandatory; generated/native artifact size, runtime speed, portability, dependency weight, and how cleanly an implementation can become the eventual single-header `melodica.h` are compared in CI.
+The repo deliberately keeps implementations side-by-side. Correctness is mandatory; generated/native artifact size, runtime speed, portability, dependency weight, and how cleanly an implementation can become the eventual single-header `melodica.h` are compared in CI.
 
 ## Current lanes
 
-| lane | source | build today | winner-eligible? |
+| lane | source | build | winner-eligible? |
 |---|---|---|---|
 | Odin | `impl/odin` | native Odin static library | yes |
-| Codin | `impl/codin` | Codin parser check + native Odin control build | **not yet** |
+| Codin C99 | `impl/codin` | Codin AST → tiny sema → range IR → strict C99 → GCC/Clang | yes once green |
+| Codin native control | `impl/codin` | native Odin static library | control only |
 
-`impl/codin` is intentionally restricted to an Odin subset that the Codin front-end accepts. Upstream [graphitemaster/codin](https://github.com/graphitemaster/codin) describes itself as an Odin-to-C compiler, but its current public command surface only parses packages (`dump-ast`; the actual dump call is commented out) and does not emit C yet. We pin commit `2a3f71f65035a60943be40ffff7e031eec456aac` so that lane is honest and reproducible rather than awarding a trophy to imaginary code generation.
+Upstream [graphitemaster/codin](https://github.com/graphitemaster/codin) stopped after parsing. The pinned upstream commit remains `2a3f71f65035a60943be40ffff7e031eec456aac`; `tools/codin-overlay/` is a reproducible patch stack implementing the missing backend until it can move verbatim into a writable `Spaceghost/codin` fork.
 
-When Codin gains usable C emission, the same source becomes a real generated-C competitor and can enter the winner calculation.
+The first backend is deliberately narrow and honest. Unsupported Odin constructs fail compilation instead of silently generating suspicious C, a standard compiler feature apparently worth stating aloud.
+
+### C99 pipeline
+
+```text
+impl/codin/*.odin
+      ↓
+Codin parser
+      ↓
+minimal symbol/type resolution (sema.c)
+      ↓
+normalized range-loop lowering (ir.c)
+      ↓
+strict C99 emitter (c99.c)
+      ↓
+GCC -std=c99 -pedantic-errors
+Clang -std=c99 -pedantic-errors
+      ↓
+shared ABI smoke tests + benchmark
+```
 
 ## ABI seed
 
-Both source lanes currently implement the first protocol-oriented, allocation-free primitives:
+Both lanes implement the first protocol-oriented, allocation-free primitives:
 
 - RFC 3986 percent encoding
 - JSON string escaping
 - ABI versioning
-
-These are deliberately boring building blocks. Boring is excellent here: they give every implementation an identical C-facing contract while the larger Pandora protocol/session/audio pieces are added.
 
 ```sh
 make test
@@ -31,4 +49,4 @@ make codin-check
 make bench
 ```
 
-CI uses the pinned `dev-2026-09` Odin release and verifies its SHA-256 before building. Every lane must keep `include/melodica.h` compatible.
+CI pins Odin `dev-2026-09` by SHA-256 and pins Codin by commit. Every lane must remain compatible with `include/melodica.h`.
