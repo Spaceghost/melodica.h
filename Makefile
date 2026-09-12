@@ -1,7 +1,7 @@
 ODIN ?= odin
 CC ?= cc
 BUILD ?= build
-ODIN_FLAGS ?= -o:speed -reloc-mode:pic
+ODIN_FLAGS ?= -o:speed -reloc-mode:pic -no-entry-point
 
 .PHONY: all odin codin-native codin-check test test-odin test-codin-native bench bench-odin clean
 
