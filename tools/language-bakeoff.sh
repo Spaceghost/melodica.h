@@ -38,8 +38,6 @@ nim c --app:staticLib --noMain:on --mm:arc -d:danger --passC:-std=c99 \
 
 # Gambit Scheme -> C. c-define exports a normal C function; the shim initializes
 # the Scheme library once and then every timed call goes through the shared ABI.
-# The Ubuntu Gambit package is not itself configured --enable-single-host, but
-# the generated C supports the mode when compiled with ___SINGLE_HOST.
 GAMBIT_H=$(dpkg -L libgambit4-dev | grep '/gambit\.h$' | head -n1)
 GAMBIT_INC=$(dirname "$GAMBIT_H")
 GAMBIT_SO=$(ldconfig -p | awk '/libgambit\.so/{print $NF; exit}')
@@ -68,7 +66,7 @@ for name in "${names[@]}"; do
     nim)        inputs=("$OUT/nim-init.o" "$OUT/libnimlab.a") ;;
     gambit)
       inputs=("$OUT/gambit-shim.o" "$OUT/gambit.o" "$OUT/gambitlink.o")
-      extra_libs=(-lgambit -lutil)
+      extra_libs=("$GAMBIT_SO" -lutil)
       ;;
   esac
 
