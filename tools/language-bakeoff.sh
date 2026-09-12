@@ -38,9 +38,8 @@ nim c --app:staticLib --noMain:on --mm:arc -d:danger --passC:-std=c99 \
 
 # Gambit Scheme -> C. c-define exports a normal C function; the shim initializes
 # the Scheme library once and then every timed call goes through the shared ABI.
-# Gambit's own documentation notes that single-host C generation is faster, and
-# that lower C optimization levels can outperform aggressive optimization on its
-# generated C, so use that competitive configuration rather than a toy default.
+# The Ubuntu Gambit package is not itself configured --enable-single-host, but
+# the generated C supports the mode when compiled with ___SINGLE_HOST.
 GAMBIT_H=$(dpkg -L libgambit4-dev | grep '/gambit\.h$' | head -n1)
 GAMBIT_INC=$(dirname "$GAMBIT_H")
 GAMBIT_SO=$(ldconfig -p | awk '/libgambit\.so/{print $NF; exit}')
@@ -48,8 +47,8 @@ test -n "$GAMBIT_H"
 test -n "$GAMBIT_SO"
 GAMBIT_SO=$(readlink -f "$GAMBIT_SO")
 
-gsc -:s -o "$OUT/gambit.c" -c lab/gambit/find_string.scm
-gsc -:s -o "$OUT/gambitlink.c" -link "$OUT/gambit.c"
+gsc -o "$OUT/gambit.c" -c lab/gambit/find_string.scm
+gsc -o "$OUT/gambitlink.c" -link "$OUT/gambit.c"
 "$ZIG" cc -std=c99 -O1 -DNDEBUG -D___SINGLE_HOST -D_POSIX_C_SOURCE=200809L \
   -I"$GAMBIT_INC" -c "$OUT/gambit.c" -o "$OUT/gambit.o"
 "$ZIG" cc -std=c99 -O1 -DNDEBUG -D___SINGLE_HOST -D_POSIX_C_SOURCE=200809L \
