@@ -11,6 +11,7 @@ on:
       - 'tools/language-bakeoff.sh'
       - '.github/workflows/language-bakeoff.yml'
       - 'tools/bootstrap-nelua.sh'
+      - 'tools/bootstrap-codin.sh'
   workflow_dispatch:
 
 permissions:
@@ -21,6 +22,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  codin-front-end:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+      - name: Cache pinned Codin compiler
+        uses: actions/cache@v4
+        with:
+          path: .cache/codin
+          key: melodica-codin-${{ runner.os }}-${{ hashFiles('tools/bootstrap-codin.sh') }}
+      - name: Build Codin and parse the lookup kernel
+        shell: bash
+        run: |
+          set -euxo pipefail
+          codin=$(./tools/bootstrap-codin.sh)
+          "$codin" dump-ast lab/codin
+
   compare:
     runs-on: ubuntu-latest
     steps:
