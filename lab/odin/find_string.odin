@@ -51,12 +51,16 @@ parse_string :: proc "contextless" (json: [^]u8, n, pos0: int,
             esc := json[pos]
             if esc == 'u' {
                 if pos + 4 >= n || !is_hex(json[pos+1]) || !is_hex(json[pos+2]) ||
-                   !is_hex(json[pos+3]) || !is_hex(json[pos+4]) do return 2
+                   !is_hex(json[pos+3]) || !is_hex(json[pos+4]) {
+                    return 2
+                }
                 pos += 5
                 continue
             }
             if !(esc == '"' || esc == '\\' || esc == '/' || esc == 'b' ||
-                 esc == 'f' || esc == 'n' || esc == 'r' || esc == 't') do return 2
+                 esc == 'f' || esc == 'n' || esc == 'r' || esc == 't') {
+                return 2
+            }
             pos += 1
             continue
         }
