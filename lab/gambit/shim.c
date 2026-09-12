@@ -9,7 +9,9 @@ extern int gambit_lab_find_string_impl(char *json, unsigned long json_len,
                                        char *key, unsigned long key_len,
                                        void *out_off, void *out_len);
 
-#define SCHEME_LIBRARY_LINKER ___LNK_gambitlink__
+#ifndef SCHEME_LIBRARY_LINKER
+#define SCHEME_LIBRARY_LINKER ___LNK_gambit__
+#endif
 
 ___BEGIN_C_LINKAGE
 extern ___mod_or_lnk SCHEME_LIBRARY_LINKER(___global_state);
