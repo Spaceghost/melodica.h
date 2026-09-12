@@ -20,8 +20,7 @@ NELUA_INIT="require('nelua.compactc').enable{static_asserts=false,export_declara
   "$NELUA" -r -c -o "$OUT/nelua.c" lab/nelua/find_string.nelua
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab -c "$OUT/nelua.c" -o "$OUT/nelua.o"
 
-# Zig, C backend. This remains useful because it tells us what Zig contributes
-# when C is the actual deliverable.
+# Zig, C backend.
 "$ZIG" build-obj lab/zig/find_string.zig -OReleaseFast -ofmt=c \
   -femit-bin="$OUT/zig-c.c"
 ZIG_EXE=$(readlink -f "$(command -v "$ZIG")")
@@ -34,19 +33,28 @@ test -f "$ZIG_LIB_DIR/zig.h"
 "$ZIG" build-obj lab/zig/find_string.zig -OReleaseFast \
   -femit-bin="$OUT/zig-native.o"
 
-# Odin, native backend. Odin is a permanent core challenger even though it does
-# not currently emit C. -no-entry-point makes this a real library artifact so
-# the shared C harness owns main().
+# Odin, native backend.
 odin build lab/odin -build-mode:lib -no-entry-point -o:speed -out:"$OUT/odin.a"
 
-# Nim -> C -> static library. --noMain keeps the benchmark harness in charge of
-# main(), while NimMain() remains available to the tiny C startup shim.
+# Nim -> C -> static library.
 mkdir -p "$OUT/nimcache"
 nim c --app:staticLib --noMain:on --mm:arc -d:danger --passC:-std=c99 \
   --nimcache:"$OUT/nimcache" -o:"$OUT/libnimlab.a" lab/nim/find_string.nim
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab -c lab/nim/init.c -o "$OUT/nim-init.o"
 
-names=(c nelua zig-c zig-native odin nim)
+# CHICKEN Scheme -> C. Compile the generated unit in embedded mode, then use a
+# tiny C99 shim to initialize the Scheme runtime once and expose lab_find_string.
+CHICKEN_H=$(dpkg -L libchicken-dev | grep '/chicken\.h$' | head -n1)
+CHICKEN_INC=$(dirname "$CHICKEN_H")
+CHICKEN_A=$(dpkg -L libchicken-dev | grep '/libchicken\.a$' | head -n1)
+test -n "$CHICKEN_A"
+chicken lab/chicken/find_string.scm -output-file "$OUT/chicken.c"
+"$ZIG" cc -std=c99 -O3 -DNDEBUG -DC_EMBEDDED -I"$CHICKEN_INC" \
+  -c "$OUT/chicken.c" -o "$OUT/chicken.o"
+"$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab -I"$CHICKEN_INC" \
+  -c lab/chicken/shim.c -o "$OUT/chicken-shim.o"
+
+names=(c nelua zig-c zig-native odin nim chicken)
 for name in "${names[@]}"; do
   case "$name" in
     c)          inputs=("$OUT/c.o") ;;
@@ -55,6 +63,7 @@ for name in "${names[@]}"; do
     zig-native) inputs=("$OUT/zig-native.o") ;;
     odin)       inputs=("$OUT/odin.a") ;;
     nim)        inputs=("$OUT/nim-init.o" "$OUT/libnimlab.a") ;;
+    chicken)    inputs=("$OUT/chicken-shim.o" "$OUT/chicken.o" "$CHICKEN_A") ;;
   esac
 
   "$ZIG" cc -std=c99 -O2 -Ilab lab/conformance.c "${inputs[@]}" \
@@ -115,6 +124,12 @@ for name in "${names[@]}"; do
       linked_bytes=$(( $(wc -c < "$OUT/nim-init.o") + $(wc -c < "$OUT/libnimlab.a") ))
       emitted_c_bytes=$(find "$OUT/nimcache" -type f -name '*.c' -exec wc -c {} + | \
         awk '$2 != "total" {s += $1} END {print s + 0}')
+      direct=no
+      ;;
+    chicken)
+      backend=scheme-to-c-runtime
+      linked_bytes=$(( $(wc -c < "$OUT/chicken-shim.o") + $(wc -c < "$OUT/chicken.o") + $(wc -c < "$CHICKEN_A") ))
+      emitted_c_bytes=$(wc -c < "$OUT/chicken.c" | tr -d ' ')
       direct=no
       ;;
   esac
