@@ -6,6 +6,7 @@ CACHE=${MELODICA_CACHE:-"$ROOT/.cache"}
 CODIN_DIR="$CACHE/codin"
 CODIN_COMMIT=2a3f71f65035a60943be40ffff7e031eec456aac
 OVERLAY="$ROOT/tools/codin-overlay/src"
+PATCHES="$ROOT/tools/codin-overlay/patches"
 OUTDIR="$ROOT/build/codin"
 
 mkdir -p "$CACHE" "$OUTDIR"
@@ -22,6 +23,10 @@ git -C "$CODIN_DIR" reset --hard "$CODIN_COMMIT"
 # writable Spaceghost/codin fork. Every file here is intended to move verbatim.
 cp "$OVERLAY"/*.c "$CODIN_DIR/src/"
 cp "$OVERLAY"/*.h "$CODIN_DIR/src/"
+for patch_file in "$PATCHES"/*.patch; do
+    [ -e "$patch_file" ] || continue
+    git -C "$CODIN_DIR" apply "$patch_file"
+done
 
 make -C "$CODIN_DIR" clean >/dev/null 2>&1 || true
 make -C "$CODIN_DIR"
@@ -64,4 +69,18 @@ gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
     -o "$OUTDIR/structs-smoke"
 "$OUTDIR/structs-smoke"
 
-printf '%s\n' "codin release C99 emission + GCC/Clang + ABI/struct smoke: ok ($CODIN_COMMIT)"
+printf '%s\n' '=== codin C99: fixed-array fixture ==='
+if command -v odin >/dev/null 2>&1; then
+    odin check "$ROOT/tests/codin/arrays" -no-entry-point
+fi
+"$CODIN_DIR/codin" emit-c "$ROOT/tests/codin/arrays" -o "$OUTDIR/arrays.c"
+gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
+    -c "$OUTDIR/arrays.c" -o "$OUTDIR/arrays.gcc.o"
+clang -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
+    -c "$OUTDIR/arrays.c" -o "$OUTDIR/arrays.clang.o"
+gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
+    "$ROOT/tests/codin/arrays_smoke.c" "$OUTDIR/arrays.c" \
+    -o "$OUTDIR/arrays-smoke"
+"$OUTDIR/arrays-smoke"
+
+printf '%s\n' "codin release C99 emission + GCC/Clang + ABI/struct/array smoke: ok ($CODIN_COMMIT)"
