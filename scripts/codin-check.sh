@@ -25,23 +25,18 @@ patch --batch --forward -d "$CODIN_DIR" -p1 < \
     "$PATCHES/0001-preserve-positional-compound-values.patch"
 python3 "$ROOT/tools/codin-overlay/augment_c99.py" "$CODIN_DIR/src/c99.c"
 python3 "$ROOT/tools/codin-overlay/augment_slice_string.py" "$CODIN_DIR/src/c99.c"
+python3 "$ROOT/tools/codin-overlay/augment_multi_return.py" "$CODIN_DIR/src/c99.c"
 
 make -C "$CODIN_DIR" clean >/dev/null 2>&1 || true
 make -C "$CODIN_DIR"
 
-printf '%s\n' '=== codin: dump AST ==='
 "$CODIN_DIR/codin" dump-ast "$ROOT/impl/codin" > "$OUTDIR/ast.txt"
-
-printf '%s\n' '=== codin: emit C99 ==='
 "$CODIN_DIR/codin" emit-c "$ROOT/impl/codin" -o "$OUTDIR/melodica.c"
-
 gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 -c "$OUTDIR/melodica.c" -o "$OUTDIR/melodica.gcc.o"
 clang -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 -c "$OUTDIR/melodica.c" -o "$OUTDIR/melodica.clang.o"
-
 gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 -I"$ROOT/include" \
     "$ROOT/tests/smoke.c" "$OUTDIR/melodica.c" -o "$OUTDIR/smoke"
 "$OUTDIR/smoke"
-
 gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 -I"$ROOT/include" \
     "$ROOT/bench/bench.c" "$OUTDIR/melodica.c" -o "$OUTDIR/bench"
 
@@ -56,13 +51,9 @@ check_fixture() {
     "$OUTDIR/$name-smoke"
 }
 
-printf '%s\n' '=== codin C99: struct fixture ==='
-check_fixture structs
-printf '%s\n' '=== codin C99: fixed-array fixture ==='
-check_fixture arrays
-printf '%s\n' '=== codin C99: enum fixture ==='
-check_fixture enums
-printf '%s\n' '=== codin C99: slice/string fixture ==='
-check_fixture slices_strings
+for fixture in structs arrays enums slices_strings multiple_returns; do
+    printf '=== codin C99: %s fixture ===\n' "$fixture"
+    check_fixture "$fixture"
+done
 
-printf '%s\n' "codin strict C99 + ABI/struct/array/enum/slice/string smoke: ok ($CODIN_COMMIT)"
+printf '%s\n' "codin strict C99 + ABI/struct/array/enum/slice/string/multiple-return smoke: ok ($CODIN_COMMIT)"
