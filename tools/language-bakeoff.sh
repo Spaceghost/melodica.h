@@ -35,9 +35,9 @@ test -f "$ZIG_LIB_DIR/zig.h"
   -femit-bin="$OUT/zig-native.o"
 
 # Odin, native backend. Odin is a permanent core challenger even though it does
-# not currently emit C. The release remains a C99 header; the league is where
-# algorithms compete without pretending the output format is the language.
-odin build lab/odin -build-mode:lib -o:speed -out:"$OUT/odin.a"
+# not currently emit C. -no-entry-point makes this a real library artifact so
+# the shared C harness owns main().
+odin build lab/odin -build-mode:lib -no-entry-point -o:speed -out:"$OUT/odin.a"
 
 # Nim -> C -> static library. --noMain keeps the benchmark harness in charge of
 # main(), while NimMain() remains available to the tiny C startup shim.
