@@ -44,13 +44,15 @@ The implementation lab is broader than the release artifact. These are permanent
 - Zig through its C backend
 - Odin native
 
-Nim currently competes through its C backend too. Every candidate passes the same hostile JSON conformance cases and is timed by the same interleaved C harness.
+Nim -> C and CHICKEN Scheme -> C have also graduated into the common-ABI league. Every candidate passes the same hostile JSON conformance cases and is timed by the same interleaved C harness. Runtime and generated-code costs are recorded instead of being politely misplaced.
+
+The current string-lookup round is led by Nelua -> C99. Odin is notably compact among the native challengers; the first CHICKEN implementation is intentionally naive and establishes a correctness/runtime baseline for later zero-copy work. See [`lab/BENCHMARK.tsv`](lab/BENCHMARK.tsv) for the live measurements.
 
 A native Zig or Odin win is useful even though the released artifact remains C99: it tells us which algorithm/codegen the release implementations need to catch. We do not disqualify good code merely because it arrived wearing a different compiler.
 
 ## C-emitter zoo
 
-A separate census exercises stranger source-to-C implementations: Spinel Ruby, CHICKEN and Gambit Scheme, Nim, V, Vala, ATS/Postiats, Cython, and more. A compiler only gets called a C emitter after CI generates source and recompiles that source in C99 mode.
+A separate census exercises stranger source-to-C implementations. CI has already proven C99-compilable output from Spinel Ruby, CHICKEN and Gambit Scheme, Nim, V, Vala, ATS/Postiats, Cython, Nelua, and Zig's C backend.
 
 Passing that census does not imply release eligibility. Runtime-heavy emitters are still useful experimental controls; the shipped header remains dependency-free.
 
@@ -76,7 +78,7 @@ The winner is recorded in `dist/WINNER`; the measurements that justified it are 
 ./tools/bakeoff.sh
 ```
 
-Consumers need only `dist/melodica.h`; they do not need Nelua, Zig, or Odin.
+Consumers need only `dist/melodica.h`; they do not need Nelua, Zig, Odin, Scheme, or any of the compiler zoo.
 
 ## Development rule
 
