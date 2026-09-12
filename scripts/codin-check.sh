@@ -5,7 +5,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 CACHE=${MELODICA_CACHE:-"$ROOT/.cache"}
 CODIN_DIR="$CACHE/codin"
 CODIN_REPO=https://github.com/Spaceghost/codin.git
-CODIN_COMMIT=baf1aa8f93e7b55bf931d48afb19fb77bff054a5
+CODIN_COMMIT=d83564d2de30b997f14193ac19cc3184be1a8142
 OUTDIR="$ROOT/build/codin"
 
 mkdir -p "$CACHE" "$OUTDIR"
