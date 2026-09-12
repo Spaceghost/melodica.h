@@ -1,14 +1,8 @@
-# Source-language lab
+# Competitive implementation lab
 
-This is the challenger league for implementation languages, separate from the release parser bake-off.
+This is the common-ABI challenger league for `melodica.h` implementation ideas. It is not a compiler museum.
 
-There are deliberately **two lanes**.
-
-## Core language league
-
-C, Nelua, Zig, Odin, and selected useful emitters implement the same `lab_find_string` C ABI and pass the same malformed-JSON conformance cases. The core league is allowed to compare both native and C-emitting backends because its job is to find the best implementation and algorithm, not to pretend every good idea already fits the release format.
-
-Permanent core entries:
+## Permanent entries
 
 - C99
 - Nelua -> C99
@@ -16,20 +10,17 @@ Permanent core entries:
 - Zig -> C
 - Odin native
 
-Nim is currently included as a C-emitting challenger as well.
+## Active challengers
 
-The same C benchmark harness warms every candidate and runs interleaved median-of-seven trials. Results are committed to `lab/BENCHMARK.tsv`; the fastest candidate is written to `lab/WINNER`.
+- Nim -> C
+- Gambit Scheme -> C
+- Spinel Ruby -> C (probation)
+- Vala -> C (probation)
 
-A native winner does **not** magically become `dist/melodica.h`. It becomes the implementation to study and port into a dependency-free C99 release candidate. That is intentional: Odin and native Zig are here to make the C-facing implementations better.
+Every serious contender must implement the same `lab_find_string` ABI and pass the same malformed-JSON conformance cases. The shared C harness runs interleaved median-of-seven timing trials and records linked size and emitted-C size where applicable.
 
-## C-emitter zoo
+New implementations get one baseline attempt. They remain only if they are plausibly competitive on speed/size or reveal an optimization we can realistically transfer to a release candidate.
 
-`emitters/` tests more exotic source-to-C systems independently: Spinel Ruby, Scheme compilers, Nim, V, Vala, ATS/Postiats, Cython, and whatever other strange compiler deserves to be thrown at the wall next.
+CHICKEN Scheme was removed after its first real common-ABI baseline landed around 42 us/lookup with roughly 7.5 MB of linked runtime. That measurement was useful; continuing to carry the implementation would not be.
 
-The census proves that a compiler really emits C accepted by a C99-mode compiler. Runtime-heavy systems are welcome in the census even when they are obviously unsuitable for the shipped header. Useful ones can graduate into the common-ABI core league.
-
-## Release rule
-
-`dist/melodica.h` remains stricter than either lab lane: one small dependency-free C99 header, allocation-free in the hot protocol layer, gated by full conformance and sanitizer tests. The lab finds winners; the release bake-off decides what can actually ship.
-
-See [`../C99_EMITTERS.md`](../C99_EMITTERS.md) and [`emitters/`](emitters/README.md).
+A native Odin or Zig win does not become `dist/melodica.h` directly. It becomes the target for the dependency-free C99 release implementations to catch.
