@@ -17,7 +17,11 @@ Permanent first-class competitors behind the same hot-path ABI:
 - Nelua -> C99
 - Zig native
 - Zig -> C
-- Odin native
+- Odin through the official native compiler
+
+Tracked Odin compiler implementation:
+
+- Codin (`graphitemaster/codin`) -> intended Odin-to-C backend. The pinned upstream compiler currently builds and parses our full lookup kernel in CI, but its public CLI does not yet expose C emission, so it does not receive a fabricated benchmark row. When C output exists, it becomes `odin-codin` beside official `odin` in the shared conformance/timing league.
 
 Active challengers:
 
