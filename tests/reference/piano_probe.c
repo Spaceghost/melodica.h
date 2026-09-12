@@ -31,6 +31,14 @@ static void print_request(const char *label, PianoReturn_t ret, const PianoReque
     printf("%s.post=%s\n", label, req->postData != NULL ? req->postData : "<null>");
 }
 
+static void print_station(const char *label, const PianoStation_t *station) {
+    printf("%s.name=%s\n", label, station != NULL && station->name != NULL ? station->name : "<null>");
+    printf("%s.id=%s\n", label, station != NULL && station->id != NULL ? station->id : "<null>");
+    printf("%s.creator=%d\n", label, station != NULL ? !!station->isCreator : -1);
+    printf("%s.quickmix=%d\n", label, station != NULL ? !!station->isQuickMix : -1);
+    printf("%s.use_quickmix=%d\n", label, station != NULL ? !!station->useQuickMix : -1);
+}
+
 int main(void) {
 #ifdef MELODICA_REFERENCE_UPSTREAM
     if (gcry_check_version(NULL) == NULL) return 90;
@@ -76,6 +84,24 @@ int main(void) {
     req.responseData = (char *)"{\"stat\":\"fail\",\"code\":1002}";
     ret = PianoResponse(&ph, &req);
     printf("login1.error.ret=%d\n", (int)ret);
+
+    memset(&req, 0, sizeof(req));
+    ret = PianoRequest(&ph, &req, PIANO_REQUEST_GET_STATIONS);
+    print_request("stations", ret, &req);
+
+    req.responseData = (char *)
+        "{\"stat\":\"ok\",\"result\":{\"stations\":["
+        "{\"stationName\":\"One\",\"stationToken\":\"1\",\"isShared\":false},"
+        "{\"stationName\":\"Shared\",\"stationToken\":\"2\",\"isShared\":true},"
+        "{\"stationName\":\"QuickMix\",\"stationToken\":\"mix\","
+        "\"isQuickMix\":true,\"quickMixStationIds\":[\"1\"]}]}}";
+    ret = PianoResponse(&ph, &req);
+    printf("stations.response.ret=%d\n", (int)ret);
+    printf("stations.count=%zu\n", PianoListCountP(ph.stations));
+    print_station("station.one", PianoFindStationById(ph.stations, "1"));
+    print_station("station.shared", PianoFindStationById(ph.stations, "2"));
+    print_station("station.mix", PianoFindStationById(ph.stations, "mix"));
+    PianoDestroyRequest(&req);
 
     PianoDestroy(&ph);
     return 0;
