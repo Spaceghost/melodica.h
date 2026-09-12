@@ -9,7 +9,7 @@ The repo deliberately keeps implementations side-by-side. Correctness is mandato
 | lane | source | build | winner-eligible? |
 |---|---|---|---|
 | Odin | `impl/odin` | native Odin static library | yes |
-| Codin C99 | `impl/codin` | Codin AST → tiny sema → range IR → strict C99 → GCC/Clang | yes once green |
+| Codin C99 | `impl/codin` | Codin AST → tiny sema → range IR → strict C99 → GCC/Clang | yes |
 | Codin native control | `impl/codin` | native Odin static library | control only |
 
 Upstream [graphitemaster/codin](https://github.com/graphitemaster/codin) stopped after parsing. The pinned upstream commit remains `2a3f71f65035a60943be40ffff7e031eec456aac`; `tools/codin-overlay/` is a reproducible patch stack implementing the missing backend until it can move verbatim into a writable `Spaceghost/codin` fork.
@@ -34,6 +34,8 @@ Clang -std=c99 -pedantic-errors
       ↓
 shared ABI smoke tests + benchmark
 ```
+
+The first green C99 shootout produced 395.58 MiB/s for Codin-generated C via GCC versus 338.32 MiB/s for native Odin on the JSON-escape microbenchmark. Treat that as one runner and one tiny workload, not tablets from the mountain. The generated C also compiled cleanly with both GCC and Clang under `-pedantic-errors`.
 
 ## ABI seed
 
