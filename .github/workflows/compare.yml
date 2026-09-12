@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  odin-and-codin:
+  language-shootout:
     runs-on: ubuntu-latest
     env:
       ODIN_VERSION: dev-2026-09
@@ -33,11 +33,17 @@ jobs:
           test -x "$RUNNER_TEMP/odin/odin"
           echo "$RUNNER_TEMP/odin" >> "$GITHUB_PATH"
 
-      - name: Build and smoke-test native Odin controls
+      - name: Build all native controls and libpiano compatibility
         run: make test
+
+      - name: Prove portable C core is freestanding and wasm-compilable
+        run: make portable
 
       - name: Emit strict C99 with Codin and test with GCC + Clang
         run: make codin-check
+
+      - name: Benchmark portable C
+        run: make bench-c
 
       - name: Benchmark native Odin
         run: make bench-odin
@@ -50,6 +56,9 @@ jobs:
         run: |
           set -eu
           printf '%-24s %12s\n' lane bytes
+          printf '%-24s %12s\n' c99-header-core "$(stat -c %s build/c/libmelodica.a)"
+          printf '%-24s %12s\n' libpiano-compat "$(stat -c %s build/compat/libpiano.a)"
+          printf '%-24s %12s\n' wasm32-core-object "$(stat -c %s build/portable/wasm32.o)"
           printf '%-24s %12s\n' odin "$(stat -c %s build/odin/libmelodica.a)"
           printf '%-24s %12s\n' codin-native-control "$(stat -c %s build/codin-native/libmelodica.a)"
           printf '%-24s %12s\n' codin-c99-gcc "$(stat -c %s build/codin/melodica.gcc.o)"
