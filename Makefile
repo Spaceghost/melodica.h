@@ -3,7 +3,7 @@ CC ?= cc
 BUILD ?= build
 ODIN_FLAGS ?= -o:speed -reloc-mode:pic -no-entry-point
 
-.PHONY: all odin codin-native codin-check test test-odin test-codin-native bench bench-odin clean
+.PHONY: all odin codin-native codin-check test test-odin test-codin-native bench bench-odin bench-codin clean
 
 all: test
 
@@ -45,7 +45,10 @@ test: test-odin test-codin-native
 bench-odin: $(BUILD)/odin/bench
 	./$(BUILD)/odin/bench
 
-bench: bench-odin
+bench-codin: codin-check
+	./$(BUILD)/codin/bench
+
+bench: bench-odin bench-codin
 
 clean:
 	rm -rf $(BUILD)

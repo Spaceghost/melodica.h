@@ -33,14 +33,17 @@ jobs:
           test -x "$RUNNER_TEMP/odin/odin"
           echo "$RUNNER_TEMP/odin" >> "$GITHUB_PATH"
 
-      - name: Build and smoke-test both Odin source lanes
+      - name: Build and smoke-test native Odin controls
         run: make test
 
-      - name: Check Codin parser compatibility
+      - name: Emit strict C99 with Codin and test with GCC + Clang
         run: make codin-check
 
-      - name: Benchmark native Odin lane
+      - name: Benchmark native Odin
         run: make bench-odin
+
+      - name: Benchmark Codin C99 via GCC
+        run: ./build/codin/bench
 
       - name: Report artifact sizes
         shell: bash
@@ -48,4 +51,7 @@ jobs:
           set -eu
           printf '%-24s %12s\n' lane bytes
           printf '%-24s %12s\n' odin "$(stat -c %s build/odin/libmelodica.a)"
-          printf '%-24s %12s\n' codin-subset-native "$(stat -c %s build/codin-native/libmelodica.a)"
+          printf '%-24s %12s\n' codin-native-control "$(stat -c %s build/codin-native/libmelodica.a)"
+          printf '%-24s %12s\n' codin-c99-gcc "$(stat -c %s build/codin/melodica.gcc.o)"
+          printf '%-24s %12s\n' codin-c99-clang "$(stat -c %s build/codin/melodica.clang.o)"
+          printf '%-24s %12s\n' codin-c99-source "$(stat -c %s build/codin/melodica.c)"
