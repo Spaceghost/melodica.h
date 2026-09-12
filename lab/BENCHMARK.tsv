@@ -1,7 +1,8 @@
-language	backend	ns_per_lookup	linked_bytes	emitted_c_bytes	release_direct
-c	c99	557	10992	3029	yes
-nelua	c99-emitter	365	12216	4719	yes
-zig-c	c99-emitter	492	24368	37839	no
-zig-native	native	515	35936	0	no
-odin	native	492	5464	0	no
-nim	c-emitter	404	46348	92245	no
+language	backend	ns_per_lookup	lookups_per_trial	linked_bytes	emitted_c_bytes	release_direct
+c	c99	554	1200000	10992	3029	yes
+nelua	c99-emitter	368	1200000	12216	4719	yes
+zig-c	c99-emitter	491	1200000	24368	37839	no
+zig-native	native	515	1200000	35936	0	no
+odin	native	492	1200000	5464	0	no
+nim	c-emitter	403	1200000	46348	92245	no
+chicken	scheme-to-c-runtime	42606	120000	7510638	60567	no
