@@ -8,7 +8,9 @@ This is the common-ABI challenger league for `melodica.h` implementation ideas. 
 - Nelua -> C99
 - Zig native
 - Zig -> C
-- Odin native
+- Odin through the official native compiler
+
+Codin is tracked separately under `lab/codin/`. It is an independent Odin-to-C compiler implementation, pinned and built in CI. Its current upstream CLI can parse our real lookup kernel but does not yet expose C emission, so it is not timed until it can produce the shared `lab_find_string` ABI artifact. At that point it joins as `odin-codin` rather than replacing official Odin.
 
 ## Active challengers
 
