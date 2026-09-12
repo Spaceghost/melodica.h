@@ -1,7 +1,19 @@
 diff --git a/src/c99.c b/src/c99.c
 --- a/src/c99.c
 +++ b/src/c99.c
-@@ -112,8 +112,34 @@ static Bool emit_call(C99 *c, const CallExpression *call) {
+@@ -52,2 +52,11 @@ static Bool emit_ast_type(C99 *c, const Type *type) {
+ 	return unsupported(c, "C type");
+ }
++
++static const Type *unwrap_literal_type(const Type *type) {
++	if (type && type->kind == TYPE_EXPRESSION) {
++		const Expression *expression = RCAST(const ExpressionType *, type)->expression;
++		if (expression && expression->kind == EXPRESSION_TYPE)
++			return RCAST(const TypeExpression *, expression)->type;
++	}
++	return type;
++}
+@@ -112,8 +121,35 @@ static Bool emit_call(C99 *c, const CallExpression *call) {
  	return true;
  }
  
@@ -20,9 +32,10 @@ diff --git a/src/c99.c b/src/c99.c
 +
  static Bool emit_compound_literal(C99 *c, const CompoundLiteralExpression *literal) {
  	if (!literal->type) return unsupported(c, "untyped compound literal");
++	const Type *literal_type = unwrap_literal_type(literal->type);
 +
-+	if (literal->type->kind == TYPE_ARRAY) {
-+		const ArrayType *array = RCAST(const ArrayType *, literal->type);
++	if (literal_type->kind == TYPE_ARRAY) {
++		const ArrayType *array = RCAST(const ArrayType *, literal_type);
 +		if (!array->count) return unsupported(c, "inferred array count");
 +		if (array->type->kind == TYPE_ARRAY) return unsupported(c, "nested fixed array");
 +		fputc('(', c->out);
@@ -34,16 +47,18 @@ diff --git a/src/c99.c b/src/c99.c
 +	}
 +
  	fputc('(', c->out);
- 	if (!emit_ast_type(c, literal->type)) return false;
+-	if (!emit_ast_type(c, literal->type)) return false;
++	if (!emit_ast_type(c, literal_type)) return false;
  	fputs("){", c->out);
-@@ -211,6 +237,28 @@ static Bool emit_declaration(C99 *c, const DeclarationStatement *declaration) {
+@@ -211,6 +247,29 @@ static Bool emit_declaration(C99 *c, const DeclarationStatement *declaration) {
  	const Expression *value = declaration->values->expressions[0];
  	if (value->kind == EXPRESSION_PROCEDURE) return unsupported(c, "nested procedure");
  
 +	if (value->kind == EXPRESSION_COMPOUND_LITERAL) {
 +		const CompoundLiteralExpression *literal = RCAST(const CompoundLiteralExpression *, value);
-+		if (literal->type && literal->type->kind == TYPE_ARRAY) {
-+			const ArrayType *array = RCAST(const ArrayType *, literal->type);
++		const Type *literal_type = unwrap_literal_type(literal->type);
++		if (literal_type && literal_type->kind == TYPE_ARRAY) {
++			const ArrayType *array = RCAST(const ArrayType *, literal_type);
 +			if (!array->count) return unsupported(c, "inferred array count");
 +			if (array->type->kind == TYPE_ARRAY) return unsupported(c, "nested fixed array");
 +
