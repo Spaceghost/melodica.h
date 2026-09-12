@@ -1,6 +1,7 @@
 #include "piano.h"
 #include "blowfish.h"
 #include "crypt.h"
+#include "json.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -407,11 +408,124 @@ PianoReturn_t PianoRequest(PianoHandle_t *ph, PianoRequest_t *req,
     return PIANO_RET_ERR;
 }
 
-PianoReturn_t PianoResponse(PianoHandle_t *ph, PianoRequest_t *req) {
-    (void)ph;
-    (void)req;
-    /* Response parsing is the next compatibility milestone. */
+static PianoReturn_t piano_response_error(const MelodicaJsonDoc *doc,
+        const size_t root, const PianoRequest_t *req) {
+    long code = 0;
+    const size_t code_token = melodica_json_object_get(doc, root, "code");
+    if (!melodica_json_long(doc, code_token, &code)) return PIANO_RET_INVALID_RESPONSE;
+    const long mapped = code + PIANO_RET_OFFSET;
+    if (mapped < 0) return PIANO_RET_INVALID_RESPONSE;
+    PianoReturn_t ret = (PianoReturn_t)mapped;
+    if (ret == PIANO_RET_P_INVALID_PARTNER_LOGIN && req->type == PIANO_REQUEST_LOGIN &&
+            req->data != NULL && ((const PianoRequestDataLogin_t *)req->data)->step == 1u) {
+        ret = PIANO_RET_INVALID_LOGIN;
+    }
+    return ret;
+}
+
+static PianoReturn_t piano_response_login(PianoHandle_t *ph, PianoRequest_t *req,
+        const MelodicaJsonDoc *doc, const size_t result) {
+    if (req->data == NULL || result == MELODICA_JSON_NONE || result >= doc->count ||
+            doc->tokens[result].type != MELODICA_JSON_OBJECT) {
+        return PIANO_RET_INVALID_RESPONSE;
+    }
+    PianoRequestDataLogin_t *login = (PianoRequestDataLogin_t *)req->data;
+
+    if (login->step == 0u) {
+        const size_t sync_token = melodica_json_object_get(doc, result, "syncTime");
+        const size_t auth_token = melodica_json_object_get(doc, result, "partnerAuthToken");
+        const size_t id_token = melodica_json_object_get(doc, result, "partnerId");
+        char *crypted_timestamp = melodica_json_string_dup(doc, sync_token);
+        char *partner_auth = melodica_json_string_dup(doc, auth_token);
+        long partner_id = 0;
+        if (crypted_timestamp == NULL || partner_auth == NULL ||
+                !melodica_json_long(doc, id_token, &partner_id) || partner_id < 0) {
+            free(crypted_timestamp);
+            free(partner_auth);
+            return PIANO_RET_INVALID_RESPONSE;
+        }
+
+        size_t decrypted_size = 0u;
+        char *decrypted = melodica_piano_decrypt_string(
+                (const MelodicaBlowfish *)ph->partner.in,
+                crypted_timestamp, &decrypted_size);
+        free(crypted_timestamp);
+        if (decrypted == NULL || decrypted_size <= 4u) {
+            free(decrypted);
+            free(partner_auth);
+            return PIANO_RET_ERR;
+        }
+
+        char *end = NULL;
+        const unsigned long timestamp = strtoul(decrypted + 4, &end, 0);
+        const int timestamp_ok = end != decrypted + 4;
+        free(decrypted);
+        if (!timestamp_ok) {
+            free(partner_auth);
+            return PIANO_RET_ERR;
+        }
+
+        free(ph->partner.authToken);
+        ph->partner.authToken = partner_auth;
+        ph->partner.id = (unsigned int)partner_id;
+        ph->timeOffset = (int)((long)time(NULL) - (long)timestamp);
+        ++login->step;
+        return PIANO_RET_CONTINUE_REQUEST;
+    }
+
+    if (login->step == 1u) {
+        char *listener = melodica_json_string_dup(doc,
+                melodica_json_object_get(doc, result, "userId"));
+        char *auth = melodica_json_string_dup(doc,
+                melodica_json_object_get(doc, result, "userAuthToken"));
+        if (listener == NULL || auth == NULL) {
+            free(listener);
+            free(auth);
+            return PIANO_RET_INVALID_RESPONSE;
+        }
+        free(ph->user.listenerId);
+        free(ph->user.authToken);
+        ph->user.listenerId = listener;
+        ph->user.authToken = auth;
+        return PIANO_RET_OK;
+    }
+
     return PIANO_RET_INVALID_RESPONSE;
+}
+
+PianoReturn_t PianoResponse(PianoHandle_t *ph, PianoRequest_t *req) {
+    if (ph == NULL || req == NULL || req->responseData == NULL) {
+        return PIANO_RET_INVALID_RESPONSE;
+    }
+
+    MelodicaJsonDoc doc;
+    if (!melodica_json_parse(&doc, req->responseData)) return PIANO_RET_INVALID_RESPONSE;
+    PianoReturn_t ret = PIANO_RET_INVALID_RESPONSE;
+
+    const size_t root = 0u;
+    const size_t stat = melodica_json_object_get(&doc, root, "stat");
+    if (stat == MELODICA_JSON_NONE || stat >= doc.count ||
+            doc.tokens[stat].type != MELODICA_JSON_STRING) {
+        goto cleanup;
+    }
+    if (!melodica_json_string_is(&doc, stat, "ok")) {
+        ret = piano_response_error(&doc, root, req);
+        goto cleanup;
+    }
+
+    const size_t result = melodica_json_object_get(&doc, root, "result");
+    switch (req->type) {
+        case PIANO_REQUEST_LOGIN:
+            ret = piano_response_login(ph, req, &doc, result);
+            break;
+        default:
+            ret = PIANO_RET_OK;
+            break;
+    }
+
+cleanup:
+    melodica_json_destroy(&doc);
+    return ret;
 }
 
 PianoStation_t *PianoFindStationById(PianoStation_t *stations, const char *searchStation) {
