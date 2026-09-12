@@ -7,10 +7,8 @@ NELUA=${NELUA:-$(./tools/bootstrap-nelua.sh)}
 OUT=build/language-bakeoff
 mkdir -p "$OUT"
 
-# Core language league. The public release is still C99, but native Zig and
-# Odin are intentionally allowed to compete here. If a native implementation
-# wins, its algorithm becomes a target for the C99 release implementations.
-
+# Core language league. Native Zig and Odin compete on algorithm/codegen even
+# though the public release remains a dependency-free C99 header.
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -Wall -Wextra -Werror -pedantic -Ilab \
   -c lab/c/find_string.c -o "$OUT/c.o"
 
@@ -36,8 +34,8 @@ nim c --app:staticLib --noMain:on --mm:arc -d:danger --passC:-std=c99 \
   --nimcache:"$OUT/nimcache" -o:"$OUT/libnimlab.a" lab/nim/find_string.nim
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab -c lab/nim/init.c -o "$OUT/nim-init.o"
 
-# CHICKEN Scheme -> C. The generated runtime uses alloca as a stack primitive;
-# preinclude its platform declaration while keeping the translation unit C99.
+# CHICKEN Scheme -> C. The runtime uses alloca as a stack primitive, so include
+# the platform declaration while keeping the generated translation unit C99.
 CHICKEN_H=$(dpkg -L libchicken-dev | grep '/chicken\.h$' | head -n1)
 CHICKEN_INC=$(dirname "$CHICKEN_H")
 CHICKEN_A=$(dpkg -L libchicken-dev | grep '/libchicken\.a$' | head -n1)
@@ -64,8 +62,14 @@ for name in "${names[@]}"; do
     -o "$OUT/test-$name" -lm -ldl -pthread
   "$OUT/test-$name" >/dev/null
 
-  "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab lab/bench.c "${inputs[@]}" \
-    -o "$OUT/bench-$name" -lm -ldl -pthread
+  bench_defs=()
+  if [[ "$name" == chicken ]]; then
+    # Runtime-heavy Scheme is far slower per call; 120k lookups is still a
+    # substantial timing sample without multiplying CI duration pointlessly.
+    bench_defs=(-DLAB_LOOPS=30000)
+  fi
+  "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab "${bench_defs[@]}" \
+    lab/bench.c "${inputs[@]}" -o "$OUT/bench-$name" -lm -ldl -pthread
   : > "$OUT/times-$name.txt"
 done
 
@@ -78,9 +82,10 @@ for ((round=0; round<7; round++)); do
   done
 done
 
-printf 'language\tbackend\tns_per_lookup\tlinked_bytes\temitted_c_bytes\trelease_direct\n' > "$OUT/results.tsv"
+printf 'language\tbackend\tns_per_lookup\tlookups_per_trial\tlinked_bytes\temitted_c_bytes\trelease_direct\n' > "$OUT/results.tsv"
 for name in "${names[@]}"; do
   ns=$(sort -n "$OUT/times-$name.txt" | sed -n '4p')
+  sample=1200000
   case "$name" in
     c)
       backend=c99
@@ -121,13 +126,14 @@ for name in "${names[@]}"; do
       ;;
     chicken)
       backend=scheme-to-c-runtime
+      sample=120000
       linked_bytes=$(( $(wc -c < "$OUT/chicken-shim.o") + $(wc -c < "$OUT/chicken.o") + $(wc -c < "$CHICKEN_A") ))
       emitted_c_bytes=$(wc -c < "$OUT/chicken.c" | tr -d ' ')
       direct=no
       ;;
   esac
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$name" "$backend" "$ns" "$linked_bytes" "$emitted_c_bytes" "$direct" >> "$OUT/results.tsv"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$name" "$backend" "$ns" "$sample" "$linked_bytes" "$emitted_c_bytes" "$direct" >> "$OUT/results.tsv"
 done
 
 winner=$(tail -n +2 "$OUT/results.tsv" | sort -t $'\t' -k3,3n | head -n1 | cut -f1)
