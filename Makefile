@@ -61,8 +61,8 @@ $(BUILD)/codin-native/smoke: tests/smoke.c include/melodica.h $(BUILD)/codin-nat
 	$(CC) -O2 -std=c11 -Wall -Wextra -Werror -Iinclude tests/smoke.c \
 		$(BUILD)/codin-native/libmelodica.a -lm -ldl -lpthread -o $@
 
-$(BUILD)/compat/smoke: tests/libpiano_compat.c include/piano.h $(BUILD)/compat/libpiano.a
-	$(CC) -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude tests/libpiano_compat.c $(BUILD)/compat/libpiano.a -o $@
+$(BUILD)/compat/smoke: tests/libpiano_compat.c include/piano.h compat/crypt.h $(BUILD)/compat/libpiano.a
+	$(CC) -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude -Icompat tests/libpiano_compat.c $(BUILD)/compat/libpiano.a -o $@
 
 $(BUILD)/compat/blowfish-smoke: tests/blowfish.c compat/blowfish.h $(BUILD)/compat/blowfish.o
 	$(CC) -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Icompat tests/blowfish.c $(BUILD)/compat/blowfish.o -o $@
