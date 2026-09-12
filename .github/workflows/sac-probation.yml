@@ -30,13 +30,24 @@ jobs:
             -v "$GITHUB_WORKSPACE:/work" -w /work \
             --entrypoint bash sacbase/sac-jupyter-notebook:latest -lc '
               set -euxo pipefail
-              sac2c -V
-              sac4c -V
+              SAC2C_BIN="$(command -v sac2c)"
+              SAC_BIN_DIR="$(dirname "$SAC2C_BIN")"
+              SAC4C_BIN="$(command -v sac4c 2>/dev/null || true)"
+              if [ -z "$SAC4C_BIN" ]; then
+                SAC4C_BIN="$(find "$SAC_BIN_DIR" -maxdepth 1 -type f -name "sac4c*" -perm -111 | head -n1 || true)"
+              fi
+              echo "=== SaC tool directory ==="
+              ls -la "$SAC_BIN_DIR"
+              "$SAC2C_BIN" -V
+              test -n "$SAC4C_BIN"
+              "$SAC4C_BIN" -V
+
               rm -rf lab/sac/cmake-common build/sac
               git clone --depth=1 https://github.com/SacBase/cmake-common.git lab/sac/cmake-common
               cmake -S lab/sac -B build/sac \
                 -DTARGET=seq \
-                -DSAC2C_EXEC="$(command -v sac2c)"
+                -DSAC2C_EXEC="$SAC2C_BIN" \
+                -DSAC4C_EXEC="$SAC4C_BIN"
               cmake --build build/sac --verbose
               echo "=== GENERATED HEADER ==="
               cat build/sac/sacwrapper-FindString.h
