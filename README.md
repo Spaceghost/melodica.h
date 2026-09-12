@@ -9,10 +9,6 @@ A small, allocation-free C99 protocol library for Pandora-style JSON/REST client
 
 The host owns HTTPS, CSRF cookies, auth-token persistence, storage, scheduling, and audio. `melodica.h` owns request bodies and response parsing machinery useful across hosts.
 
-## Why this shape
-
-`melodica.h` keeps the useful protocol layer of libpiano while replacing linked lists, hidden ownership, and transport policy with a small C ABI. There are no mandatory dependencies, no global runtime state, no allocator, no libcurl, no JSON DOM, and no audio stack.
-
 ## Competitive implementation league
 
 Permanent first-class competitors behind the same hot-path ABI:
@@ -30,7 +26,7 @@ Active challengers:
 - Spinel Ruby -> C (one-shot probation until it posts a real common-ABI result)
 - Vala -> C (same probation rule)
 
-A compiler does not stay merely because it can emit C. New backends get one serious common-ABI baseline and remain only if they are plausibly competitive on speed/size or expose an optimization we can realistically port. CHICKEN's roughly 42 us/lookup and ~7.5 MB baseline was useful evidence, then grounds for removal.
+A compiler does not stay merely because it can emit C. New backends get one serious common-ABI baseline and remain only if they are plausibly competitive on speed/size or expose an optimization we can realistically port.
 
 A native Zig or Odin win is useful even though the released artifact remains C99: it becomes the algorithm/codegen target the shippable C99 implementations must catch.
 
