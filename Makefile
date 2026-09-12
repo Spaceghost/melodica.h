@@ -8,7 +8,7 @@ PREFIX ?= /usr/local
 DESTDIR ?=
 ODIN_FLAGS ?= -o:speed -reloc-mode:pic -no-entry-point
 
-.PHONY: all c odin zig codin-native codin-check libpiano test test-c test-odin test-zig test-codin-native test-libpiano test-blowfish test-crypt bench bench-c bench-odin bench-zig bench-codin portable install clean
+.PHONY: all c odin zig codin-native codin-check libpiano test test-c test-odin test-zig test-codin-native test-libpiano test-blowfish test-crypt test-json bench bench-c bench-odin bench-zig bench-codin portable install clean
 
 all: test
 
@@ -39,11 +39,15 @@ $(BUILD)/compat/crypt.o: compat/crypt.c compat/crypt.h compat/blowfish.h
 	mkdir -p $(BUILD)/compat
 	$(CC) -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Icompat -c $< -o $@
 
-$(BUILD)/compat/piano.o: compat/piano.c include/piano.h compat/blowfish.h compat/crypt.h
+$(BUILD)/compat/json.o: compat/json.c compat/json.h
+	mkdir -p $(BUILD)/compat
+	$(CC) -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Icompat -c $< -o $@
+
+$(BUILD)/compat/piano.o: compat/piano.c include/piano.h compat/blowfish.h compat/crypt.h compat/json.h
 	mkdir -p $(BUILD)/compat
 	$(CC) -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude -Icompat -c $< -o $@
 
-$(BUILD)/compat/libpiano.a: $(BUILD)/compat/piano.o $(BUILD)/compat/crypt.o $(BUILD)/compat/blowfish.o
+$(BUILD)/compat/libpiano.a: $(BUILD)/compat/piano.o $(BUILD)/compat/json.o $(BUILD)/compat/crypt.o $(BUILD)/compat/blowfish.o
 	$(AR) rcs $@ $^
 
 $(BUILD)/c/smoke: tests/smoke.c include/melodica.h $(BUILD)/c/libmelodica.a
@@ -61,7 +65,7 @@ $(BUILD)/codin-native/smoke: tests/smoke.c include/melodica.h $(BUILD)/codin-nat
 	$(CC) -O2 -std=c11 -Wall -Wextra -Werror -Iinclude tests/smoke.c \
 		$(BUILD)/codin-native/libmelodica.a -lm -ldl -lpthread -o $@
 
-$(BUILD)/compat/smoke: tests/libpiano_compat.c include/piano.h compat/crypt.h $(BUILD)/compat/libpiano.a
+$(BUILD)/compat/smoke: tests/libpiano_compat.c include/piano.h compat/crypt.h compat/json.h $(BUILD)/compat/libpiano.a
 	$(CC) -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude -Icompat tests/libpiano_compat.c $(BUILD)/compat/libpiano.a -o $@
 
 $(BUILD)/compat/blowfish-smoke: tests/blowfish.c compat/blowfish.h $(BUILD)/compat/blowfish.o
@@ -69,6 +73,9 @@ $(BUILD)/compat/blowfish-smoke: tests/blowfish.c compat/blowfish.h $(BUILD)/comp
 
 $(BUILD)/compat/crypt-smoke: tests/crypt.c compat/crypt.h compat/blowfish.h $(BUILD)/compat/crypt.o $(BUILD)/compat/blowfish.o
 	$(CC) -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Icompat tests/crypt.c $(BUILD)/compat/crypt.o $(BUILD)/compat/blowfish.o -o $@
+
+$(BUILD)/compat/json-smoke: tests/json.c compat/json.h $(BUILD)/compat/json.o
+	$(CC) -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Icompat tests/json.c $(BUILD)/compat/json.o -o $@
 
 $(BUILD)/c/bench: bench/bench.c include/melodica.h $(BUILD)/c/libmelodica.a
 	$(CC) -O3 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude bench/bench.c $(BUILD)/c/libmelodica.a -o $@
@@ -111,7 +118,10 @@ test-blowfish: $(BUILD)/compat/blowfish-smoke
 test-crypt: $(BUILD)/compat/crypt-smoke
 	./$(BUILD)/compat/crypt-smoke
 
-test: test-c test-odin test-zig test-codin-native test-blowfish test-crypt test-libpiano
+test-json: $(BUILD)/compat/json-smoke
+	./$(BUILD)/compat/json-smoke
+
+test: test-c test-odin test-zig test-codin-native test-blowfish test-crypt test-json test-libpiano
 
 bench-c: $(BUILD)/c/bench
 	./$(BUILD)/c/bench
