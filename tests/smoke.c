@@ -71,6 +71,35 @@ int main(void) {
         }
     }
 
+    {
+        static const uint8_t auth[] = {'a', '"', '\n'};
+        static const char expected[] =
+            "{\"returnAllStations\":true,\"userAuthToken\":\"a\\\"\\n\",\"syncTime\":12345}";
+        char output[sizeof expected - 1];
+        memset(output, 'X', sizeof output);
+
+        size_t needed = melodica_station_list_request_size(auth, sizeof auth, 12345u);
+        if (needed != sizeof expected - 1) {
+            fprintf(stderr, "station request size mismatch\n");
+            return 1;
+        }
+        if (melodica_station_list_request(output, needed - 1, auth, sizeof auth, 12345u) != needed) {
+            fprintf(stderr, "station request short-buffer mismatch\n");
+            return 1;
+        }
+        if (output[0] != 'X') {
+            fprintf(stderr, "station request wrote into short buffer\n");
+            return 1;
+        }
+        if (melodica_station_list_request(output, sizeof output, auth, sizeof auth, 12345u) != needed) {
+            fprintf(stderr, "station request call mismatch\n");
+            return 1;
+        }
+        if (expect_bytes("station request", output, needed, expected, sizeof expected - 1)) {
+            return 1;
+        }
+    }
+
     puts("melodica smoke: ok");
     return 0;
 }

@@ -1,6 +1,8 @@
 package main
 
 MELODICA_ABI_VERSION :: u32(1)
+station_prefix :: "{\"returnAllStations\":true,\"userAuthToken\":\""
+station_suffix :: "\",\"syncTime\":"
 
 is_unreserved :: proc "contextless" (c: u8) -> bool {
 	return (c >= 'A' && c <= 'Z') ||
@@ -14,6 +16,22 @@ hex_digit :: proc "contextless" (n: u8) -> u8 {
 		return '0' + n
 	}
 	return 'A' + (n - 10)
+}
+
+decimal_size :: proc "contextless" (value: uintptr) -> uintptr {
+	if value < 10 {
+		return 1
+	}
+	return 1 + decimal_size(value / 10)
+}
+
+write_decimal :: proc "contextless" (dst: [^]u8, out_in: uintptr, value: uintptr) -> uintptr {
+	out := out_in
+	if value >= 10 {
+		out = write_decimal(dst, out, value / 10)
+	}
+	dst[out] = '0' + u8(value % 10)
+	return out + 1
 }
 
 @(export)
@@ -150,5 +168,74 @@ melodica_json_escape :: proc "c" (
 			}
 		}
 	}
+	return required
+}
+
+@(export)
+melodica_station_list_request_size :: proc "c" (
+	user_auth_token: [^]u8,
+	user_auth_token_len: uintptr,
+	sync_time: uintptr,
+) -> uintptr {
+	if user_auth_token == nil {
+		return 0
+	}
+	return uintptr(len(station_prefix)) +
+	       melodica_json_escape_size(user_auth_token, user_auth_token_len) +
+	       uintptr(len(station_suffix)) + decimal_size(sync_time) + 1
+}
+
+@(export)
+melodica_station_list_request :: proc "c" (
+	dst: [^]u8,
+	dst_cap: uintptr,
+	user_auth_token: [^]u8,
+	user_auth_token_len: uintptr,
+	sync_time: uintptr,
+) -> uintptr {
+	required := melodica_station_list_request_size(user_auth_token, user_auth_token_len, sync_time)
+	if dst == nil || dst_cap < required || user_auth_token == nil {
+		return required
+	}
+
+	out: uintptr = 0
+	for i in 0..<len(station_prefix) {
+		dst[out] = station_prefix[i]
+		out += 1
+	}
+	for i in 0..<user_auth_token_len {
+		c := user_auth_token[i]
+		switch c {
+		case '"':
+			dst[out + 0] = '\\'; dst[out + 1] = '"'; out += 2
+		case '\\':
+			dst[out + 0] = '\\'; dst[out + 1] = '\\'; out += 2
+		case '\b':
+			dst[out + 0] = '\\'; dst[out + 1] = 'b'; out += 2
+		case '\f':
+			dst[out + 0] = '\\'; dst[out + 1] = 'f'; out += 2
+		case '\n':
+			dst[out + 0] = '\\'; dst[out + 1] = 'n'; out += 2
+		case '\r':
+			dst[out + 0] = '\\'; dst[out + 1] = 'r'; out += 2
+		case '\t':
+			dst[out + 0] = '\\'; dst[out + 1] = 't'; out += 2
+		case:
+			if c < 0x20 {
+				dst[out + 0] = '\\'; dst[out + 1] = 'u'
+				dst[out + 2] = '0'; dst[out + 3] = '0'
+				dst[out + 4] = hex_digit(c >> 4); dst[out + 5] = hex_digit(c & 0x0f)
+				out += 6
+			} else {
+				dst[out] = c; out += 1
+			}
+		}
+	}
+	for i in 0..<len(station_suffix) {
+		dst[out] = station_suffix[i]
+		out += 1
+	}
+	out = write_decimal(dst, out, sync_time)
+	dst[out] = '}'
 	return required
 }

@@ -10,13 +10,13 @@ extern "C" {
 
 #define MELODICA_ABI_VERSION 1u
 #define MELODICA_VERSION_MAJOR 0u
-#define MELODICA_VERSION_MINOR 1u
+#define MELODICA_VERSION_MINOR 2u
 #define MELODICA_VERSION_PATCH 0u
 
 /*
  * Shared ABI for every implementation lane.
  *
- * The encode functions are allocation-free and binary-safe. They return the
+ * All serializers are allocation-free and binary-safe. They return the
  * number of bytes required, excluding a NUL terminator. If dst is NULL or
  * dst_cap is smaller than the required size, they perform no writes.
  *
@@ -41,7 +41,24 @@ size_t melodica_json_escape(
     size_t src_len
 );
 
+size_t melodica_station_list_request_size(
+    const uint8_t *user_auth_token,
+    size_t user_auth_token_len,
+    uintptr_t sync_time
+);
+size_t melodica_station_list_request(
+    char *dst,
+    size_t dst_cap,
+    const uint8_t *user_auth_token,
+    size_t user_auth_token_len,
+    uintptr_t sync_time
+);
+
 #ifdef MELODICA_IMPLEMENTATION
+
+static const char melodica__station_prefix[] =
+    "{\"returnAllStations\":true,\"userAuthToken\":\"";
+static const char melodica__station_suffix[] = "\",\"syncTime\":";
 
 static int melodica__is_unreserved(const uint8_t c) {
     return (c >= (uint8_t)'A' && c <= (uint8_t)'Z') ||
@@ -64,6 +81,16 @@ static size_t melodica__json_extra(const uint8_t c) {
         default:
             return c < 0x20u ? 5u : 0u;
     }
+}
+
+static size_t melodica__decimal_size(const uintptr_t value) {
+    return value < 10u ? 1u : 1u + melodica__decimal_size(value / 10u);
+}
+
+static size_t melodica__write_decimal(char *dst, size_t out, const uintptr_t value) {
+    if (value >= 10u) out = melodica__write_decimal(dst, out, value / 10u);
+    dst[out++] = (char)('0' + (int)(value % 10u));
+    return out;
 }
 
 uint32_t melodica_abi_version(void) {
@@ -133,6 +160,36 @@ size_t melodica_json_escape(char *dst, const size_t dst_cap,
                 break;
         }
     }
+    return required;
+}
+
+size_t melodica_station_list_request_size(const uint8_t *user_auth_token,
+        const size_t user_auth_token_len, const uintptr_t sync_time) {
+    if (user_auth_token == NULL) return 0u;
+    return (sizeof(melodica__station_prefix) - 1u) +
+        melodica_json_escape_size(user_auth_token, user_auth_token_len) +
+        (sizeof(melodica__station_suffix) - 1u) +
+        melodica__decimal_size(sync_time) + 1u;
+}
+
+size_t melodica_station_list_request(char *dst, const size_t dst_cap,
+        const uint8_t *user_auth_token, const size_t user_auth_token_len,
+        const uintptr_t sync_time) {
+    const size_t required = melodica_station_list_request_size(
+        user_auth_token, user_auth_token_len, sync_time);
+    if (dst == NULL || dst_cap < required || user_auth_token == NULL) return required;
+
+    size_t out = 0u;
+    for (size_t i = 0u; i < sizeof(melodica__station_prefix) - 1u; ++i) {
+        dst[out++] = melodica__station_prefix[i];
+    }
+    out += melodica_json_escape(dst + out, dst_cap - out,
+        user_auth_token, user_auth_token_len);
+    for (size_t i = 0u; i < sizeof(melodica__station_suffix) - 1u; ++i) {
+        dst[out++] = melodica__station_suffix[i];
+    }
+    out = melodica__write_decimal(dst, out, sync_time);
+    dst[out++] = '}';
     return required;
 }
 
