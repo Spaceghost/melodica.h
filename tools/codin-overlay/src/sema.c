@@ -59,20 +59,15 @@ CType sema_procedure_result(const ProcedureExpression *procedure) {
 }
 
 Bool sema_declaration_is_exported(const DeclarationStatement *declaration) {
-	const Size n_attributes = array_size(declaration->attributes);
-	for (Size i = 0; i < n_attributes; i++) {
-		const Field *field = declaration->attributes[i];
-		if (field->name && string_compare(field->name->contents, SCLIT("export"))) {
-			return true;
-		}
-	}
-
-	/* Keep the ABI usable even if this old Codin parser drops attributes. */
-	if (array_size(declaration->names) == 1 &&
-	    string_starts_with(declaration->names[0]->contents, SCLIT("melodica_"))) {
-		return true;
-	}
-	return false;
+	/*
+	 * Codin's old parser leaves DeclarationStatement.attributes uninitialized
+	 * for declarations without a parser-owned attribute array. Do not inspect
+	 * it in the C99 bring-up subset. Our public ABI is intentionally namespaced,
+	 * so linkage is derived from the stable melodica_ prefix until attribute
+	 * ownership is repaired in the upstream fork.
+	 */
+	return array_size(declaration->names) == 1 &&
+	       string_starts_with(declaration->names[0]->contents, SCLIT("melodica_"));
 }
 
 static Bool add_symbol(SemSymbol *symbols, Size *count, String name, CType type,
