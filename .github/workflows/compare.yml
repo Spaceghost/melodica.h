@@ -87,3 +87,26 @@ jobs:
           printf '%-28s %12s\n' codin-c99-gcc "$(stat -c %s build/codin/melodica.gcc.o)"
           printf '%-28s %12s\n' codin-c99-clang "$(stat -c %s build/codin/melodica.clang.o)"
           printf '%-28s %12s\n' codin-c99-source "$(stat -c %s build/codin/melodica.c)"
+
+  pianobar-source-compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pianobar build headers
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libao-dev libcurl4-openssl-dev libgcrypt20-dev libjson-c-dev \
+            libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev
+
+      - name: Compile real pianobar application sources against melodica piano.h
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone --depth=1 https://github.com/PromyLOPh/pianobar.git "$RUNNER_TEMP/pianobar"
+          make -C "$RUNNER_TEMP/pianobar" \
+            LIBPIANO_INCLUDE="$GITHUB_WORKSPACE/include" \
+            CFLAGS='-O2 -DNDEBUG -Wall -Wextra -Werror' \
+            src/main.o src/debug.o src/settings.o src/terminal.o \
+            src/ui_act.o src/ui.o src/ui_readline.o src/ui_dispatch.o
