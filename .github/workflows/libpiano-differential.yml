@@ -19,7 +19,8 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            libcurl4-openssl-dev libgcrypt20-dev libjson-c-dev
+            libcurl4-openssl-dev libgcrypt20-dev libjson-c-dev \
+            libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libao-dev
 
       - name: Build melodica libpiano
         run: make libpiano
