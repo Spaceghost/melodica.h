@@ -7,6 +7,7 @@ static CType ctype_from_name(String name) {
 	if (string_compare(name, SCLIT("u8")))      return CTYPE_U8;
 	if (string_compare(name, SCLIT("u32")))     return CTYPE_U32;
 	if (string_compare(name, SCLIT("uintptr"))) return CTYPE_UINTPTR;
+	if (string_compare(name, SCLIT("string")))  return CTYPE_STRING;
 	return CTYPE_UNKNOWN;
 }
 
@@ -17,13 +18,15 @@ void sema_init(Sema *sema) {
 
 const char *sema_c_type_name(CType type) {
 	switch (type) {
-	case CTYPE_VOID:    return "void";
-	case CTYPE_BOOL:    return "bool";
-	case CTYPE_U8:      return "uint8_t";
-	case CTYPE_U32:     return "uint32_t";
-	case CTYPE_UINTPTR: return "uintptr_t";
-	case CTYPE_U8_PTR:  return "uint8_t *";
-	case CTYPE_UNKNOWN: break;
+	case CTYPE_VOID:     return "void";
+	case CTYPE_BOOL:     return "bool";
+	case CTYPE_U8:       return "uint8_t";
+	case CTYPE_U32:      return "uint32_t";
+	case CTYPE_UINTPTR:  return "uintptr_t";
+	case CTYPE_U8_PTR:   return "uint8_t *";
+	case CTYPE_SLICE_U8: return "codin_slice_u8";
+	case CTYPE_STRING:   return "codin_string";
+	case CTYPE_UNKNOWN:  break;
 	}
 	return NULL;
 }
@@ -46,6 +49,8 @@ CType sema_type_from_ast(const Type *type) {
 		return sema_type_from_ast(RCAST(const PointerType *, type)->type) == CTYPE_U8 ? CTYPE_U8_PTR : CTYPE_UNKNOWN;
 	case TYPE_MULTI_POINTER:
 		return sema_type_from_ast(RCAST(const MultiPointerType *, type)->type) == CTYPE_U8 ? CTYPE_U8_PTR : CTYPE_UNKNOWN;
+	case TYPE_SLICE:
+		return sema_type_from_ast(RCAST(const SliceType *, type)->type) == CTYPE_U8 ? CTYPE_SLICE_U8 : CTYPE_UNKNOWN;
 	default:
 		return CTYPE_UNKNOWN;
 	}
@@ -135,6 +140,7 @@ CType sema_infer_expression(const Sema *sema, const Expression *expression) {
 		const CallExpression *call = RCAST(const CallExpression *, expression);
 		if (call->operand->kind == EXPRESSION_IDENTIFIER) {
 			const String name = RCAST(const IdentifierExpression *, call->operand)->identifier->contents;
+			if (string_compare(name, SCLIT("len"))) return CTYPE_UINTPTR;
 			CType builtin = ctype_from_name(name);
 			if (builtin != CTYPE_UNKNOWN) return builtin;
 			const SemSymbol *symbol = sema_lookup(sema, name);
@@ -144,7 +150,14 @@ CType sema_infer_expression(const Sema *sema, const Expression *expression) {
 	}
 	case EXPRESSION_INDEX: {
 		const IndexExpression *index = RCAST(const IndexExpression *, expression);
-		return sema_infer_expression(sema, index->operand) == CTYPE_U8_PTR ? CTYPE_U8 : CTYPE_UNKNOWN;
+		CType operand = sema_infer_expression(sema, index->operand);
+		return operand == CTYPE_U8_PTR || operand == CTYPE_SLICE_U8 || operand == CTYPE_STRING
+		     ? CTYPE_U8 : CTYPE_UNKNOWN;
+	}
+	case EXPRESSION_SLICE: {
+		const SliceExpression *slice = RCAST(const SliceExpression *, expression);
+		return sema_infer_expression(sema, slice->operand) == CTYPE_U8_PTR
+		     ? CTYPE_SLICE_U8 : CTYPE_UNKNOWN;
 	}
 	case EXPRESSION_TUPLE: {
 		const TupleExpression *tuple = RCAST(const TupleExpression *, expression);
@@ -164,8 +177,10 @@ CType sema_infer_expression(const Sema *sema, const Expression *expression) {
 		}
 		}
 	}
-	case EXPRESSION_LITERAL:
-		return CTYPE_UNKNOWN;
+	case EXPRESSION_LITERAL: {
+		const LiteralExpression *literal = RCAST(const LiteralExpression *, expression);
+		return literal->kind == LITERAL_STRING ? CTYPE_STRING : CTYPE_UNKNOWN;
+	}
 	default:
 		return CTYPE_UNKNOWN;
 	}
