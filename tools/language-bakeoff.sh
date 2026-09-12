@@ -47,14 +47,23 @@ GAMBIT_SO=$(readlink -f "$GAMBIT_SO")
 
 gsc -o "$OUT/gambit.c" -c lab/gambit/find_string.scm
 gsc -o "$OUT/gambitlink.c" -link "$OUT/gambit.c"
-GAMBIT_LINKER=$(grep -oE '___LNK_[A-Za-z0-9_]+__' "$OUT/gambitlink.c" | sort -u | head -n1)
-test -n "$GAMBIT_LINKER"
-echo "Gambit library linker: $GAMBIT_LINKER"
 
 "$ZIG" cc -std=c99 -O1 -DNDEBUG -D___SINGLE_HOST -D___LIBRARY -D_POSIX_C_SOURCE=200809L \
   -I"$GAMBIT_INC" -c "$OUT/gambit.c" -o "$OUT/gambit.o"
 "$ZIG" cc -std=c99 -O1 -DNDEBUG -D___SINGLE_HOST -D___LIBRARY -D_POSIX_C_SOURCE=200809L \
   -I"$GAMBIT_INC" -c "$OUT/gambitlink.c" -o "$OUT/gambitlink.o"
+
+# Ask the compiled linker object what symbol Gambit actually exported instead
+# of encoding a version-dependent gsc naming convention in this harness.
+GAMBIT_LINKER=$(nm --defined-only "$OUT/gambitlink.o" | \
+  awk '$3 ~ /^___LNK_.*__$/ {print $3; exit}')
+if [[ -z "$GAMBIT_LINKER" ]]; then
+  echo "Gambit linker object did not expose the expected library linker; symbols:" >&2
+  nm --defined-only "$OUT/gambitlink.o" >&2
+  exit 1
+fi
+echo "Gambit library linker: $GAMBIT_LINKER"
+
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -D_POSIX_C_SOURCE=200809L \
   -DSCHEME_LIBRARY_LINKER="$GAMBIT_LINKER" -Ilab -I"$GAMBIT_INC" \
   -c lab/gambit/shim.c -o "$OUT/gambit-shim.o"
