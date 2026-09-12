@@ -52,16 +52,12 @@ jobs:
               echo "=== generic compiler policy ==="
               grep -E "(^CMAKE_(C|CXX)_FLAGS|march|mtune|BUILDGENERIC|SAC4C)" \
                 /tmp/sac2c-generic/CMakeCache.txt | head -120 || true
-              echo "=== generic build targets ==="
-              cmake --build /tmp/sac2c-generic --target help | sed -n "1,260p"
 
-              SAC2C_TARGET=$(cmake --build /tmp/sac2c-generic --target help | \
-                sed -n "s/^\([^: ]*sac2c_[A-Za-z0-9_]*\):.*$/\1/p" | head -n1)
-              SAC4C_TARGET=$(cmake --build /tmp/sac2c-generic --target help | \
-                sed -n "s/^\([^: ]*sac4c_[A-Za-z0-9_]*\):.*$/\1/p" | head -n1)
-              test -n "$SAC2C_TARGET"
-              test -n "$SAC4C_TARGET"
-              cmake --build /tmp/sac2c-generic -j2 --target "$SAC2C_TARGET" "$SAC4C_TARGET"
+              # These are ordinary CMake targets; the built executables carry
+              # the PHM suffix (_p). Build the sequential runtime too because
+              # the module/wrapper step links against it.
+              cmake --build /tmp/sac2c-generic -j2 \
+                --target sac2c sac4c libsac-seq
 
               SAC2C_BIN=$(find /tmp/sac2c-generic -type f -name "sac2c_*" -perm -111 | head -n1)
               SAC4C_BIN=$(find /tmp/sac2c-generic -type f -name "sac4c_*" -perm -111 | head -n1)
