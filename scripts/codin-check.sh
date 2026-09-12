@@ -50,4 +50,18 @@ gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
     -I"$ROOT/include" "$ROOT/bench/bench.c" "$OUTDIR/melodica.c" \
     -o "$OUTDIR/bench"
 
-printf '%s\n' "codin release C99 emission + GCC/Clang + ABI smoke: ok ($CODIN_COMMIT)"
+printf '%s\n' '=== codin C99: struct fixture ==='
+if command -v odin >/dev/null 2>&1; then
+    odin check "$ROOT/tests/codin/structs"
+fi
+"$CODIN_DIR/codin" emit-c "$ROOT/tests/codin/structs" -o "$OUTDIR/structs.c"
+gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
+    -c "$OUTDIR/structs.c" -o "$OUTDIR/structs.gcc.o"
+clang -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
+    -c "$OUTDIR/structs.c" -o "$OUTDIR/structs.clang.o"
+gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
+    "$ROOT/tests/codin/structs_smoke.c" "$OUTDIR/structs.c" \
+    -o "$OUTDIR/structs-smoke"
+"$OUTDIR/structs-smoke"
+
+printf '%s\n' "codin release C99 emission + GCC/Clang + ABI/struct smoke: ok ($CODIN_COMMIT)"
