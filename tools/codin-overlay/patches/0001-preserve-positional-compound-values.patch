@@ -1,7 +1,7 @@
 diff --git a/src/parser.c b/src/parser.c
 --- a/src/parser.c
 +++ b/src/parser.c
-@@ -1904,8 +1904,8 @@ static CompoundLiteralExpression *parse_compound_literal_expression(Parser *par
+@@ -1904,7 +1904,7 @@ static CompoundLiteralExpression *parse_compound_literal_expression(Parser *par
  			Field *const field = tree_new_field(parser->tree, 0, name, value, STRING_NIL, CAST(FieldFlag, 0));
  			array_push(fields, field);
  		} else {
