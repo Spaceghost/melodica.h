@@ -1,0 +1,51 @@
+name: SaC probation
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'lab/sac/**'
+      - '.github/workflows/sac-probation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: melodica-sac-probation
+  cancel-in-progress: true
+
+jobs:
+  build-wrapper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile SaC module and expose generated C ABI
+        shell: bash
+        run: |
+          set -euxo pipefail
+          docker pull sacbase/sac-jupyter-notebook:latest
+          docker run --rm --user 0:0 \
+            -v "$GITHUB_WORKSPACE:/work" -w /work \
+            --entrypoint bash sacbase/sac-jupyter-notebook:latest -lc '
+              set -euxo pipefail
+              sac2c -V
+              sac4c -V
+              rm -rf lab/sac/cmake-common build/sac
+              git clone --depth=1 https://github.com/SacBase/cmake-common.git lab/sac/cmake-common
+              cmake -S lab/sac -B build/sac \
+                -DTARGET=seq \
+                -DSAC2C_EXEC="$(command -v sac2c)"
+              cmake --build build/sac --verbose
+              echo "=== GENERATED HEADER ==="
+              cat build/sac/sacwrapper-FindString.h
+              echo "=== OUTPUT TREE ==="
+              find build/sac -maxdepth 6 -type f -printf "%s %p\n" | sort -n
+            '
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sac-probation
+          path: build/sac/
