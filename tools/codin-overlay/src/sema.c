@@ -71,18 +71,20 @@ Bool sema_declaration_is_exported(const DeclarationStatement *declaration) {
 }
 
 static Bool add_symbol(SemSymbol *symbols, Size *count, String name, CType type,
-                       const ProcedureExpression *procedure, Bool exported) {
+                       const ProcedureExpression *procedure, const Type *named_type,
+                       Bool exported) {
 	if (*count >= 256) return false;
 	symbols[*count].name = name;
 	symbols[*count].type = type;
 	symbols[*count].procedure = procedure;
+	symbols[*count].named_type = named_type;
 	symbols[*count].exported = exported;
 	(*count)++;
 	return true;
 }
 
 Bool sema_add_local(Sema *sema, String name, CType type) {
-	return add_symbol(sema->locals, &sema->local_count, name, type, NULL, false);
+	return add_symbol(sema->locals, &sema->local_count, name, type, NULL, NULL, false);
 }
 
 const SemSymbol *sema_lookup(const Sema *sema, String name) {
@@ -93,6 +95,11 @@ const SemSymbol *sema_lookup(const Sema *sema, String name) {
 		if (string_compare(sema->globals[i - 1].name, name)) return &sema->globals[i - 1];
 	}
 	return NULL;
+}
+
+const Type *sema_lookup_named_type(const Sema *sema, String name) {
+	const SemSymbol *symbol = sema_lookup(sema, name);
+	return symbol ? symbol->named_type : NULL;
 }
 
 static CType infer_identifier(const Sema *sema, const IdentifierExpression *expression) {
@@ -113,6 +120,17 @@ CType sema_infer_expression(const Sema *sema, const Expression *expression) {
 		return sema_type_from_ast(RCAST(const TypeExpression *, expression)->type);
 	case EXPRESSION_CAST:
 		return sema_type_from_ast(RCAST(const CastExpression *, expression)->type);
+	case EXPRESSION_SELECTOR: {
+		const SelectorExpression *selector = RCAST(const SelectorExpression *, expression);
+		if (selector->operand && selector->operand->kind == EXPRESSION_IDENTIFIER) {
+			const Identifier *identifier = RCAST(const IdentifierExpression *, selector->operand)->identifier;
+			const Type *named_type = sema_lookup_named_type(sema, identifier->contents);
+			if (named_type && named_type->kind == TYPE_ENUM) {
+				return sema_type_from_ast(RCAST(const EnumType *, named_type)->type);
+			}
+		}
+		return CTYPE_UNKNOWN;
+	}
 	case EXPRESSION_CALL: {
 		const CallExpression *call = RCAST(const CallExpression *, expression);
 		if (call->operand->kind == EXPRESSION_IDENTIFIER) {
@@ -167,17 +185,20 @@ Bool sema_collect_globals(Sema *sema, const BuildContext *build) {
 
 			const Expression *value = declaration->values->expressions[0];
 			const ProcedureExpression *procedure = NULL;
+			const Type *named_type = NULL;
 			CType type = CTYPE_UNKNOWN;
 			if (value->kind == EXPRESSION_PROCEDURE) {
 				procedure = RCAST(const ProcedureExpression *, value);
 				type = sema_procedure_result(procedure);
+			} else if (value->kind == EXPRESSION_TYPE) {
+				named_type = RCAST(const TypeExpression *, value)->type;
 			} else {
 				type = declaration->type ? sema_type_from_ast(declaration->type)
 				                         : sema_infer_expression(sema, value);
 			}
 
 			if (!add_symbol(sema->globals, &sema->global_count,
-			                declaration->names[0]->contents, type, procedure,
+			                declaration->names[0]->contents, type, procedure, named_type,
 			                sema_declaration_is_exported(declaration))) return false;
 		}
 	}
