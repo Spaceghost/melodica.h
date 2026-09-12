@@ -12,6 +12,8 @@ typedef enum CType {
 	CTYPE_U32,
 	CTYPE_UINTPTR,
 	CTYPE_U8_PTR,
+	CTYPE_SLICE_U8,
+	CTYPE_STRING,
 } CType;
 
 typedef struct SemSymbol {
