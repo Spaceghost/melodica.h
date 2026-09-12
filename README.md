@@ -1,6 +1,6 @@
 # melodica.h
 
-A small, allocation-free C99 protocol library for Pandora-style JSON/REST clients, authored in Nelua and shipped as one generated header.
+A small, allocation-free C99 protocol library for Pandora-style JSON/REST clients, authored primarily in Nelua and shipped as one generated header.
 
 ```c
 #define MELODICA_IMPLEMENTATION
@@ -34,25 +34,31 @@ Initialize a `size_t cursor = 0` and call `melodica_track_next` or `melodica_sta
 
 The current request surface includes login, stations, playlist fragments, thumbs feedback, tired-song, narrative/explanation, track-started reporting, playback-paused/sync, station details, and station feedback. All body writers escape caller strings and write into caller-provided buffers.
 
-## C99 emitter league
+## Core language league
 
-Language experiments have one admission rule: **the compiler implementation must emit C source that is accepted again in C99 mode**. Merely having a C ABI does not count.
-
-The active common-ABI competitors are:
+The implementation lab is broader than the release artifact. These are permanent first-class competitors behind the same hot-path ABI:
 
 - C99
-- Nelua
-- Zig through its C backend (`-ofmt=c`)
+- Nelua -> C99
+- Zig native
+- Zig through its C backend
+- Odin native
 
-The generated C from every challenger is compiled again with `-std=c99` before it may enter the benchmark. Native-only Odin, ordinary Rust, Go, Swift, Objective-C, and C++ consumers are intentionally not part of this project. A surface language may return through a different implementation that emits C: for example Spinel for Ruby or `rustc_codegen_c` for Rust.
+Nim currently competes through its C backend too. Every candidate passes the same hostile JSON conformance cases and is timed by the same interleaved C harness.
 
-The expansion pool intentionally favors strange source-to-C systems: Spinel, Nim, Scheme-to-C compilers, V, Vala, ATS/Postiats, Mercury, Idris2 RefC, Koka, Pallene, Cython, and older research compilers when they can still be made reproducible.
+A native Zig or Odin win is useful even though the released artifact remains C99: it tells us which algorithm/codegen the release implementations need to catch. We do not disqualify good code merely because it arrived wearing a different compiler.
+
+## C-emitter zoo
+
+A separate census exercises stranger source-to-C implementations: Spinel Ruby, CHICKEN and Gambit Scheme, Nim, V, Vala, ATS/Postiats, Cython, and more. A compiler only gets called a C emitter after CI generates source and recompiles that source in C99 mode.
+
+Passing that census does not imply release eligibility. Runtime-heavy emitters are still useful experimental controls; the shipped header remains dependency-free.
 
 See [`C99_EMITTERS.md`](C99_EMITTERS.md) and [`lab/`](lab/README.md).
 
-## The bake-off
+## The release bake-off
 
-Four implementations coexist on `master` behind one ABI:
+Four Nelua-authored release implementations coexist on `master` behind one ABI:
 
 - `scan`: structural correctness baseline
 - `hash`: structural scanner with FNV-1a key prefiltering
@@ -70,10 +76,10 @@ The winner is recorded in `dist/WINNER`; the measurements that justified it are 
 ./tools/bakeoff.sh
 ```
 
-Consumers need only `dist/melodica.h`; they do not need Nelua or Zig.
+Consumers need only `dist/melodica.h`; they do not need Nelua, Zig, or Odin.
 
 ## Development rule
 
-`master` is the integration branch. Comparative implementations coexist in-tree rather than hiding on feature branches. Generated release commits and C99-emitter/docs-only changes do not recursively wake unrelated bake-offs.
+`master` is the integration branch. Comparative implementations coexist in-tree rather than hiding on feature branches. Generated result commits and emitter/docs-only changes do not recursively wake unrelated bake-offs.
 
 See [`DESIGN.md`](DESIGN.md) for scoring and ABI details.

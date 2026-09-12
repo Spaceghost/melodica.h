@@ -1,10 +1,12 @@
-# C99 examples
+# Examples
 
-This directory is deliberately small now.
+The examples stay intentionally small and focused on the project's core languages.
 
 - `c/` consumes the released single-header library directly as C99.
-- `nelua/` demonstrates the source language used by the release implementation and emits C before being linked.
+- `nelua/` demonstrates the primary C-emitting source language used by the release implementation.
+- `zig/` consumes the same released C ABI from Zig.
+- `odin/` consumes the released C ABI through the thin reusable `bindings/odin` package.
 
-Cross-language FFI examples were removed. This project is not trying to prove that every language can call a C function; it is comparing source languages and compiler implementations that can **produce C99-compatible C**.
+The comparative implementations themselves live under [`../lab/`](../lab/README.md): C, Nelua, Zig (native and C backend), Odin, and selected experimental C emitters compete behind one hot-path ABI.
 
-Those experiments live in [`../lab/`](../lab/README.md), with the admission rule documented in [`../C99_EMITTERS.md`](../C99_EMITTERS.md).
+Objective-C and C++ examples are intentionally absent. The point is implementation comparison, not collecting every language capable of saying `extern`.

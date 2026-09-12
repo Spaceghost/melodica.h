@@ -1,4 +1,4 @@
-name: C99 source-language bake-off
+name: core language bake-off
 
 on:
   push:
@@ -17,7 +17,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: melodica-c99-language-bakeoff
+  group: melodica-core-language-bakeoff
   cancel-in-progress: true
 
 jobs:
@@ -31,6 +31,10 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
+      - uses: laytan/setup-odin@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          release: latest
       - name: Install Nim C emitter
         run: |
           sudo apt-get update
@@ -40,7 +44,7 @@ jobs:
         with:
           path: .cache/nelua-lang
           key: melodica-nelua-${{ runner.os }}-${{ hashFiles('tools/bootstrap-nelua.sh') }}
-      - name: Compare C99 emitters
+      - name: Compare core implementations
         run: ./tools/language-bakeoff.sh
       - name: Publish lab result
         shell: bash
@@ -49,8 +53,8 @@ jobs:
             exit 0
           fi
           winner=$(cat lab/WINNER)
-          git config user.name "melodica C99 emitter bake-off"
+          git config user.name "melodica core language bake-off"
           git config user.email "actions@users.noreply.github.com"
           git add lab/BENCHMARK.tsv lab/WINNER
-          git commit -m "c99-emitter-bakeoff: ${winner} wins string lookup"
+          git commit -m "core-bakeoff: ${winner} wins string lookup"
           git push origin HEAD:master
