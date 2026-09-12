@@ -9,7 +9,7 @@ if [[ ! -x "$CACHE/codin" ]] || [[ ! -f "$CACHE/.melodica-rev" ]] || [[ "$(cat "
   rm -rf "$CACHE"
   git clone -q https://github.com/graphitemaster/codin.git "$CACHE"
   git -C "$CACHE" checkout -q "$REV"
-  make -C "$CACHE" -j2
+  make --no-print-directory -s -C "$CACHE" -j2 >&2
   printf '%s\n' "$REV" > "$CACHE/.melodica-rev"
 fi
 
