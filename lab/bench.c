@@ -4,6 +4,10 @@
 #include <stdio.h>
 #include <time.h>
 
+#ifndef LAB_LOOPS
+#define LAB_LOOPS 300000u
+#endif
+
 static const char payload[] =
 "{\"tracks\":[{\"userSeed\":\"G1473\",\"genre\":[\"Rock\"],"
 "\"monthlyListening\":0,\"listeningTimestamp\":\"1512414066099\","
@@ -25,7 +29,7 @@ static const char payload[] =
 static volatile uint64_t sink;
 
 int main(void) {
-    const size_t loops = 300000;
+    const size_t loops = (size_t)LAB_LOOPS;
     size_t off = 0, len = 0;
     clock_t begin = clock();
     for (size_t i = 0; i < loops; ++i) {
