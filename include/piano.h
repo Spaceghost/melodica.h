@@ -2,15 +2,23 @@
  * Source-compatible libpiano public API for melodica.h.
  *
  * The original libpiano API is MIT licensed. This compatibility header keeps
- * the public names, layouts and numeric enum values while deliberately
- * removing the compile-time libgcrypt dependency. Cipher handles are opaque
- * pointer-sized values in this implementation.
+ * the public names, layouts and numeric enum values without requiring
+ * libgcrypt. Define MELODICA_PIANO_LEGACY_GCRYPT when compiling an unchanged
+ * historical pianobar application that relied on piano.h transitively
+ * exposing gcrypt declarations.
  */
 #ifndef MELODICA_PIANO_H_INCLUDED
 #define MELODICA_PIANO_H_INCLUDED
 
 #include <stdbool.h>
 #include <stddef.h>
+
+#if defined(MELODICA_PIANO_LEGACY_GCRYPT)
+#  if defined(__FreeBSD__)
+#    define _GCRYPT_IN_LIBGCRYPT
+#  endif
+#  include <gcrypt.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -99,7 +107,11 @@ typedef struct PianoGenreCategory {
     PianoGenre_t *genres;
 } PianoGenreCategory_t;
 
+#if defined(MELODICA_PIANO_LEGACY_GCRYPT)
+typedef gcry_cipher_hd_t PianoCipherHandle_t;
+#else
 typedef void *PianoCipherHandle_t;
+#endif
 
 typedef struct PianoPartner {
     PianoCipherHandle_t in, out;
