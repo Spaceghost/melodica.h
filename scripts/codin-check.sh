@@ -52,7 +52,7 @@ gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
 
 printf '%s\n' '=== codin C99: struct fixture ==='
 if command -v odin >/dev/null 2>&1; then
-    odin check "$ROOT/tests/codin/structs"
+    odin check "$ROOT/tests/codin/structs" -no-entry-point
 fi
 "$CODIN_DIR/codin" emit-c "$ROOT/tests/codin/structs" -o "$OUTDIR/structs.c"
 gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
