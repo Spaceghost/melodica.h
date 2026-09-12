@@ -7,7 +7,11 @@ NELUA=${NELUA:-$(./tools/bootstrap-nelua.sh)}
 OUT=build/language-bakeoff
 mkdir -p "$OUT"
 
-# C99 is both the baseline and the final gate for every emitted translation unit.
+# Core language league. The public release is still C99, but native Zig and
+# Odin are intentionally allowed to compete here. If a native implementation
+# wins, its algorithm becomes a target for the C99 release implementations.
+
+# C99 baseline.
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -Wall -Wextra -Werror -pedantic -Ilab \
   -c lab/c/find_string.c -o "$OUT/c.o"
 
@@ -16,33 +20,47 @@ NELUA_INIT="require('nelua.compactc').enable{static_asserts=false,export_declara
   "$NELUA" -r -c -o "$OUT/nelua.c" lab/nelua/find_string.nelua
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab -c "$OUT/nelua.c" -o "$OUT/nelua.o"
 
-# Zig is admitted only through its C backend. Recompile the generated source in
-# C99 mode with only the compiler distribution's generated-C support header.
+# Zig, C backend. This remains useful because it tells us what Zig contributes
+# when C is the actual deliverable.
 "$ZIG" build-obj lab/zig/find_string.zig -OReleaseFast -ofmt=c \
-  -femit-bin="$OUT/zig.c"
+  -femit-bin="$OUT/zig-c.c"
 ZIG_EXE=$(readlink -f "$(command -v "$ZIG")")
 ZIG_LIB_DIR="$(dirname "$ZIG_EXE")/lib"
 test -f "$ZIG_LIB_DIR/zig.h"
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab -I"$ZIG_LIB_DIR" \
-  -c "$OUT/zig.c" -o "$OUT/zig.o"
+  -c "$OUT/zig-c.c" -o "$OUT/zig-c.o"
 
-# Nim -> C -> static C library. --noMain is essential: the benchmark harness
-# owns main(), while NimMain() remains available for the C99 startup shim.
+# Zig, native backend. Same source and ABI, different backend.
+"$ZIG" build-obj lab/zig/find_string.zig -OReleaseFast \
+  -femit-bin="$OUT/zig-native.o"
+
+# Odin, native backend. Odin is a permanent core challenger even though it does
+# not currently emit C. The release remains a C99 header; the league is where
+# algorithms compete without pretending the output format is the language.
+odin build lab/odin -build-mode:lib -o:speed -out:"$OUT/odin.a"
+
+# Nim -> C -> static library. --noMain keeps the benchmark harness in charge of
+# main(), while NimMain() remains available to the tiny C startup shim.
 mkdir -p "$OUT/nimcache"
 nim c --app:staticLib --noMain:on --mm:arc -d:danger --passC:-std=c99 \
   --nimcache:"$OUT/nimcache" -o:"$OUT/libnimlab.a" lab/nim/find_string.nim
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab -c lab/nim/init.c -o "$OUT/nim-init.o"
 
-names=(c nelua zig nim)
+names=(c nelua zig-c zig-native odin nim)
 for name in "${names[@]}"; do
-  if [[ "$name" == nim ]]; then
-    inputs=("$OUT/nim-init.o" "$OUT/libnimlab.a")
-  else
-    inputs=("$OUT/$name.o")
-  fi
+  case "$name" in
+    c)          inputs=("$OUT/c.o") ;;
+    nelua)      inputs=("$OUT/nelua.o") ;;
+    zig-c)      inputs=("$OUT/zig-c.o") ;;
+    zig-native) inputs=("$OUT/zig-native.o") ;;
+    odin)       inputs=("$OUT/odin.a") ;;
+    nim)        inputs=("$OUT/nim-init.o" "$OUT/libnimlab.a") ;;
+  esac
+
   "$ZIG" cc -std=c99 -O2 -Ilab lab/conformance.c "${inputs[@]}" \
     -o "$OUT/test-$name" -lm -ldl -pthread
   "$OUT/test-$name" >/dev/null
+
   "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab lab/bench.c "${inputs[@]}" \
     -o "$OUT/bench-$name" -lm -ldl -pthread
   : > "$OUT/times-$name.txt"
@@ -58,29 +76,54 @@ for ((round=0; round<7; round++)); do
   done
 done
 
-printf 'language\tns_per_lookup\tlinked_bytes\temitted_c_bytes\n' > "$OUT/results.tsv"
+printf 'language\tbackend\tns_per_lookup\tlinked_bytes\temitted_c_bytes\trelease_direct\n' > "$OUT/results.tsv"
 for name in "${names[@]}"; do
   ns=$(sort -n "$OUT/times-$name.txt" | sed -n '4p')
   case "$name" in
     c)
+      backend=c99
       linked_bytes=$(wc -c < "$OUT/c.o" | tr -d ' ')
       emitted_c_bytes=$(wc -c < lab/c/find_string.c | tr -d ' ')
+      direct=yes
       ;;
-    nelua|zig)
-      linked_bytes=$(wc -c < "$OUT/$name.o" | tr -d ' ')
-      emitted_c_bytes=$(wc -c < "$OUT/$name.c" | tr -d ' ')
+    nelua)
+      backend=c99-emitter
+      linked_bytes=$(wc -c < "$OUT/nelua.o" | tr -d ' ')
+      emitted_c_bytes=$(wc -c < "$OUT/nelua.c" | tr -d ' ')
+      direct=yes
+      ;;
+    zig-c)
+      backend=c99-emitter
+      linked_bytes=$(wc -c < "$OUT/zig-c.o" | tr -d ' ')
+      emitted_c_bytes=$(wc -c < "$OUT/zig-c.c" | tr -d ' ')
+      direct=no
+      ;;
+    zig-native)
+      backend=native
+      linked_bytes=$(wc -c < "$OUT/zig-native.o" | tr -d ' ')
+      emitted_c_bytes=0
+      direct=no
+      ;;
+    odin)
+      backend=native
+      linked_bytes=$(wc -c < "$OUT/odin.a" | tr -d ' ')
+      emitted_c_bytes=0
+      direct=no
       ;;
     nim)
+      backend=c-emitter
       linked_bytes=$(( $(wc -c < "$OUT/nim-init.o") + $(wc -c < "$OUT/libnimlab.a") ))
       emitted_c_bytes=$(find "$OUT/nimcache" -type f -name '*.c' -exec wc -c {} + | \
         awk '$2 != "total" {s += $1} END {print s + 0}')
+      direct=no
       ;;
   esac
-  printf '%s\t%s\t%s\t%s\n' "$name" "$ns" "$linked_bytes" "$emitted_c_bytes" >> "$OUT/results.tsv"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$name" "$backend" "$ns" "$linked_bytes" "$emitted_c_bytes" "$direct" >> "$OUT/results.tsv"
 done
 
-winner=$(tail -n +2 "$OUT/results.tsv" | sort -t $'\t' -k2,2n | head -n1 | cut -f1)
+winner=$(tail -n +2 "$OUT/results.tsv" | sort -t $'\t' -k3,3n | head -n1 | cut -f1)
 cp "$OUT/results.tsv" lab/BENCHMARK.tsv
 printf '%s\n' "$winner" > lab/WINNER
 cat "$OUT/results.tsv"
-echo "C99 emitter winner: $winner"
+echo "core language winner: $winner"

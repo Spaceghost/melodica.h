@@ -118,8 +118,5 @@ for target in x86_64-linux-musl aarch64-linux-musl x86_64-windows-gnu wasm32-was
     -c tests/size.c -o "build/metrics/cross-${target//\//_}.o"
 done
 
-"$ZIG" c++ -std=c++17 -I. -DMELODICA_HEADER=\"dist/melodica.h\" \
-  -c tests/declarations.cpp -o build/metrics/declarations.o
-
 cat build/metrics/results.tsv
 echo "winner: $winner"

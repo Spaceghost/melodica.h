@@ -1,64 +1,77 @@
-# C99 emitter league
+# C99 emitter zoo and core language league
 
-`melodica.h` is a C99 artifact. Language experiments are useful only when their **compiler implementation emits C source that survives a fresh C99 compile**.
+`melodica.h` is a C99 release artifact, but the implementation lab is intentionally broader. Good algorithms do not become less interesting because their first implementation came from Odin or native Zig.
 
-## Admission rule
+## Two different questions
 
-A challenger must have a real source-to-C path. The generated translation unit is compiled again with `-std=c99`; a native-only backend does not qualify merely because it exposes a C ABI.
+The project keeps these questions separate:
 
-This rule is about the compiler implementation, not the surface language:
+1. **Which implementation is best?** The core language league may use native or C-emitting backends.
+2. **What can ship as `melodica.h`?** The release must still become a small dependency-free C99 single header.
 
-- Rust through ordinary `rustc` is out; a C-emitting backend such as `rustc_codegen_c` is eligible.
-- Ruby through CRuby/YJIT is out; Matz's Spinel AOT compiler is eligible if its generated C passes the census.
-- Zig is eligible only through `-ofmt=c`, never through a native Zig object.
-- Odin is out until a C-output backend exists.
-- Objective-C and C++ are out because the product is C99, not "things vaguely linkable with C".
+That distinction lets Odin or native Zig win honestly without pretending their binary can be pasted into a header. A native winner becomes a target for the C99-emitting implementations to catch or port.
 
-Feature-test macros and compiler-supplied C support headers are allowed in the census when the emitted translation unit genuinely remains C99. They are measured as dependencies. The shipped release is stricter: one dependency-free C99 header, allocation-free in the hot protocol layer, gated by the full conformance suite.
+## Permanent core competitors
 
-## Active common-ABI competitors
+The common-ABI hot-path league always keeps at least:
 
-These implement the same `lab_find_string` ABI, pass the same malformed-input tests, and are benchmarked through one C harness:
+- C99
+- Nelua -> C99
+- Zig native
+- Zig C backend
+- Odin native
 
-| implementation | ns/lookup | linked bytes | emitted C bytes | status |
-| --- | ---: | ---: | ---: | --- |
-| Nelua | 346 | 12,216 | 4,719 | current winner |
-| Nim C backend | 420 | 46,348 | 92,245 | active; runtime-backed |
-| Zig C backend | 441 | 24,368 | 37,838 | active; uses `zig.h` |
-| handwritten C99 | 583 | 10,992 | 3,029 | baseline |
+Nim is also currently in the common-ABI league through its C backend, with its runtime cost measured rather than hidden.
 
-These figures are the latest committed median-of-seven run in `lab/BENCHMARK.tsv`; CI may update them as runners vary.
+## C-emitter admission
 
-## CI-proven C99 emitters
+The separate emitter census is stricter about its label: a compiler only counts as a C emitter after CI generates source and a C compiler accepts that generated translation unit in `-std=c99` mode. Support headers and normal platform feature macros are allowed; that does not make a runtime-heavy compiler release-eligible.
 
-These have already emitted C in GitHub Actions and had that output accepted by a fresh `-std=c99` compile:
+Compiler implementation matters more than surface language. For example:
+
+- Ruby may enter through Matz's Spinel AOT compiler even though CRuby is not a C emitter.
+- Scheme has several independent C-producing implementations, so CHICKEN and Gambit are tested separately.
+- Zig is tested both natively and through its C backend.
+- Rust can enter the emitter zoo through a C-producing backend such as `rustc_codegen_c`, independently of ordinary `rustc`.
+
+## CI-proven C emitters
+
+The census has already demonstrated C output accepted in C99 mode from:
 
 - Nelua
 - Zig C backend
-- Nim C backend
+- Nim
 - CHICKEN Scheme
 - Gambit Scheme
 - Vala
 - ATS2/Postiats
 - Cython
 
-Passing this census earns the right to attempt the common ABI. It does **not** imply release suitability. Cython, for example, is interesting compiler evidence but hauling CPython into a single-header protocol library would be comic sabotage.
+Spinel Ruby and V are actively probed in CI as their compiler/toolchain builds permit.
 
-## Census in progress
+## Next useful compiler families
 
-- Spinel, Matz's Ruby AOT-to-C compiler. Its first emitted C was valid enough to reach the runtime headers; the current probe supplies the POSIX/GNU feature declarations that runtime expects while retaining `-std=c99`.
-- V, using its documented C output mode followed by an independent C99 compile.
+Candidates worth proving next include:
 
-## Researched next candidates
-
-These have documented C backends and are worth adding after the current census stabilizes:
-
-- Mercury, including its high-level C grade
+- Bigloo Scheme
+- Mercury C backends
 - Idris 2 RefC
-- Koka's direct C backend
-- `rustc_codegen_c` / Rustic for Rust-to-C
-- Pallene, a typed Lua-family compiler whose normal compilation path goes through C
-- Bigloo Scheme and CRUNCH
-- older Scheme-to-C research compilers such as Stalin when reproducible on current runners
+- Koka C backend
+- Pallene (typed Lua -> C)
+- `rustc_codegen_c` / other Rust-to-C implementations
+- CRUNCH and other Scheme-to-C systems
+- older research compilers such as Stalin Scheme when they can still be made reproducible
 
-The point is not to collect language logos. A candidate stays only if current CI proves its actual source-to-C path. Runtime-heavy emitters may still reveal useful code-generation or algorithmic ideas, but only candidates that can satisfy the release ABI without dragging their runtime into `melodica.h` can become release material.
+## Release eligibility
+
+Passing the emitter census is not enough to ship. A direct release candidate must still satisfy the actual `melodica.h` constraints:
+
+- dependency-free generated C99 implementation
+- stable small C ABI
+- no mandatory language runtime
+- allocation-free hot protocol path
+- warning-clean C99
+- sanitizer and conformance gates
+- competitive speed and header/object size
+
+The zoo exists to discover ideas and embarrass the incumbent. The release remains boring on purpose.
