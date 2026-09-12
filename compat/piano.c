@@ -1,9 +1,12 @@
 #include "piano.h"
+#include "blowfish.h"
+#include "crypt.h"
 
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static char *piano_dup(const char *s) {
     if (s == NULL) return NULL;
@@ -13,8 +16,39 @@ static char *piano_dup(const char *s) {
     return copy;
 }
 
-static char piano_hex(const unsigned char n) {
+static char piano_hex_upper(const unsigned char n) {
     return (char)(n < 10u ? '0' + (int)n : 'A' + (int)n - 10);
+}
+
+static int piano_url_unreserved(const unsigned char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+        (c >= '0' && c <= '9') || c == '-' || c == '.' || c == '_' || c == '~';
+}
+
+static char *piano_url_encode(const char *s) {
+    if (s == NULL) return NULL;
+    size_t needed = 0u;
+    for (const unsigned char *p = (const unsigned char *)s; *p != '\0'; ++p) {
+        needed += piano_url_unreserved(*p) ? 1u : 3u;
+    }
+    char *out = (char *)malloc(needed + 1u);
+    if (out == NULL) return NULL;
+    size_t n = 0u;
+    for (const unsigned char *p = (const unsigned char *)s; *p != '\0'; ++p) {
+        if (piano_url_unreserved(*p)) {
+            out[n++] = (char)*p;
+        } else {
+            out[n++] = '%';
+            out[n++] = piano_hex_upper((unsigned char)(*p >> 4u));
+            out[n++] = piano_hex_upper((unsigned char)(*p & 0x0fu));
+        }
+    }
+    out[n] = '\0';
+    return out;
+}
+
+static char piano_hex(const unsigned char n) {
+    return piano_hex_upper(n);
 }
 
 static size_t piano_json_escaped_size(const char *s) {
@@ -70,9 +104,7 @@ static char *piano_partner_login_json(const PianoPartner_t *partner) {
     static const char d[] = "\",\"version\":\"5\",\"includeUrls\":true}";
 
     if (partner == NULL || partner->user == NULL ||
-            partner->password == NULL || partner->device == NULL) {
-        return NULL;
-    }
+            partner->password == NULL || partner->device == NULL) return NULL;
 
     const size_t len = (sizeof(a) - 1u) + piano_json_escaped_size(partner->user) +
         (sizeof(b) - 1u) + piano_json_escaped_size(partner->password) +
@@ -89,6 +121,40 @@ static char *piano_partner_login_json(const PianoPartner_t *partner) {
     out = piano_copy_literal(out, c);
     out = piano_json_write_escaped(out, partner->device);
     out = piano_copy_literal(out, d);
+    *out = '\0';
+    assert((size_t)(out - json) == len);
+    return json;
+}
+
+static char *piano_user_login_json(const PianoHandle_t *ph,
+        const PianoRequestDataLogin_t *login, const long timestamp) {
+    static const char a[] = "{\"loginType\":\"user\",\"username\":\"";
+    static const char b[] = "\",\"password\":\"";
+    static const char c[] = "\",\"partnerAuthToken\":\"";
+    static const char d[] = "\",\"syncTime\":";
+    if (ph == NULL || login == NULL || login->user == NULL || login->password == NULL ||
+            ph->partner.authToken == NULL) return NULL;
+
+    char number[32];
+    const int number_len = snprintf(number, sizeof(number), "%ld", timestamp);
+    if (number_len < 0 || (size_t)number_len >= sizeof(number)) return NULL;
+
+    const size_t len = (sizeof(a) - 1u) + piano_json_escaped_size(login->user) +
+        (sizeof(b) - 1u) + piano_json_escaped_size(login->password) +
+        (sizeof(c) - 1u) + piano_json_escaped_size(ph->partner.authToken) +
+        (sizeof(d) - 1u) + (size_t)number_len + 1u;
+    char *json = (char *)malloc(len + 1u);
+    if (json == NULL) return NULL;
+    char *out = json;
+    out = piano_copy_literal(out, a);
+    out = piano_json_write_escaped(out, login->user);
+    out = piano_copy_literal(out, b);
+    out = piano_json_write_escaped(out, login->password);
+    out = piano_copy_literal(out, c);
+    out = piano_json_write_escaped(out, ph->partner.authToken);
+    out = piano_copy_literal(out, d);
+    out = piano_copy_literal(out, number);
+    *out++ = '}';
     *out = '\0';
     assert((size_t)(out - json) == len);
     return json;
@@ -173,6 +239,14 @@ static void destroy_genres(PianoGenre_t *genres) {
     }
 }
 
+static void destroy_cipher(PianoCipherHandle_t *handle) {
+    if (handle == NULL || *handle == NULL) return;
+    MelodicaBlowfish *ctx = (MelodicaBlowfish *)*handle;
+    melodica_blowfish_clear(ctx);
+    free(ctx);
+    *handle = NULL;
+}
+
 void PianoDestroyPlaylist(PianoSong_t *playlist) {
     while (playlist != NULL) {
         PianoSong_t *next = (PianoSong_t *)playlist->head.next;
@@ -213,8 +287,6 @@ void PianoDestroyStationMode(PianoStationMode_t *modes) {
 PianoReturn_t PianoInit(PianoHandle_t *ph, const char *partnerUser,
         const char *partnerPassword, const char *device,
         const char *inkey, const char *outkey) {
-    (void)inkey;
-    (void)outkey;
     if (ph == NULL) return PIANO_RET_ERR;
     memset(ph, 0, sizeof(*ph));
     ph->partner.user = piano_dup(partnerUser);
@@ -226,6 +298,30 @@ PianoReturn_t PianoInit(PianoHandle_t *ph, const char *partnerUser,
         PianoDestroy(ph);
         return PIANO_RET_OUT_OF_MEMORY;
     }
+    if (inkey == NULL || outkey == NULL) {
+        PianoDestroy(ph);
+        return PIANO_RET_GCRY_ERR;
+    }
+
+    MelodicaBlowfish *incoming = (MelodicaBlowfish *)malloc(sizeof(*incoming));
+    MelodicaBlowfish *outgoing = (MelodicaBlowfish *)malloc(sizeof(*outgoing));
+    if (incoming == NULL || outgoing == NULL) {
+        free(incoming);
+        free(outgoing);
+        PianoDestroy(ph);
+        return PIANO_RET_OUT_OF_MEMORY;
+    }
+    if (!melodica_blowfish_init(incoming, inkey, strlen(inkey)) ||
+            !melodica_blowfish_init(outgoing, outkey, strlen(outkey))) {
+        melodica_blowfish_clear(incoming);
+        melodica_blowfish_clear(outgoing);
+        free(incoming);
+        free(outgoing);
+        PianoDestroy(ph);
+        return PIANO_RET_GCRY_ERR;
+    }
+    ph->partner.in = incoming;
+    ph->partner.out = outgoing;
     return PIANO_RET_OK;
 }
 
@@ -235,6 +331,8 @@ void PianoDestroy(PianoHandle_t *ph) {
     destroy_stations(ph->stations);
     free(ph->partner.user); free(ph->partner.password); free(ph->partner.device);
     free(ph->partner.authToken);
+    destroy_cipher(&ph->partner.in);
+    destroy_cipher(&ph->partner.out);
     PianoGenreCategory_t *category = ph->genreStations;
     while (category != NULL) {
         PianoGenreCategory_t *next = (PianoGenreCategory_t *)category->head.next;
@@ -277,9 +375,35 @@ PianoReturn_t PianoRequest(PianoHandle_t *ph, PianoRequest_t *req,
             req->secure = true;
             return PIANO_RET_OK;
         }
+        if (login->step == 1u) {
+            const long timestamp = (long)time(NULL) - (long)ph->timeOffset;
+            char *json = piano_user_login_json(ph, login, timestamp);
+            char *escaped = piano_url_encode(ph->partner.authToken);
+            if (json == NULL || escaped == NULL) {
+                free(json);
+                free(escaped);
+                return PIANO_RET_OUT_OF_MEMORY;
+            }
+            const int written = snprintf(req->urlPath, sizeof(req->urlPath),
+                    PIANO_RPC_PATH "method=auth.userLogin&auth_token=%s&partner_id=%u",
+                    escaped, ph->partner.id);
+            free(escaped);
+            if (written < 0 || (size_t)written >= sizeof(req->urlPath)) {
+                free(json);
+                return PIANO_RET_ERR;
+            }
+            char *encrypted = melodica_piano_encrypt_string(
+                    (const MelodicaBlowfish *)ph->partner.out, json);
+            free(json);
+            if (encrypted == NULL) return PIANO_RET_OUT_OF_MEMORY;
+            free(req->postData);
+            req->postData = encrypted;
+            req->secure = true;
+            return PIANO_RET_OK;
+        }
     }
 
-    /* Encrypted/authenticated request generation is not faked. */
+    /* Other authenticated requests are deliberately still explicit failures. */
     return PIANO_RET_ERR;
 }
 
