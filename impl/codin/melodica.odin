@@ -198,9 +198,11 @@ melodica_station_list_request :: proc "c" (
 		return required
 	}
 
+	prefix := station_prefix
+	suffix := station_suffix
 	out: uintptr = 0
-	for i in 0..<len(station_prefix) {
-		dst[out] = station_prefix[i]
+	for i in 0..<len(prefix) {
+		dst[out] = prefix[i]
 		out += 1
 	}
 	for i in 0..<user_auth_token_len {
@@ -231,8 +233,8 @@ melodica_station_list_request :: proc "c" (
 			}
 		}
 	}
-	for i in 0..<len(station_suffix) {
-		dst[out] = station_suffix[i]
+	for i in 0..<len(suffix) {
+		dst[out] = suffix[i]
 		out += 1
 	}
 	out = write_decimal(dst, out, sync_time)
