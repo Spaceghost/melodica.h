@@ -7,14 +7,6 @@
 #include <string.h>
 #include <time.h>
 
-static char *duptext(const char *s) {
-    size_t n = strlen(s) + 1u;
-    char *p = (char *)malloc(n);
-    assert(p != NULL);
-    memcpy(p, s, n);
-    return p;
-}
-
 int main(void) {
     PianoStation_t a = {0}, b = {0}, c = {0};
     a.id = (char *)"a";
@@ -37,23 +29,25 @@ int main(void) {
     assert(handle.partner.in != NULL);
     assert(handle.partner.out != NULL);
     assert(strcmp(handle.partner.user, "par\"tner") == 0);
-    assert(strcmp(PianoErrorToStr(PIANO_RET_INVALID_LOGIN), "Wrong email address or password.") == 0);
+    assert(strcmp(PianoErrorToStr(PIANO_RET_INVALID_LOGIN),
+            "Wrong email address or password.") == 0);
 
     PianoRequestDataLogin_t login = {0};
     login.step = 0;
     login.user = (char *)"user\"name";
     login.password = (char *)"pass\\word";
-    PianoRequest_t loginRequest = {0};
-    loginRequest.data = &login;
-    assert(PianoRequest(&handle, &loginRequest, PIANO_REQUEST_LOGIN) == PIANO_RET_OK);
-    assert(loginRequest.type == PIANO_REQUEST_LOGIN);
-    assert(loginRequest.secure);
-    assert(strcmp(loginRequest.urlPath,
+    PianoRequest_t request = {0};
+    request.data = &login;
+    assert(PianoRequest(&handle, &request, PIANO_REQUEST_LOGIN) == PIANO_RET_OK);
+    assert(request.type == PIANO_REQUEST_LOGIN);
+    assert(request.secure);
+    assert(strcmp(request.urlPath,
             "/services/json/?method=auth.partnerLogin") == 0);
-    assert(strcmp(loginRequest.postData,
-            "{\"username\":\"par\\\"tner\",\"password\":\"sec\\nret\","
-            "\"deviceModel\":\"dev\\\\ice\",\"version\":\"5\",\"includeUrls\":true}") == 0);
-    PianoDestroyRequest(&loginRequest);
+    assert(strcmp(request.postData,
+            "{ \"username\": \"par\\\"tner\", \"password\": \"sec\\nret\", "
+            "\"deviceModel\": \"dev\\\\ice\", \"version\": \"5\", "
+            "\"includeUrls\": true }") == 0);
+    PianoDestroyRequest(&request);
 
     char *sync = melodica_piano_encrypt_string(
             (const MelodicaBlowfish *)handle.partner.in, "xxxx12345");
@@ -65,59 +59,85 @@ int main(void) {
     free(sync);
     assert(responseLength > 0 && (size_t)responseLength < sizeof(partnerResponse));
 
-    memset(&loginRequest, 0, sizeof(loginRequest));
+    memset(&request, 0, sizeof(request));
     login.step = 0;
-    loginRequest.type = PIANO_REQUEST_LOGIN;
-    loginRequest.data = &login;
-    loginRequest.responseData = partnerResponse;
-    assert(PianoResponse(&handle, &loginRequest) == PIANO_RET_CONTINUE_REQUEST);
+    request.type = PIANO_REQUEST_LOGIN;
+    request.data = &login;
+    request.responseData = partnerResponse;
+    assert(PianoResponse(&handle, &request) == PIANO_RET_CONTINUE_REQUEST);
     assert(login.step == 1u);
     assert(handle.partner.id == 42u);
     assert(strcmp(handle.partner.authToken, "partner token/?") == 0);
     assert(labs((long)handle.timeOffset - ((long)time(NULL) - 12345L)) <= 2L);
 
-    assert(PianoRequest(&handle, &loginRequest, PIANO_REQUEST_LOGIN) == PIANO_RET_OK);
-    assert(loginRequest.secure);
-    assert(strcmp(loginRequest.urlPath,
+    assert(PianoRequest(&handle, &request, PIANO_REQUEST_LOGIN) == PIANO_RET_OK);
+    assert(request.secure);
+    assert(strcmp(request.urlPath,
             "/services/json/?method=auth.userLogin&auth_token=partner%20token%2F%3F&partner_id=42") == 0);
-    assert(strstr(loginRequest.postData, "user") == NULL);
+    assert(strstr(request.postData, "user") == NULL);
 
     size_t decryptedSize = 0u;
     char *decrypted = melodica_piano_decrypt_string(
             (const MelodicaBlowfish *)handle.partner.out,
-            loginRequest.postData, &decryptedSize);
+            request.postData, &decryptedSize);
     assert(decrypted != NULL);
     assert(decryptedSize >= strlen(decrypted));
-    assert(strstr(decrypted, "\"loginType\":\"user\"") != NULL);
-    assert(strstr(decrypted, "\"username\":\"user\\\"name\"") != NULL);
-    assert(strstr(decrypted, "\"password\":\"pass\\\\word\"") != NULL);
-    assert(strstr(decrypted, "\"partnerAuthToken\":\"partner token/?\"") != NULL);
-    assert(strstr(decrypted, "\"syncTime\":12345") != NULL ||
-           strstr(decrypted, "\"syncTime\":12346") != NULL ||
-           strstr(decrypted, "\"syncTime\":12347") != NULL);
+    assert(strstr(decrypted, "\"loginType\": \"user\"") != NULL);
+    assert(strstr(decrypted, "\"username\": \"user\\\"name\"") != NULL);
+    assert(strstr(decrypted, "\"password\": \"pass\\\\word\"") != NULL);
+    assert(strstr(decrypted, "\"partnerAuthToken\": \"partner token\\/?\"") != NULL);
+    assert(strstr(decrypted, "\"syncTime\": 12345") != NULL ||
+           strstr(decrypted, "\"syncTime\": 12346") != NULL ||
+           strstr(decrypted, "\"syncTime\": 12347") != NULL);
     free(decrypted);
 
-    loginRequest.responseData = (char *)
+    request.responseData = (char *)
         "{\"stat\":\"ok\",\"result\":{\"userId\":\"listener-1\","
         "\"userAuthToken\":\"user-token\"}}";
-    assert(PianoResponse(&handle, &loginRequest) == PIANO_RET_OK);
+    assert(PianoResponse(&handle, &request) == PIANO_RET_OK);
     assert(strcmp(handle.user.listenerId, "listener-1") == 0);
     assert(strcmp(handle.user.authToken, "user-token") == 0);
 
-    loginRequest.responseData = (char *)"{\"stat\":\"fail\",\"code\":1002}";
-    assert(PianoResponse(&handle, &loginRequest) == PIANO_RET_INVALID_LOGIN);
-    loginRequest.responseData = (char *)"{\"result\":{}}";
-    assert(PianoResponse(&handle, &loginRequest) == PIANO_RET_INVALID_RESPONSE);
-    PianoDestroyRequest(&loginRequest);
+    request.responseData = (char *)"{\"stat\":\"fail\",\"code\":1002}";
+    assert(PianoResponse(&handle, &request) == PIANO_RET_INVALID_LOGIN);
+    request.responseData = (char *)"{\"result\":{}}";
+    assert(PianoResponse(&handle, &request) == PIANO_RET_INVALID_RESPONSE);
+    PianoDestroyRequest(&request);
 
-    PianoRequest_t unsupported = {0};
-    unsupported.postData = duptext("body");
-    unsupported.responseData = (char *)"externally-owned";
-    assert(PianoRequest(&handle, &unsupported, PIANO_REQUEST_GET_STATIONS) == PIANO_RET_ERR);
-    assert(unsupported.type == PIANO_REQUEST_GET_STATIONS);
-    PianoDestroyRequest(&unsupported);
-    assert(unsupported.postData == NULL);
-    assert(unsupported.responseData == NULL);
+    memset(&request, 0, sizeof(request));
+    assert(PianoRequest(&handle, &request, PIANO_REQUEST_GET_STATIONS) == PIANO_RET_OK);
+    assert(request.type == PIANO_REQUEST_GET_STATIONS);
+    assert(!request.secure);
+    assert(strcmp(request.urlPath,
+            "/services/json/?method=user.getStationList&auth_token=user-token&partner_id=42&user_id=listener-1") == 0);
+
+    decrypted = melodica_piano_decrypt_string(
+            (const MelodicaBlowfish *)handle.partner.out,
+            request.postData, &decryptedSize);
+    assert(decrypted != NULL);
+    assert(strstr(decrypted, "{ \"returnAllStations\": true") != NULL);
+    assert(strstr(decrypted, "\"userAuthToken\": \"user-token\"") != NULL);
+    assert(strstr(decrypted, "\"syncTime\": 12345") != NULL ||
+           strstr(decrypted, "\"syncTime\": 12346") != NULL ||
+           strstr(decrypted, "\"syncTime\": 12347") != NULL);
+    free(decrypted);
+
+    request.responseData = (char *)
+        "{\"stat\":\"ok\",\"result\":{\"stations\":["
+        "{\"stationName\":\"One\",\"stationToken\":\"1\",\"isShared\":false},"
+        "{\"stationName\":\"Shared\",\"stationToken\":\"2\",\"isShared\":true},"
+        "{\"stationName\":\"QuickMix\",\"stationToken\":\"mix\","
+        "\"isQuickMix\":true,\"quickMixStationIds\":[\"1\"]}]}}";
+    assert(PianoResponse(&handle, &request) == PIANO_RET_OK);
+    assert(PianoListCountP(handle.stations) == 3u);
+    PianoStation_t *one = PianoFindStationById(handle.stations, "1");
+    PianoStation_t *shared = PianoFindStationById(handle.stations, "2");
+    PianoStation_t *mix = PianoFindStationById(handle.stations, "mix");
+    assert(one != NULL && shared != NULL && mix != NULL);
+    assert(strcmp(one->name, "One") == 0 && one->isCreator && one->useQuickMix);
+    assert(strcmp(shared->name, "Shared") == 0 && !shared->isCreator && !shared->useQuickMix);
+    assert(mix->isQuickMix && !mix->useQuickMix);
+    PianoDestroyRequest(&request);
 
     PianoDestroy(&handle);
     assert(handle.partner.user == NULL);
