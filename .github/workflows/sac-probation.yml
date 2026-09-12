@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Compile SaC module and expose generated C ABI
+      - name: Rebuild SaC for runner baseline and expose generated C ABI
         shell: bash
         run: |
           set -euxo pipefail
@@ -30,16 +30,43 @@ jobs:
             -v "$GITHUB_WORKSPACE:/work" -w /work \
             --entrypoint bash sacbase/sac-jupyter-notebook:latest -lc '
               set -euxo pipefail
-              SAC2C_BIN="$(command -v sac2c)"
-              SAC_BIN_DIR="$(dirname "$SAC2C_BIN")"
-              SAC4C_BIN="$(command -v sac4c 2>/dev/null || true)"
-              if [ -z "$SAC4C_BIN" ]; then
-                SAC4C_BIN="$(find "$SAC_BIN_DIR" -maxdepth 1 -type f -name "sac4c*" -perm -111 | head -n1 || true)"
-              fi
-              echo "=== SaC tool directory ==="
-              ls -la "$SAC_BIN_DIR"
-              "$SAC2C_BIN" -V
+              SRC=/home/jovyan/sac2c
+              OLD_BUILD="$SRC/build"
+
+              echo "=== bundled SaC source ==="
+              test -d "$SRC"
+              ls -la "$SRC" | head -100
+              echo "=== bundled build targets ==="
+              cmake --build "$OLD_BUILD" --target help | sed -n "1,220p"
+              echo "=== old CPU/config flags ==="
+              grep -E "(^CMAKE_(C|CXX)_FLAGS|march|mtune|NATIVE|SAC4C)" \
+                "$OLD_BUILD/CMakeCache.txt" | head -120 || true
+
+              # The notebook image was built with host-specific instructions and
+              # SIGILLs on GitHub runners. Reconfigure from its bundled source
+              # for the x86-64 baseline instead of trusting the binary image.
+              rm -rf /tmp/sac2c-generic
+              cmake -S "$SRC" -B /tmp/sac2c-generic \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_C_FLAGS="-O2 -march=x86-64 -mtune=generic" \
+                -DCMAKE_CXX_FLAGS="-O2 -march=x86-64 -mtune=generic"
+
+              echo "=== generic build targets ==="
+              cmake --build /tmp/sac2c-generic --target help | sed -n "1,220p"
+
+              SAC2C_TARGET=$(cmake --build /tmp/sac2c-generic --target help | \
+                sed -n "s/^\.\.\. \(sac2c_[A-Za-z0-9_]*\)$/\1/p" | head -n1)
+              SAC4C_TARGET=$(cmake --build /tmp/sac2c-generic --target help | \
+                sed -n "s/^\.\.\. \(sac4c_[A-Za-z0-9_]*\)$/\1/p" | head -n1)
+              test -n "$SAC2C_TARGET"
+              test -n "$SAC4C_TARGET"
+              cmake --build /tmp/sac2c-generic -j2 --target "$SAC2C_TARGET" "$SAC4C_TARGET"
+
+              SAC2C_BIN=$(find /tmp/sac2c-generic -type f -name "sac2c_*" -perm -111 | head -n1)
+              SAC4C_BIN=$(find /tmp/sac2c-generic -type f -name "sac4c_*" -perm -111 | head -n1)
+              test -n "$SAC2C_BIN"
               test -n "$SAC4C_BIN"
+              "$SAC2C_BIN" -V
               "$SAC4C_BIN" -V
 
               rm -rf lab/sac/cmake-common build/sac
