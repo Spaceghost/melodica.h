@@ -1,7 +1,7 @@
 diff --git a/src/c99.c b/src/c99.c
 --- a/src/c99.c
 +++ b/src/c99.c
-@@ -112,9 +112,42 @@ static Bool emit_call(C99 *c, const CallExpression *call) {
+@@ -112,8 +112,34 @@ static Bool emit_call(C99 *c, const CallExpression *call) {
  	return true;
  }
  
@@ -36,7 +36,7 @@ diff --git a/src/c99.c b/src/c99.c
  	fputc('(', c->out);
  	if (!emit_ast_type(c, literal->type)) return false;
  	fputs("){", c->out);
-@@ -211,6 +244,29 @@ static Bool emit_declaration(C99 *c, const DeclarationStatement *declaration) {
+@@ -211,6 +237,28 @@ static Bool emit_declaration(C99 *c, const DeclarationStatement *declaration) {
  	const Expression *value = declaration->values->expressions[0];
  	if (value->kind == EXPRESSION_PROCEDURE) return unsupported(c, "nested procedure");
  
