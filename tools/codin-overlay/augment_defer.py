@@ -123,6 +123,28 @@ replace_once(
 )
 
 replace_once(
+    "case bodies are declaration-safe blocks",
+    '''\t\tc->depth++;
+\t\tconst Size n_statements = array_size(clause->statements);
+\t\tfor (Size j = 0; j < n_statements; j++) {
+\t\t\tif (!emit_statement(c, clause->statements[j])) return false;
+\t\t}
+\t\tindent(c); fputs("break;\\n", c->out);
+\t\tc->depth--;
+''',
+    '''\t\tindent(c); fputs("{\\n", c->out);
+\t\tc->depth++;
+\t\tconst Size n_statements = array_size(clause->statements);
+\t\tfor (Size j = 0; j < n_statements; j++) {
+\t\t\tif (!emit_statement(c, clause->statements[j])) return false;
+\t\t}
+\t\tindent(c); fputs("break;\\n", c->out);
+\t\tc->depth--;
+\t\tindent(c); fputs("}\\n", c->out);
+''',
+)
+
+replace_once(
     "defer statement",
     '''\tcase STATEMENT_BLOCK:
 \t\tindent(c);
@@ -183,4 +205,4 @@ replace_once(
 )
 
 path.write_text(src)
-print("augment_defer: lexical LIFO defers + return capture applied")
+print("augment_defer: lexical LIFO defers + return capture + case blocks applied")
