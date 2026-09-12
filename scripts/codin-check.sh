@@ -1,5 +1,5 @@
 #!/bin/sh
-set -eux
+set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 CACHE=${MELODICA_CACHE:-"$ROOT/.cache"}
@@ -18,23 +18,19 @@ git -C "$CODIN_DIR" fetch --depth=1 origin "$CODIN_COMMIT"
 git -C "$CODIN_DIR" checkout --detach "$CODIN_COMMIT"
 git -C "$CODIN_DIR" reset --hard "$CODIN_COMMIT"
 
-# Overlay the backend as a reproducible patch-stack until Spaceghost/codin can
-# be created. Every file here is intended to move verbatim into that fork.
+# Overlay the backend as a reproducible patch stack until it can move into a
+# writable Spaceghost/codin fork. Every file here is intended to move verbatim.
 cp "$OVERLAY"/*.c "$CODIN_DIR/src/"
 cp "$OVERLAY"/*.h "$CODIN_DIR/src/"
 
 make -C "$CODIN_DIR" clean >/dev/null 2>&1 || true
-# Keep ASan on while the new backend is being brought up. Once this lane is
-# boringly green we switch back to the release compiler for shootout timing.
-make -C "$CODIN_DIR" DEBUG=1 ASAN=1
+make -C "$CODIN_DIR"
 
 printf '%s\n' '=== codin: dump AST ==='
-ASAN_OPTIONS=abort_on_error=1:detect_leaks=0 \
-    "$CODIN_DIR/codin" dump-ast "$ROOT/impl/codin" > "$OUTDIR/ast.txt"
+"$CODIN_DIR/codin" dump-ast "$ROOT/impl/codin" > "$OUTDIR/ast.txt"
 
 printf '%s\n' '=== codin: emit C99 ==='
-ASAN_OPTIONS=abort_on_error=1:detect_leaks=0 \
-    "$CODIN_DIR/codin" emit-c "$ROOT/impl/codin" -o "$OUTDIR/melodica.c"
+"$CODIN_DIR/codin" emit-c "$ROOT/impl/codin" -o "$OUTDIR/melodica.c"
 
 printf '%s\n' '=== generated C99: GCC ==='
 gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
@@ -54,4 +50,4 @@ gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
     -I"$ROOT/include" "$ROOT/bench/bench.c" "$OUTDIR/melodica.c" \
     -o "$OUTDIR/bench"
 
-printf '%s\n' "codin C99 emission + GCC/Clang + ABI smoke: ok ($CODIN_COMMIT)"
+printf '%s\n' "codin release C99 emission + GCC/Clang + ABI smoke: ok ($CODIN_COMMIT)"
