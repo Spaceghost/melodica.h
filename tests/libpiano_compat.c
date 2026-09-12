@@ -18,7 +18,7 @@ int main(void) {
     b.id = (char *)"b";
     c.id = (char *)"c";
 
-    PianoStation_t *stations = (PianoStation_t *)PianoListAppendP(NULL, &a);
+    PianoStation_t *stations = (PianoStation_t *)PianoListAppend(NULL, &a.head);
     stations = (PianoStation_t *)PianoListAppendP(stations, &b);
     stations = (PianoStation_t *)PianoListPrependP(stations, &c);
     assert(PianoListCountP(stations) == 3u);
