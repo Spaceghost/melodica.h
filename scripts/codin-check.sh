@@ -25,7 +25,7 @@ cp "$OVERLAY"/*.c "$CODIN_DIR/src/"
 cp "$OVERLAY"/*.h "$CODIN_DIR/src/"
 for patch_file in "$PATCHES"/*.patch; do
     [ -e "$patch_file" ] || continue
-    git -C "$CODIN_DIR" apply "$patch_file"
+    patch --batch --forward -d "$CODIN_DIR" -p1 < "$patch_file"
 done
 
 make -C "$CODIN_DIR" clean >/dev/null 2>&1 || true
