@@ -11,16 +11,13 @@ mkdir -p "$OUT"
 # Odin are intentionally allowed to compete here. If a native implementation
 # wins, its algorithm becomes a target for the C99 release implementations.
 
-# C99 baseline.
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -Wall -Wextra -Werror -pedantic -Ilab \
   -c lab/c/find_string.c -o "$OUT/c.o"
 
-# Nelua -> C -> C99 object.
 NELUA_INIT="require('nelua.compactc').enable{static_asserts=false,export_declarations=false}" \
   "$NELUA" -r -c -o "$OUT/nelua.c" lab/nelua/find_string.nelua
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab -c "$OUT/nelua.c" -o "$OUT/nelua.o"
 
-# Zig, C backend.
 "$ZIG" build-obj lab/zig/find_string.zig -OReleaseFast -ofmt=c \
   -femit-bin="$OUT/zig-c.c"
 ZIG_EXE=$(readlink -f "$(command -v "$ZIG")")
@@ -29,27 +26,24 @@ test -f "$ZIG_LIB_DIR/zig.h"
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab -I"$ZIG_LIB_DIR" \
   -c "$OUT/zig-c.c" -o "$OUT/zig-c.o"
 
-# Zig, native backend. Same source and ABI, different backend.
 "$ZIG" build-obj lab/zig/find_string.zig -OReleaseFast \
   -femit-bin="$OUT/zig-native.o"
 
-# Odin, native backend.
 odin build lab/odin -build-mode:lib -no-entry-point -o:speed -out:"$OUT/odin.a"
 
-# Nim -> C -> static library.
 mkdir -p "$OUT/nimcache"
 nim c --app:staticLib --noMain:on --mm:arc -d:danger --passC:-std=c99 \
   --nimcache:"$OUT/nimcache" -o:"$OUT/libnimlab.a" lab/nim/find_string.nim
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab -c lab/nim/init.c -o "$OUT/nim-init.o"
 
-# CHICKEN Scheme -> C. Compile the generated unit in embedded mode, then use a
-# tiny C99 shim to initialize the Scheme runtime once and expose lab_find_string.
+# CHICKEN Scheme -> C. The generated runtime uses alloca as a stack primitive;
+# preinclude its platform declaration while keeping the translation unit C99.
 CHICKEN_H=$(dpkg -L libchicken-dev | grep '/chicken\.h$' | head -n1)
 CHICKEN_INC=$(dirname "$CHICKEN_H")
 CHICKEN_A=$(dpkg -L libchicken-dev | grep '/libchicken\.a$' | head -n1)
 test -n "$CHICKEN_A"
 chicken lab/chicken/find_string.scm -output-file "$OUT/chicken.c"
-"$ZIG" cc -std=c99 -O3 -DNDEBUG -DC_EMBEDDED -I"$CHICKEN_INC" \
+"$ZIG" cc -std=c99 -O3 -DNDEBUG -DC_EMBEDDED -include alloca.h -I"$CHICKEN_INC" \
   -c "$OUT/chicken.c" -o "$OUT/chicken.o"
 "$ZIG" cc -std=c99 -O3 -DNDEBUG -Ilab -I"$CHICKEN_INC" \
   -c lab/chicken/shim.c -o "$OUT/chicken-shim.o"
@@ -75,7 +69,6 @@ for name in "${names[@]}"; do
   : > "$OUT/times-$name.txt"
 done
 
-# Warm first, then interleave seven trials to reduce scheduler/thermal ordering bias.
 for name in "${names[@]}"; do "$OUT/bench-$name" >/dev/null; done
 for ((round=0; round<7; round++)); do
   for ((step=0; step<${#names[@]}; step++)); do
