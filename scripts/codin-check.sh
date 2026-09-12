@@ -14,11 +14,16 @@ fi
 
 git -C "$CODIN_DIR" fetch --depth=1 origin "$CODIN_COMMIT"
 git -C "$CODIN_DIR" checkout --detach "$CODIN_COMMIT"
+git -C "$CODIN_DIR" reset --hard "$CODIN_COMMIT"
+
+# Upstream's dump-ast command currently parses the tree but has the actual
+# dump call commented out. Turn it back on in our pinned working copy so the
+# shootout doubles as an executable specification for the C99 lowering work.
+sed -i 's@// dump(work->tree);@dump(work->tree);@' "$CODIN_DIR/src/main.c"
+
+make -C "$CODIN_DIR" clean >/dev/null 2>&1 || true
 make -C "$CODIN_DIR"
 
-# Upstream Codin currently exposes parsing (misnamed dump-ast; dumping is
-# commented out) but not C emission. Keeping this check green tells us exactly
-# when our translator-friendly Odin subset stops being acceptable to Codin.
 "$CODIN_DIR/codin" dump-ast "$ROOT/impl/codin"
 
-printf '%s\n' "codin parser check: ok ($CODIN_COMMIT)"
+printf '%s\n' "codin parser + AST check: ok ($CODIN_COMMIT)"
