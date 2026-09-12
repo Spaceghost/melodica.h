@@ -1,6 +1,7 @@
 #include "piano.h"
 
 #include <assert.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -10,6 +11,87 @@ static char *piano_dup(const char *s) {
     char *copy = (char *)malloc(n);
     if (copy != NULL) memcpy(copy, s, n);
     return copy;
+}
+
+static char piano_hex(const unsigned char n) {
+    return (char)(n < 10u ? '0' + (int)n : 'A' + (int)n - 10);
+}
+
+static size_t piano_json_escaped_size(const char *s) {
+    size_t n = 0u;
+    for (const unsigned char *p = (const unsigned char *)s; *p != '\0'; ++p) {
+        switch (*p) {
+            case '"': case '\\': case '\b': case '\f': case '\n': case '\r': case '\t':
+                n += 2u;
+                break;
+            default:
+                n += *p < 0x20u ? 6u : 1u;
+                break;
+        }
+    }
+    return n;
+}
+
+static char *piano_json_write_escaped(char *out, const char *s) {
+    for (const unsigned char *p = (const unsigned char *)s; *p != '\0'; ++p) {
+        const unsigned char c = *p;
+        switch (c) {
+            case '"': *out++ = '\\'; *out++ = '"'; break;
+            case '\\': *out++ = '\\'; *out++ = '\\'; break;
+            case '\b': *out++ = '\\'; *out++ = 'b'; break;
+            case '\f': *out++ = '\\'; *out++ = 'f'; break;
+            case '\n': *out++ = '\\'; *out++ = 'n'; break;
+            case '\r': *out++ = '\\'; *out++ = 'r'; break;
+            case '\t': *out++ = '\\'; *out++ = 't'; break;
+            default:
+                if (c < 0x20u) {
+                    *out++ = '\\'; *out++ = 'u'; *out++ = '0'; *out++ = '0';
+                    *out++ = piano_hex((unsigned char)(c >> 4u));
+                    *out++ = piano_hex((unsigned char)(c & 0x0fu));
+                } else {
+                    *out++ = (char)c;
+                }
+                break;
+        }
+    }
+    return out;
+}
+
+static char *piano_copy_literal(char *out, const char *literal) {
+    const size_t n = strlen(literal);
+    memcpy(out, literal, n);
+    return out + n;
+}
+
+static char *piano_partner_login_json(const PianoPartner_t *partner) {
+    static const char a[] = "{\"username\":\"";
+    static const char b[] = "\",\"password\":\"";
+    static const char c[] = "\",\"deviceModel\":\"";
+    static const char d[] = "\",\"version\":\"5\",\"includeUrls\":true}";
+
+    if (partner == NULL || partner->user == NULL ||
+            partner->password == NULL || partner->device == NULL) {
+        return NULL;
+    }
+
+    const size_t len = (sizeof(a) - 1u) + piano_json_escaped_size(partner->user) +
+        (sizeof(b) - 1u) + piano_json_escaped_size(partner->password) +
+        (sizeof(c) - 1u) + piano_json_escaped_size(partner->device) +
+        (sizeof(d) - 1u);
+    char *json = (char *)malloc(len + 1u);
+    if (json == NULL) return NULL;
+
+    char *out = json;
+    out = piano_copy_literal(out, a);
+    out = piano_json_write_escaped(out, partner->user);
+    out = piano_copy_literal(out, b);
+    out = piano_json_write_escaped(out, partner->password);
+    out = piano_copy_literal(out, c);
+    out = piano_json_write_escaped(out, partner->device);
+    out = piano_copy_literal(out, d);
+    *out = '\0';
+    assert((size_t)(out - json) == len);
+    return json;
 }
 
 size_t PianoListCount(const PianoListHead_t *l) {
@@ -172,10 +254,32 @@ void PianoDestroyRequest(PianoRequest_t *req) {
 
 PianoReturn_t PianoRequest(PianoHandle_t *ph, PianoRequest_t *req,
         const PianoRequestType_t type) {
-    (void)ph;
     if (req == NULL) return PIANO_RET_ERR;
     req->type = type;
-    /* RPC/request JSON construction is intentionally not faked. */
+    req->secure = false;
+
+    if (type == PIANO_REQUEST_LOGIN && ph != NULL && req->data != NULL) {
+        PianoRequestDataLogin_t *login = (PianoRequestDataLogin_t *)req->data;
+        if (login->step == 0u) {
+            char *body = piano_partner_login_json(&ph->partner);
+            if (body == NULL) {
+                return (ph->partner.user == NULL || ph->partner.password == NULL ||
+                        ph->partner.device == NULL) ? PIANO_RET_ERR : PIANO_RET_OUT_OF_MEMORY;
+            }
+            const int written = snprintf(req->urlPath, sizeof(req->urlPath),
+                    PIANO_RPC_PATH "method=auth.partnerLogin");
+            if (written < 0 || (size_t)written >= sizeof(req->urlPath)) {
+                free(body);
+                return PIANO_RET_ERR;
+            }
+            free(req->postData);
+            req->postData = body;
+            req->secure = true;
+            return PIANO_RET_OK;
+        }
+    }
+
+    /* Encrypted/authenticated request generation is not faked. */
     return PIANO_RET_ERR;
 }
 
