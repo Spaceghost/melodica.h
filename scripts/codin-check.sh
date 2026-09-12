@@ -23,6 +23,7 @@ cp "$OVERLAY"/*.c "$CODIN_DIR/src/"
 cp "$OVERLAY"/*.h "$CODIN_DIR/src/"
 patch --batch --forward -d "$CODIN_DIR" -p1 < \
     "$PATCHES/0001-preserve-positional-compound-values.patch"
+python3 "$ROOT/tools/codin-overlay/augment_parser.py" "$CODIN_DIR/src/parser.c"
 for pass in augment_c99 augment_slice_string augment_multi_return augment_defer augment_union; do
     python3 "$ROOT/tools/codin-overlay/$pass.py" "$CODIN_DIR/src/c99.c"
 done
