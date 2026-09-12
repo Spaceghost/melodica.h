@@ -23,9 +23,9 @@ cp "$OVERLAY"/*.c "$CODIN_DIR/src/"
 cp "$OVERLAY"/*.h "$CODIN_DIR/src/"
 patch --batch --forward -d "$CODIN_DIR" -p1 < \
     "$PATCHES/0001-preserve-positional-compound-values.patch"
-python3 "$ROOT/tools/codin-overlay/augment_c99.py" "$CODIN_DIR/src/c99.c"
-python3 "$ROOT/tools/codin-overlay/augment_slice_string.py" "$CODIN_DIR/src/c99.c"
-python3 "$ROOT/tools/codin-overlay/augment_multi_return.py" "$CODIN_DIR/src/c99.c"
+for pass in augment_c99 augment_slice_string augment_multi_return augment_defer; do
+    python3 "$ROOT/tools/codin-overlay/$pass.py" "$CODIN_DIR/src/c99.c"
+done
 
 make -C "$CODIN_DIR" clean >/dev/null 2>&1 || true
 make -C "$CODIN_DIR"
@@ -51,9 +51,9 @@ check_fixture() {
     "$OUTDIR/$name-smoke"
 }
 
-for fixture in structs arrays enums slices_strings multiple_returns; do
+for fixture in structs arrays enums slices_strings multiple_returns defers; do
     printf '=== codin C99: %s fixture ===\n' "$fixture"
     check_fixture "$fixture"
 done
 
-printf '%s\n' "codin strict C99 + ABI/struct/array/enum/slice/string/multiple-return smoke: ok ($CODIN_COMMIT)"
+printf '%s\n' "codin strict C99 + ABI/struct/array/enum/slice/string/multiple-return/defer smoke: ok ($CODIN_COMMIT)"
