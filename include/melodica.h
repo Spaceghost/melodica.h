@@ -52,7 +52,7 @@ static int melodica__is_unreserved(const uint8_t c) {
 }
 
 static char melodica__hex(const uint8_t n) {
-    return (char)(n < 10u ? (uint8_t)'0' + n : (uint8_t)'A' + (n - 10u));
+    return (char)(n < 10u ? '0' + (int)n : 'A' + (int)n - 10);
 }
 
 static size_t melodica__json_extra(const uint8_t c) {
