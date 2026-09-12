@@ -4,32 +4,24 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 CACHE=${MELODICA_CACHE:-"$ROOT/.cache"}
 CODIN_DIR="$CACHE/codin"
-CODIN_COMMIT=2a3f71f65035a60943be40ffff7e031eec456aac
-OVERLAY="$ROOT/tools/codin-overlay/src"
-PATCHES="$ROOT/tools/codin-overlay/patches"
+CODIN_REPO=https://github.com/Spaceghost/codin.git
+CODIN_COMMIT=baf1aa8f93e7b55bf931d48afb19fb77bff054a5
 OUTDIR="$ROOT/build/codin"
 
 mkdir -p "$CACHE" "$OUTDIR"
 
 if [ ! -d "$CODIN_DIR/.git" ]; then
-    git clone --filter=blob:none https://github.com/graphitemaster/codin.git "$CODIN_DIR"
+    git clone --filter=blob:none "$CODIN_REPO" "$CODIN_DIR"
+else
+    git -C "$CODIN_DIR" remote set-url origin "$CODIN_REPO"
 fi
 
 git -C "$CODIN_DIR" fetch --depth=1 origin "$CODIN_COMMIT"
 git -C "$CODIN_DIR" checkout --detach "$CODIN_COMMIT"
 git -C "$CODIN_DIR" reset --hard "$CODIN_COMMIT"
+git -C "$CODIN_DIR" clean -fdx
 
-cp "$OVERLAY"/*.c "$CODIN_DIR/src/"
-cp "$OVERLAY"/*.h "$CODIN_DIR/src/"
-patch --batch --forward -d "$CODIN_DIR" -p1 < \
-    "$PATCHES/0001-preserve-positional-compound-values.patch"
-python3 "$ROOT/tools/codin-overlay/augment_parser.py" "$CODIN_DIR/src/parser.c"
-for pass in augment_c99 augment_slice_string augment_multi_return augment_defer augment_union; do
-    python3 "$ROOT/tools/codin-overlay/$pass.py" "$CODIN_DIR/src/c99.c"
-done
-
-make -C "$CODIN_DIR" clean >/dev/null 2>&1 || true
-make -C "$CODIN_DIR"
+"$CODIN_DIR/scripts/build-experimental-c99.sh"
 
 "$CODIN_DIR/codin" dump-ast "$ROOT/impl/codin" > "$OUTDIR/ast.txt"
 "$CODIN_DIR/codin" emit-c "$ROOT/impl/codin" -o "$OUTDIR/melodica.c"
@@ -57,4 +49,4 @@ for fixture in structs arrays enums slices_strings multiple_returns defers union
     check_fixture "$fixture"
 done
 
-printf '%s\n' "codin strict C99 + ABI/struct/array/enum/slice/string/multiple-return/defer/union smoke: ok ($CODIN_COMMIT)"
+printf '%s\n' "codin fork strict C99 + ABI/struct/array/enum/slice/string/multiple-return/defer/union smoke: ok ($CODIN_COMMIT)"
