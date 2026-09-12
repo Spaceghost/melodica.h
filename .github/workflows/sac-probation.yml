@@ -44,7 +44,7 @@ jobs:
               # hosted runner. SaC already has the correct knob for this.
               rm -rf /tmp/sac2c-generic
               cmake -S "$SRC" -B /tmp/sac2c-generic -G Ninja \
-                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_BUILD_TYPE=RELEASE \
                 -DBUILDGENERIC=ON \
                 -DISL=OFF \
                 -DBARVINOK=OFF
