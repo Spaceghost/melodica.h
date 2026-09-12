@@ -21,7 +21,7 @@ The common-ABI hot-path league always keeps at least:
 - Zig C backend
 - Odin native
 
-Nim is also currently in the common-ABI league through its C backend, with its runtime cost measured rather than hidden.
+Nim -> C and CHICKEN Scheme -> C have also graduated into the common-ABI league. Their runtime costs are measured rather than hidden. CHICKEN's first implementation deliberately copies the incoming byte spans into Scheme strings, making it a correctness baseline to optimize rather than a suspiciously flattering microbenchmark.
 
 ## C-emitter admission
 
@@ -36,18 +36,20 @@ Compiler implementation matters more than surface language. For example:
 
 ## CI-proven C emitters
 
-The census has already demonstrated C output accepted in C99 mode from:
+The census has demonstrated generated C accepted in C99 mode from:
 
 - Nelua
 - Zig C backend
+- Spinel Ruby
 - Nim
+- V
 - CHICKEN Scheme
 - Gambit Scheme
 - Vala
 - ATS2/Postiats
 - Cython
 
-Spinel Ruby and V are actively probed in CI as their compiler/toolchain builds permit.
+These are compiler/toolchain facts, not endorsements for the final header. Several require substantial runtimes; that is precisely why the census and release eligibility are separate.
 
 ## Next useful compiler families
 
