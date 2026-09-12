@@ -2,14 +2,14 @@ package main
 
 MELODICA_ABI_VERSION :: u32(1)
 
-is_unreserved :: proc(c: u8) -> bool {
+is_unreserved :: proc "contextless" (c: u8) -> bool {
 	return (c >= 'A' && c <= 'Z') ||
 	       (c >= 'a' && c <= 'z') ||
 	       (c >= '0' && c <= '9') ||
 	       c == '-' || c == '.' || c == '_' || c == '~'
 }
 
-hex_digit :: proc(n: u8) -> u8 {
+hex_digit :: proc "contextless" (n: u8) -> u8 {
 	if n < 10 {
 		return '0' + n
 	}
@@ -66,7 +66,7 @@ melodica_url_encode :: proc "c" (
 	return required
 }
 
-json_escape_extra :: proc(c: u8) -> uintptr {
+json_escape_extra :: proc "contextless" (c: u8) -> uintptr {
 	switch c {
 	case '"', '\\', '\b', '\f', '\n', '\r', '\t':
 		return 1
