@@ -24,7 +24,11 @@ git -C "$CODIN_DIR" clean -fdx
 "$CODIN_DIR/scripts/build-experimental-c99.sh"
 
 "$CODIN_DIR/codin" dump-ast "$ROOT/impl/codin" > "$OUTDIR/ast.txt"
-"$CODIN_DIR/codin" emit-c "$ROOT/impl/codin" -o "$OUTDIR/melodica.c"
+if ! "$CODIN_DIR/codin" emit-c "$ROOT/impl/codin" -o "$OUTDIR/melodica.c"; then
+    printf '%s\n' '=== Codin AST around decimal_size ===' >&2
+    awk 'BEGIN{show=0; n=0} /ident '\''decimal_size'\''/{show=1; n=0} show{print > "/dev/stderr"; n++} show && n>45{exit}' "$OUTDIR/ast.txt"
+    exit 1
+fi
 gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 -c "$OUTDIR/melodica.c" -o "$OUTDIR/melodica.gcc.o"
 clang -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 -c "$OUTDIR/melodica.c" -o "$OUTDIR/melodica.clang.o"
 gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 -I"$ROOT/include" \
