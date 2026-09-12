@@ -83,4 +83,18 @@ gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
     -o "$OUTDIR/arrays-smoke"
 "$OUTDIR/arrays-smoke"
 
-printf '%s\n' "codin release C99 emission + GCC/Clang + ABI/struct/array smoke: ok ($CODIN_COMMIT)"
+printf '%s\n' '=== codin C99: enum fixture ==='
+if command -v odin >/dev/null 2>&1; then
+    odin check "$ROOT/tests/codin/enums" -no-entry-point
+fi
+"$CODIN_DIR/codin" emit-c "$ROOT/tests/codin/enums" -o "$OUTDIR/enums.c"
+gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
+    -c "$OUTDIR/enums.c" -o "$OUTDIR/enums.gcc.o"
+clang -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
+    -c "$OUTDIR/enums.c" -o "$OUTDIR/enums.clang.o"
+gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
+    "$ROOT/tests/codin/enums_smoke.c" "$OUTDIR/enums.c" \
+    -o "$OUTDIR/enums-smoke"
+"$OUTDIR/enums-smoke"
+
+printf '%s\n' "codin release C99 emission + GCC/Clang + ABI/struct/array/enum smoke: ok ($CODIN_COMMIT)"
