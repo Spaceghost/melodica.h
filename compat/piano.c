@@ -52,11 +52,15 @@ static char piano_hex(const unsigned char n) {
     return piano_hex_upper(n);
 }
 
+/* json-c's historical json_object_to_json_string() uses the SPACED format and
+ * escapes '/'. libpiano encrypts that exact byte stream, so formatting is wire
+ * behavior here rather than decoration. */
 static size_t piano_json_escaped_size(const char *s) {
     size_t n = 0u;
     for (const unsigned char *p = (const unsigned char *)s; *p != '\0'; ++p) {
         switch (*p) {
-            case '"': case '\\': case '\b': case '\f': case '\n': case '\r': case '\t':
+            case '"': case '\\': case '/':
+            case '\b': case '\f': case '\n': case '\r': case '\t':
                 n += 2u;
                 break;
             default:
@@ -73,6 +77,7 @@ static char *piano_json_write_escaped(char *out, const char *s) {
         switch (c) {
             case '"': *out++ = '\\'; *out++ = '"'; break;
             case '\\': *out++ = '\\'; *out++ = '\\'; break;
+            case '/': *out++ = '\\'; *out++ = '/'; break;
             case '\b': *out++ = '\\'; *out++ = 'b'; break;
             case '\f': *out++ = '\\'; *out++ = 'f'; break;
             case '\n': *out++ = '\\'; *out++ = 'n'; break;
@@ -99,10 +104,10 @@ static char *piano_copy_literal(char *out, const char *literal) {
 }
 
 static char *piano_partner_login_json(const PianoPartner_t *partner) {
-    static const char a[] = "{\"username\":\"";
-    static const char b[] = "\",\"password\":\"";
-    static const char c[] = "\",\"deviceModel\":\"";
-    static const char d[] = "\",\"version\":\"5\",\"includeUrls\":true}";
+    static const char a[] = "{ \"username\": \"";
+    static const char b[] = "\", \"password\": \"";
+    static const char c[] = "\", \"deviceModel\": \"";
+    static const char d[] = "\", \"version\": \"5\", \"includeUrls\": true }";
 
     if (partner == NULL || partner->user == NULL ||
             partner->password == NULL || partner->device == NULL) return NULL;
@@ -129,10 +134,11 @@ static char *piano_partner_login_json(const PianoPartner_t *partner) {
 
 static char *piano_user_login_json(const PianoHandle_t *ph,
         const PianoRequestDataLogin_t *login, const long timestamp) {
-    static const char a[] = "{\"loginType\":\"user\",\"username\":\"";
-    static const char b[] = "\",\"password\":\"";
-    static const char c[] = "\",\"partnerAuthToken\":\"";
-    static const char d[] = "\",\"syncTime\":";
+    static const char a[] = "{ \"loginType\": \"user\", \"username\": \"";
+    static const char b[] = "\", \"password\": \"";
+    static const char c[] = "\", \"partnerAuthToken\": \"";
+    static const char d[] = "\", \"syncTime\": ";
+    static const char e[] = " }";
     if (ph == NULL || login == NULL || login->user == NULL || login->password == NULL ||
             ph->partner.authToken == NULL) return NULL;
 
@@ -143,7 +149,7 @@ static char *piano_user_login_json(const PianoHandle_t *ph,
     const size_t len = (sizeof(a) - 1u) + piano_json_escaped_size(login->user) +
         (sizeof(b) - 1u) + piano_json_escaped_size(login->password) +
         (sizeof(c) - 1u) + piano_json_escaped_size(ph->partner.authToken) +
-        (sizeof(d) - 1u) + (size_t)number_len + 1u;
+        (sizeof(d) - 1u) + (size_t)number_len + (sizeof(e) - 1u);
     char *json = (char *)malloc(len + 1u);
     if (json == NULL) return NULL;
     char *out = json;
@@ -155,10 +161,67 @@ static char *piano_user_login_json(const PianoHandle_t *ph,
     out = piano_json_write_escaped(out, ph->partner.authToken);
     out = piano_copy_literal(out, d);
     out = piano_copy_literal(out, number);
-    *out++ = '}';
+    out = piano_copy_literal(out, e);
     *out = '\0';
     assert((size_t)(out - json) == len);
     return json;
+}
+
+static char *piano_station_list_json(const PianoHandle_t *ph, const long timestamp) {
+    static const char a[] = "{ \"returnAllStations\": true, \"userAuthToken\": \"";
+    static const char b[] = "\", \"syncTime\": ";
+    static const char c[] = " }";
+    if (ph == NULL || ph->user.authToken == NULL) return NULL;
+
+    char number[32];
+    const int number_len = snprintf(number, sizeof(number), "%ld", timestamp);
+    if (number_len < 0 || (size_t)number_len >= sizeof(number)) return NULL;
+
+    const size_t len = (sizeof(a) - 1u) + piano_json_escaped_size(ph->user.authToken) +
+        (sizeof(b) - 1u) + (size_t)number_len + (sizeof(c) - 1u);
+    char *json = (char *)malloc(len + 1u);
+    if (json == NULL) return NULL;
+    char *out = json;
+    out = piano_copy_literal(out, a);
+    out = piano_json_write_escaped(out, ph->user.authToken);
+    out = piano_copy_literal(out, b);
+    out = piano_copy_literal(out, number);
+    out = piano_copy_literal(out, c);
+    *out = '\0';
+    assert((size_t)(out - json) == len);
+    return json;
+}
+
+static PianoReturn_t piano_authenticated_request(PianoHandle_t *ph,
+        PianoRequest_t *req, const char *method, char *json) {
+    if (ph == NULL || req == NULL || method == NULL || json == NULL ||
+            ph->user.authToken == NULL || ph->user.listenerId == NULL ||
+            ph->partner.out == NULL) {
+        free(json);
+        return PIANO_RET_ERR;
+    }
+
+    char *escaped = piano_url_encode(ph->user.authToken);
+    if (escaped == NULL) {
+        free(json);
+        return PIANO_RET_OUT_OF_MEMORY;
+    }
+    const int written = snprintf(req->urlPath, sizeof(req->urlPath),
+            PIANO_RPC_PATH "method=%s&auth_token=%s&partner_id=%u&user_id=%s",
+            method, escaped, ph->partner.id, ph->user.listenerId);
+    free(escaped);
+    if (written < 0 || (size_t)written >= sizeof(req->urlPath)) {
+        free(json);
+        return PIANO_RET_ERR;
+    }
+
+    char *encrypted = melodica_piano_encrypt_string(
+            (const MelodicaBlowfish *)ph->partner.out, json);
+    free(json);
+    if (encrypted == NULL) return PIANO_RET_OUT_OF_MEMORY;
+    free(req->postData);
+    req->postData = encrypted;
+    return PIANO_RET_OK;
 }
 
 size_t PianoListCount(const PianoListHead_t *l) {
@@ -402,9 +465,18 @@ PianoReturn_t PianoRequest(PianoHandle_t *ph, PianoRequest_t *req,
             req->secure = true;
             return PIANO_RET_OK;
         }
+        return PIANO_RET_ERR;
     }
 
-    /* Other authenticated requests are deliberately still explicit failures. */
+    if (type == PIANO_REQUEST_GET_STATIONS && ph != NULL) {
+        const long timestamp = (long)time(NULL) - (long)ph->timeOffset;
+        char *json = piano_station_list_json(ph, timestamp);
+        if (json == NULL) {
+            return ph->user.authToken == NULL ? PIANO_RET_ERR : PIANO_RET_OUT_OF_MEMORY;
+        }
+        return piano_authenticated_request(ph, req, "user.getStationList", json);
+    }
+
     return PIANO_RET_ERR;
 }
 
@@ -493,6 +565,75 @@ static PianoReturn_t piano_response_login(PianoHandle_t *ph, PianoRequest_t *req
     return PIANO_RET_INVALID_RESPONSE;
 }
 
+static int piano_json_bool_default(const MelodicaJsonDoc *doc,
+        const size_t object, const char *key, const int fallback) {
+    const size_t token = melodica_json_object_get(doc, object, key);
+    int value = fallback;
+    if (token != MELODICA_JSON_NONE) {
+        int parsed = 0;
+        if (melodica_json_bool(doc, token, &parsed)) value = parsed;
+    }
+    return value;
+}
+
+static PianoReturn_t piano_response_stations(PianoHandle_t *ph,
+        const MelodicaJsonDoc *doc, const size_t result) {
+    if (result == MELODICA_JSON_NONE || result >= doc->count ||
+            doc->tokens[result].type != MELODICA_JSON_OBJECT) {
+        return PIANO_RET_INVALID_RESPONSE;
+    }
+    const size_t stations = melodica_json_object_get(doc, result, "stations");
+    if (stations == MELODICA_JSON_NONE) return PIANO_RET_OK;
+    if (stations >= doc->count || doc->tokens[stations].type != MELODICA_JSON_ARRAY) {
+        return PIANO_RET_INVALID_RESPONSE;
+    }
+
+    size_t quickmix_ids = MELODICA_JSON_NONE;
+    const size_t count = melodica_json_array_count(doc, stations);
+    for (size_t i = 0u; i < count; ++i) {
+        const size_t station_token = melodica_json_array_get(doc, stations, i);
+        if (station_token == MELODICA_JSON_NONE || station_token >= doc->count ||
+                doc->tokens[station_token].type != MELODICA_JSON_OBJECT) {
+            return PIANO_RET_INVALID_RESPONSE;
+        }
+
+        PianoStation_t *station = (PianoStation_t *)calloc(1u, sizeof(*station));
+        if (station == NULL) return PIANO_RET_OUT_OF_MEMORY;
+        station->name = melodica_json_string_dup(doc,
+                melodica_json_object_get(doc, station_token, "stationName"));
+        station->id = melodica_json_string_dup(doc,
+                melodica_json_object_get(doc, station_token, "stationToken"));
+        station->isCreator = (char)!piano_json_bool_default(
+                doc, station_token, "isShared", 1);
+        station->isQuickMix = (char)piano_json_bool_default(
+                doc, station_token, "isQuickMix", 0);
+        if (station->isQuickMix) {
+            const size_t candidate = melodica_json_object_get(
+                    doc, station_token, "quickMixStationIds");
+            if (candidate != MELODICA_JSON_NONE) quickmix_ids = candidate;
+        }
+        ph->stations = (PianoStation_t *)PianoListAppend(
+                ph->stations == NULL ? NULL : &ph->stations->head, &station->head);
+    }
+
+    if (quickmix_ids != MELODICA_JSON_NONE && quickmix_ids < doc->count &&
+            doc->tokens[quickmix_ids].type == MELODICA_JSON_ARRAY) {
+        const size_t mix_count = melodica_json_array_count(doc, quickmix_ids);
+        for (PianoStation_t *station = ph->stations; station != NULL;
+                station = (PianoStation_t *)station->head.next) {
+            if (station->id == NULL) continue;
+            for (size_t i = 0u; i < mix_count; ++i) {
+                const size_t id = melodica_json_array_get(doc, quickmix_ids, i);
+                if (melodica_json_string_is(doc, id, station->id)) {
+                    station->useQuickMix = 1;
+                    break;
+                }
+            }
+        }
+    }
+    return PIANO_RET_OK;
+}
+
 PianoReturn_t PianoResponse(PianoHandle_t *ph, PianoRequest_t *req) {
     if (ph == NULL || req == NULL || req->responseData == NULL) {
         return PIANO_RET_INVALID_RESPONSE;
@@ -517,6 +658,9 @@ PianoReturn_t PianoResponse(PianoHandle_t *ph, PianoRequest_t *req) {
     switch (req->type) {
         case PIANO_REQUEST_LOGIN:
             ret = piano_response_login(ph, req, &doc, result);
+            break;
+        case PIANO_REQUEST_GET_STATIONS:
+            ret = piano_response_stations(ph, &doc, result);
             break;
         default:
             ret = PIANO_RET_OK;
