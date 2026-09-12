@@ -1,7 +1,8 @@
 (import scheme
         (chicken base)
         (chicken foreign)
-        (chicken memory))
+        (chicken memory)
+        (chicken platform))
 
 (define LAB_OK 0)
 (define LAB_NOT_FOUND 1)
