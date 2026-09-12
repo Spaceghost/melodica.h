@@ -19,14 +19,13 @@ git -C "$CODIN_DIR" fetch --depth=1 origin "$CODIN_COMMIT"
 git -C "$CODIN_DIR" checkout --detach "$CODIN_COMMIT"
 git -C "$CODIN_DIR" reset --hard "$CODIN_COMMIT"
 
-# Overlay the backend as a reproducible patch stack until it can move into a
-# writable Spaceghost/codin fork. Every file here is intended to move verbatim.
+# Copy our backend verbatim. Only genuine upstream parser defects remain as
+# textual patches; backend feature growth is applied with exact checked anchors.
 cp "$OVERLAY"/*.c "$CODIN_DIR/src/"
 cp "$OVERLAY"/*.h "$CODIN_DIR/src/"
-for patch_file in "$PATCHES"/*.patch; do
-    [ -e "$patch_file" ] || continue
-    patch --batch --forward -d "$CODIN_DIR" -p1 < "$patch_file"
-done
+patch --batch --forward -d "$CODIN_DIR" -p1 < \
+    "$PATCHES/0001-preserve-positional-compound-values.patch"
+python3 "$ROOT/tools/codin-overlay/augment_c99.py" "$CODIN_DIR/src/c99.c"
 
 make -C "$CODIN_DIR" clean >/dev/null 2>&1 || true
 make -C "$CODIN_DIR"
@@ -56,9 +55,7 @@ gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
     -o "$OUTDIR/bench"
 
 printf '%s\n' '=== codin C99: struct fixture ==='
-if command -v odin >/dev/null 2>&1; then
-    odin check "$ROOT/tests/codin/structs" -no-entry-point
-fi
+odin check "$ROOT/tests/codin/structs" -no-entry-point
 "$CODIN_DIR/codin" emit-c "$ROOT/tests/codin/structs" -o "$OUTDIR/structs.c"
 gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
     -c "$OUTDIR/structs.c" -o "$OUTDIR/structs.gcc.o"
@@ -70,9 +67,7 @@ gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
 "$OUTDIR/structs-smoke"
 
 printf '%s\n' '=== codin C99: fixed-array fixture ==='
-if command -v odin >/dev/null 2>&1; then
-    odin check "$ROOT/tests/codin/arrays" -no-entry-point
-fi
+odin check "$ROOT/tests/codin/arrays" -no-entry-point
 "$CODIN_DIR/codin" emit-c "$ROOT/tests/codin/arrays" -o "$OUTDIR/arrays.c"
 gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
     -c "$OUTDIR/arrays.c" -o "$OUTDIR/arrays.gcc.o"
@@ -84,9 +79,7 @@ gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
 "$OUTDIR/arrays-smoke"
 
 printf '%s\n' '=== codin C99: enum fixture ==='
-if command -v odin >/dev/null 2>&1; then
-    odin check "$ROOT/tests/codin/enums" -no-entry-point
-fi
+odin check "$ROOT/tests/codin/enums" -no-entry-point
 "$CODIN_DIR/codin" emit-c "$ROOT/tests/codin/enums" -o "$OUTDIR/enums.c"
 gcc -std=c99 -pedantic-errors -Wall -Wextra -Werror -O3 \
     -c "$OUTDIR/enums.c" -o "$OUTDIR/enums.gcc.o"
