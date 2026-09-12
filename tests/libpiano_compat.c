@@ -29,20 +29,34 @@ int main(void) {
     assert(PianoListCountP(stations) == 2u);
 
     PianoHandle_t handle;
-    assert(PianoInit(&handle, "partner", "secret", "device", "in", "out") == PIANO_RET_OK);
-    assert(strcmp(handle.partner.user, "partner") == 0);
+    assert(PianoInit(&handle, "par\"tner", "sec\nret", "dev\\ice", "in", "out") == PIANO_RET_OK);
+    assert(strcmp(handle.partner.user, "par\"tner") == 0);
     assert(strcmp(PianoErrorToStr(PIANO_RET_INVALID_LOGIN), "Wrong email address or password.") == 0);
+
+    PianoRequestDataLogin_t login = {0};
+    login.step = 0;
+    PianoRequest_t loginRequest = {0};
+    loginRequest.data = &login;
+    assert(PianoRequest(&handle, &loginRequest, PIANO_REQUEST_LOGIN) == PIANO_RET_OK);
+    assert(loginRequest.type == PIANO_REQUEST_LOGIN);
+    assert(loginRequest.secure);
+    assert(strcmp(loginRequest.urlPath,
+            "/services/json/?method=auth.partnerLogin") == 0);
+    assert(strcmp(loginRequest.postData,
+            "{\"username\":\"par\\\"tner\",\"password\":\"sec\\nret\","
+            "\"deviceModel\":\"dev\\\\ice\",\"version\":\"5\",\"includeUrls\":true}") == 0);
+    PianoDestroyRequest(&loginRequest);
+
+    PianoRequest_t unsupported = {0};
+    unsupported.postData = duptext("body");
+    unsupported.responseData = (char *)"externally-owned";
+    assert(PianoRequest(&handle, &unsupported, PIANO_REQUEST_GET_STATIONS) == PIANO_RET_ERR);
+    assert(unsupported.type == PIANO_REQUEST_GET_STATIONS);
+    PianoDestroyRequest(&unsupported);
+    assert(unsupported.postData == NULL);
+    assert(unsupported.responseData == NULL);
+
     PianoDestroy(&handle);
     assert(handle.partner.user == NULL);
-
-    PianoRequest_t request = {0};
-    request.postData = duptext("body");
-    request.responseData = (char *)"externally-owned";
-    assert(PianoRequest(NULL, &request, PIANO_REQUEST_GET_STATIONS) == PIANO_RET_ERR);
-    assert(request.type == PIANO_REQUEST_GET_STATIONS);
-    PianoDestroyRequest(&request);
-    assert(request.postData == NULL);
-    assert(request.responseData == NULL);
-
     return 0;
 }
