@@ -1,5 +1,7 @@
-language	ns_per_lookup	linked_bytes	emitted_c_bytes
-c	583	10992	3029
-nelua	346	12216	4719
-zig	441	24368	37838
-nim	420	46348	92245
+language	backend	ns_per_lookup	linked_bytes	emitted_c_bytes	release_direct
+c	c99	557	10992	3029	yes
+nelua	c99-emitter	365	12216	4719	yes
+zig-c	c99-emitter	492	24368	37839	no
+zig-native	native	515	35936	0	no
+odin	native	492	5464	0	no
+nim	c-emitter	404	46348	92245	no
