@@ -35,10 +35,10 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           release: latest
-      - name: Install Nim C emitter
+      - name: Install C-emitter challengers
         run: |
           sudo apt-get update
-          sudo apt-get install -y nim
+          sudo apt-get install -y nim chicken-bin libchicken-dev
       - name: Cache pinned Nelua compiler
         uses: actions/cache@v4
         with:
