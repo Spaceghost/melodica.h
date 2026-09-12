@@ -37,6 +37,26 @@ static Bool emit_identifier(C99 *c, const Identifier *identifier) {
 	return true;
 }
 
+static Bool emit_ast_type(C99 *c, const Type *type) {
+	if (!type) return unsupported(c, "missing type");
+
+	CType primitive = sema_type_from_ast(type);
+	const char *primitive_name = sema_c_type_name(primitive);
+	if (primitive_name) {
+		fputs(primitive_name, c->out);
+		return true;
+	}
+
+	if (type->kind == TYPE_EXPRESSION) {
+		const Expression *expression = RCAST(const ExpressionType *, type)->expression;
+		if (expression && expression->kind == EXPRESSION_IDENTIFIER) {
+			return emit_identifier(c, RCAST(const IdentifierExpression *, expression)->identifier);
+		}
+	}
+
+	return unsupported(c, "C type");
+}
+
 static const char *binary_operator(OperatorKind operation) {
 	switch (operation) {
 	case OPERATOR_CMPOR:  return "||";
@@ -94,6 +114,24 @@ static Bool emit_call(C99 *c, const CallExpression *call) {
 	return true;
 }
 
+static Bool emit_compound_literal(C99 *c, const CompoundLiteralExpression *literal) {
+	if (!literal->type) return unsupported(c, "untyped compound literal");
+	fputc('(', c->out);
+	if (!emit_ast_type(c, literal->type)) return false;
+	fputs("){", c->out);
+
+	const Size n_fields = array_size(literal->fields);
+	for (Size i = 0; i < n_fields; i++) {
+		const Field *field = literal->fields[i];
+		if (!field->name || !field->value) return unsupported(c, "positional/empty compound field");
+		if (i) fputs(", ", c->out);
+		fprintf(c->out, ".%.*s = ", SFMT(field->name->contents));
+		if (!emit_expression(c, field->value)) return false;
+	}
+	fputc('}', c->out);
+	return true;
+}
+
 static Bool emit_expression(C99 *c, const Expression *expression) {
 	if (!expression) return unsupported(c, "null expression");
 
@@ -105,6 +143,13 @@ static Bool emit_expression(C99 *c, const Expression *expression) {
 		return true;
 	case EXPRESSION_TUPLE:
 		return emit_tuple_one(c, RCAST(const TupleExpression *, expression));
+	case EXPRESSION_SELECTOR: {
+		const SelectorExpression *selector = RCAST(const SelectorExpression *, expression);
+		if (!selector->operand) return unsupported(c, "implicit selector");
+		if (!emit_expression(c, selector->operand)) return false;
+		fputc('.', c->out);
+		return emit_identifier(c, selector->identifier);
+	}
 	case EXPRESSION_INDEX: {
 		const IndexExpression *index = RCAST(const IndexExpression *, expression);
 		if (index->rhs) return unsupported(c, "multi-index expression");
@@ -114,6 +159,8 @@ static Bool emit_expression(C99 *c, const Expression *expression) {
 		fputc(']', c->out);
 		return true;
 	}
+	case EXPRESSION_COMPOUND_LITERAL:
+		return emit_compound_literal(c, RCAST(const CompoundLiteralExpression *, expression));
 	case EXPRESSION_CALL:
 		return emit_call(c, RCAST(const CallExpression *, expression));
 	case EXPRESSION_CAST: {
@@ -194,14 +241,23 @@ static Bool emit_declaration(C99 *c, const DeclarationStatement *declaration) {
 	CType type = declaration->type ? sema_type_from_ast(declaration->type)
 	                               : sema_infer_expression(&c->sema, value);
 	if (type == CTYPE_UNKNOWN && value->kind == EXPRESSION_LITERAL) type = CTYPE_UINTPTR;
-	const char *name = sema_c_type_name(type);
-	if (!name) return unsupported(c, "inferred local type");
+
+	indent(c);
+	if (type != CTYPE_UNKNOWN) {
+		const char *type_name = sema_c_type_name(type);
+		if (!type_name) return unsupported(c, "inferred local type");
+		fputs(type_name, c->out);
+	} else if (value->kind == EXPRESSION_COMPOUND_LITERAL) {
+		const CompoundLiteralExpression *literal = RCAST(const CompoundLiteralExpression *, value);
+		if (!emit_ast_type(c, literal->type)) return false;
+	} else {
+		return unsupported(c, "inferred local type");
+	}
 
 	if (!sema_add_local(&c->sema, declaration->names[0]->contents, type)) {
 		return unsupported(c, "local symbol capacity");
 	}
-	indent(c);
-	fprintf(c->out, "%s %.*s = ", name, SFMT(declaration->names[0]->contents));
+	fprintf(c->out, " %.*s = ", SFMT(declaration->names[0]->contents));
 	if (!emit_expression(c, value)) return false;
 	fputs(";\n", c->out);
 	return true;
@@ -225,8 +281,6 @@ static Bool emit_if(C99 *c, const IfStatement *statement) {
 	if (statement->init) return unsupported(c, "if initializer");
 	indent(c);
 	if (statement->cond && statement->cond->kind == EXPRESSION_BINARY) {
-		/* Binary expressions already carry the parentheses needed to preserve
-		 * the Odin AST. Avoid producing clang-annoying `if ((a == b))`. */
 		fputs("if ", c->out);
 		if (!emit_expression(c, statement->cond)) return false;
 		fputc(' ', c->out);
@@ -417,6 +471,25 @@ static Bool emit_definition(C99 *c, const DeclarationStatement *declaration,
 	return true;
 }
 
+static Bool emit_struct_type(C99 *c, Identifier *name, const StructType *type) {
+	if (type->kind != STRUCT_CONCRETE) return unsupported(c, "generic struct");
+	if (type->flags) return unsupported(c, "struct flags");
+	if (type->align) return unsupported(c, "struct alignment override");
+	if (type->where_clauses) return unsupported(c, "struct where clause");
+
+	fprintf(c->out, "typedef struct %.*s {\n", SFMT(name->contents));
+	const Size n_fields = array_size(type->fields);
+	for (Size i = 0; i < n_fields; i++) {
+		const Field *field = type->fields[i];
+		if (!field->name || !field->type || field->value) return unsupported(c, "struct field");
+		fputs("    ", c->out);
+		if (!emit_ast_type(c, field->type)) return false;
+		fprintf(c->out, " %.*s;\n", SFMT(field->name->contents));
+	}
+	fprintf(c->out, "} %.*s;\n", SFMT(name->contents));
+	return true;
+}
+
 static Bool for_each_declaration(C99 *c, BuildContext *build, int phase) {
 	const Size n_work = array_size(build->work);
 	for (Size w = 0; w < n_work; w++) {
@@ -428,6 +501,15 @@ static Bool for_each_declaration(C99 *c, BuildContext *build, int phase) {
 			Identifier *name;
 			const Expression *value;
 			if (!declaration_parts(declaration, &name, &value)) return unsupported(c, "top-level declaration");
+
+			if (value->kind == EXPRESSION_TYPE) {
+				const Type *type = RCAST(const TypeExpression *, value)->type;
+				if (type && type->kind == TYPE_STRUCT) {
+					if (phase == 0 && !emit_struct_type(c, name, RCAST(const StructType *, type))) return false;
+					continue;
+				}
+				return unsupported(c, "top-level type declaration");
+			}
 
 			if (value->kind == EXPRESSION_PROCEDURE) {
 				const ProcedureExpression *procedure = RCAST(const ProcedureExpression *, value);
