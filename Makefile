@@ -8,7 +8,7 @@ BUILD ?= build
 PREFIX ?= /usr/local
 DESTDIR ?=
 ODIN_FLAGS ?= -o:speed -reloc-mode:pic -no-entry-point
-NELUA_FLAGS ?= --release -P nogc
+NELUA_FLAGS ?= --release -P nogc --cflags=-O3
 
 .PHONY: all c odin zig nelua codin-native codin-check libpiano test test-c test-odin test-zig test-nelua test-codin-native test-libpiano test-blowfish test-crypt test-json bench bench-c bench-odin bench-zig bench-nelua bench-codin portable install clean
 
