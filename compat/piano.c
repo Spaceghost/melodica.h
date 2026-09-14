@@ -16,6 +16,7 @@
 #include "quickmix_genres.h"
 #include "explain_bookmarks.h"
 #include "settings.h"
+#include "station_modes.h"
 
 PianoReturn_t PianoRequest(PianoHandle_t *ph, PianoRequest_t *req,
         const PianoRequestType_t type) {
@@ -56,6 +57,10 @@ PianoReturn_t PianoRequest(PianoHandle_t *ph, PianoRequest_t *req,
             return piano_request_get_settings(ph, req);
         case PIANO_REQUEST_CHANGE_SETTINGS:
             return piano_request_change_settings(ph, req);
+        case PIANO_REQUEST_GET_STATION_MODES:
+            return piano_request_get_station_modes(ph, req);
+        case PIANO_REQUEST_SET_STATION_MODE:
+            return piano_request_set_station_mode(ph, req);
         default:
             return melodica_piano_request_base(ph, req, type);
     }
@@ -89,6 +94,9 @@ PianoReturn_t PianoResponse(PianoHandle_t *ph, PianoRequest_t *req) {
             case PIANO_REQUEST_GET_SETTINGS:
             case PIANO_REQUEST_CHANGE_SETTINGS:
                 return piano_response_settings(ph, req);
+            case PIANO_REQUEST_GET_STATION_MODES:
+            case PIANO_REQUEST_SET_STATION_MODE:
+                return piano_response_station_modes(ph, req);
             default:
                 break;
         }

@@ -39,7 +39,7 @@ ar rcs "$OUT/libpiano-reference.a" \
     "$REF/src/libpiano/request.o" "$REF/src/libpiano/response.o" "$REF/src/libpiano/list.o"
 # Rebuild both sides rather than benchmarking stale objects from other flags.
 make -B -C "$ROOT" CC="$CC" BUILD="$BUILD_DIR" libpiano
-for probe in piano playlist search station_mutations feedback seed station_info quickmix_genre explain_bookmarks settings; do
+for probe in piano playlist search station_mutations feedback seed station_info quickmix_genre explain_bookmarks settings station_modes; do
     "$CC" -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM \
         -I"$REF/src/libpiano" "$ROOT/tests/reference/${probe}_probe.c" \
         "$OUT/libpiano-reference.a" $(pkg-config --libs libcurl libgcrypt json-c) -lm -lpthread \
@@ -77,9 +77,10 @@ done
         "$OUT/station_info-reference" "$OUT/station_info-melodica" \
         "$OUT/quickmix_genre-reference" "$OUT/quickmix_genre-melodica" \
         "$OUT/explain_bookmarks-reference" "$OUT/explain_bookmarks-melodica" \
-        "$OUT/settings-reference" "$OUT/settings-melodica"
+        "$OUT/settings-reference" "$OUT/settings-melodica" \
+        "$OUT/station_modes-reference" "$OUT/station_modes-melodica"
     printf '\nDynamic dependencies are not included in archive bytes:\n'
-    for binary in playlist search station_mutations feedback seed station_info quickmix_genre explain_bookmarks settings; do
+    for binary in playlist search station_mutations feedback seed station_info quickmix_genre explain_bookmarks settings station_modes; do
         ldd "$OUT/$binary-reference"
         ldd "$OUT/$binary-melodica"
     done
@@ -87,7 +88,7 @@ done
 cat "$OUT/artifact-sizes.txt"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     {
-        printf '## libpiano compatibility\n\nReference `%s`; login/station, playlist, search, station-mutation, feedback/rating, seed-mutation, station-info, QuickMix/genre, transform-station, explanation/bookmark and settings differential probes passed.\n\n' "$REV"
+        printf '## libpiano compatibility\n\nReference `%s`; login/station, playlist, search, station-mutation, feedback/rating, seed-mutation, station-info, QuickMix/genre, transform-station, explanation/bookmark, settings and station-mode differential probes passed.\n\n' "$REV"
         printf 'Playlist API timings are a separate league, not a five-language score.\n\n```text\n'
         cat "$OUT"/playlist-*-bench-*.txt
         cat "$OUT/artifact-sizes.txt"
