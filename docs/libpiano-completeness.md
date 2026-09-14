@@ -15,7 +15,7 @@ library; independent lane expansion is a separate acceptance gate.
 
 ## Request/response inventory
 
-Four of the 24 public request kinds now have implementations on both sides of
+Seven of the 24 public request kinds now have implementations on both sides of
 the request/response boundary. This is an inventory, not a claim that every input
 or upstream quirk for these kinds has already been differentially verified.
 
@@ -25,7 +25,7 @@ or upstream quirk for these kinds has already been differentially verified.
 | GET_STATIONS | Implemented | Existing station list and QuickMix flag fixtures |
 | GET_PLAYLIST | Implemented | 3 request cases, 12 response cases, independent wire oracle and safety tests; full upstream differential run still required |
 | SEARCH | Implemented, differential pending | Exact request member order/method plus artist/song result ownership; deterministic upstream/candidate probe added |
-| RENAME_STATION, DELETE_STATION, CREATE_STATION | Pending | Wire bytes and successful local list/state updates |
+| RENAME_STATION, DELETE_STATION, CREATE_STATION | Implemented, differential pending | Exact method/member ordering, state/ownership effects, deterministic upstream/candidate probe; independent json-c request oracle passed |
 | RATE_SONG, ADD_FEEDBACK, ADD_TIRED_SONG | Pending | Delegation, ratings, low-level feedback semantics |
 | ADD_SEED, DELETE_SEED, DELETE_FEEDBACK, GET_STATION_INFO | Pending | Nested owned data and mutation effects |
 | SET_QUICKMIX, GET_GENRE_STATIONS, TRANSFORM_STATION | Pending | Lists, genres and creator-state transitions |
@@ -65,7 +65,7 @@ JSON parser or bounded response allocation.
 
 ## Search slice
 
-`PIANO_REQUEST_SEARCH` now constructs the upstream `music.search` request with
+`PIANO_REQUEST_SEARCH` constructs the upstream `music.search` request with
 `searchText`, `userAuthToken`, and signed 32-bit `syncTime` in the same insertion
 order used by json-c before Blowfish encryption. Search does not set the request's
 TLS flag in the pinned upstream implementation, so the compatibility layer leaves
@@ -82,6 +82,38 @@ executed under the retained benchmark environment.
 The current parser intentionally rejects malformed array/item/string shapes where
 json-c may coerce or tolerate them. This is the same documented compatibility
 boundary as the playlist parser and must not be silently described as exact parity.
+
+## Station mutation slice
+
+`PIANO_REQUEST_RENAME_STATION`, `PIANO_REQUEST_DELETE_STATION`, and
+`PIANO_REQUEST_CREATE_STATION` now use the pinned upstream method names and JSON
+member order before the common `userAuthToken` and signed 32-bit `syncTime` fields.
+They remain `secure=false`, matching the reference. Create-station distinguishes
+`musicToken` from `trackToken` plus `musicType` for song/artist seeds.
+
+Successful rename responses replace the station name with owned storage. Delete
+removes the exact station node from `ph->stations`, destroys its owned fields, and
+frees it. Create parses the returned station, replaces an existing same-id station,
+and appends the newly owned station. A deterministic candidate/upstream probe covers
+escaped request bytes, rename state, delete ownership/list removal, create/replace
+state and server-error mapping.
+
+To keep the installed public ABI unchanged while adding this slice, `piano.c` wraps
+the prior compatibility implementation. Its prior request/response functions are
+compiled as hidden internal base symbols; the public `PianoRequest` and
+`PianoResponse` wrappers intercept only these three new request kinds. The Makefile
+tracks the internal include files explicitly so edits cannot leave a stale
+`piano.o` behind.
+
+Local strict-C99 validation compiled the wrapper/header and probe with
+`-pedantic-errors -Wall -Wextra -Werror`, and symbol inspection confirmed the base
+request/response functions are hidden while the public wrappers retain default
+visibility. An independent json-c 0.18 oracle matched the exact pre-encryption JSON
+for rename/delete/create fixed cases plus all 255 non-NUL byte values in a station
+name and all 255 non-NUL byte values in the user auth token. This validation did not
+build the complete branch or upstream archive and therefore is not a full
+differential result. Raw evidence and limitations are retained in
+`docs/evidence/station-mutations-local-2026-09-14.txt`.
 
 ## Validation boundaries
 
@@ -100,18 +132,22 @@ Local execution on September 14, 2026 for the playlist slice:
 - Clang 17 ASan, UBSan and leak detection passed the shared probe and allocation
   failure suite. This is local execution, not a GitHub-hosted run.
 
-The pinned upstream comparison is still blocked before execution. GitHub Actions
-run 29, and a manual rerun of its failed differential job, both completed with no
-recorded steps, so this is classified as runner/infrastructure failure rather than
-a source verdict. This execution environment also cannot resolve github.com from
-the container, so it cannot independently fetch/build the pinned upstream tree.
-The search header was syntax-checked under strict C99 with warnings-as-errors in a
-standalone stub, but that is not a substitute for compiling or differentially
-executing the real library.
+Search and station-mutation additions have narrower local evidence because this
+execution environment cannot resolve github.com and does not have the complete
+repository/reference trees mounted. Search received strict-C99 header/probe syntax
+checks. Station mutations received the strict-C99 wrapper/probe and json-c wire
+oracle checks described above. Neither is promoted to a full candidate-build,
+performance, size or upstream-parity claim.
 
-The differential gate now runs the login/station, playlist, and search probes
-against the same unmodified pinned upstream archive. Search is therefore marked
-implemented but not upstream-verified until that gate actually executes.
+The pinned upstream comparison is still blocked before execution. GitHub Actions
+differential run 36 completed with no recorded steps at the station-mutation code
+commit; compare run 105 did the same for both jobs. These are runner/infrastructure
+failures, not source verdicts.
+
+The differential gate now runs login/station, playlist, search, and station-mutation
+probes against the same unmodified pinned upstream archive. Search and station
+mutations remain implemented but not upstream-verified until that gate actually
+executes.
 
 Malformed-input guardrails intentionally reject null/non-string song/search fields,
 invalid containers and non-finite/overflowing playlist gains rather than reproducing
@@ -139,20 +175,20 @@ with the playlist implementation. Archive bytes include non-runtime metadata and
 do not represent stripped code size. Raw command/output and source fingerprints
 are retained in `docs/evidence/playlist-local-2026-09-14.txt`.
 
-No search throughput or post-search archive-size result is asserted yet because the
-real branch has not executed in an available runner/toolchain after the search
-change. No new normalized five-language ranking is asserted either. Their five
-workloads and 90% geometric-mean / 80% worst-workload targets remain unchanged.
+No search/station-mutation throughput or post-feature archive-size result is asserted
+because the real branch has not executed in an available runner/toolchain after
+those changes. No new normalized five-language ranking is asserted either. Their
+five workloads and 90% geometric-mean / 80% worst-workload targets remain unchanged.
 C-model experiments must never be described as measured improvements in Odin,
 Nelua or another lane.
 
 ## Next acceptance slices
 
 First obtain a completed pinned upstream differential run for login/station,
-playlist and search. Then implement station mutations, including their response-side
-ownership/state changes. Follow with feedback/rating, seed/station information,
-QuickMix/genres, explanation/bookmarks, settings and modes. Each slice adds identical
-upstream and candidate probes before it becomes eligible for performance claims.
+playlist, search and station mutations. Then implement feedback/rating, followed by
+seed/station information, QuickMix/genres, explanation/bookmarks, settings and modes.
+Each slice adds identical upstream and candidate probes before it becomes eligible
+for performance claims.
 
 Expand the native language implementations on a common, independently implemented
 feature surface with the same buffer/error tests. Do not route all languages through
