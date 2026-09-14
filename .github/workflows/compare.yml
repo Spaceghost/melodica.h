@@ -35,7 +35,7 @@ jobs:
         run: sh scripts/ci-deps.sh native
       - name: Test CI failure handling
         id: harness
-        run: python3 -m unittest discover -s tests -p test_ci.py -v
+        run: python3 -m unittest discover -s tests -p 'test_ci*.py' -v
       - name: Install and verify every pinned language toolchain
         id: tools
         run: bash scripts/ci-toolchains.sh

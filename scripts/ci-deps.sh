@@ -12,7 +12,7 @@ as_root() {
 as_root env DEBIAN_FRONTEND=noninteractive apt-get update -qq
 as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates git curl xz-utils build-essential clang llvm lld binutils \
-    pkg-config python3 libreadline-dev
+    pkg-config python3 libreadline-dev tmux
 if [ "$mode" = reference ]; then
     as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         libcurl4-openssl-dev libgcrypt20-dev libjson-c-dev libao-dev \

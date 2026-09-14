@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Diagnose CI; --apply starts a repo-scoped Incus runner pool using existing gh auth."""
-import argparse, base64, fcntl, hashlib, json, os, re, shlex, shutil, subprocess, sys, tempfile
+import argparse, base64, fcntl, hashlib, json, os, re, shlex, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 REPO='Spaceghost/melodica.h'; INFRA='Spaceghost/atlas-infra'; INFRA_REV='e53704e06f62e47ea60b27a56fee0f406f518c1a'
@@ -9,7 +9,7 @@ FILES={'scripts/run-one-ubuntu.sh':'5d050ae2c598377b24e3a5f42eddae98d29dca23','s
 LABELS={'self-hosted','Linux','X64','ubuntu-tiny','spaceghost-melodica.h'}
 def command(args,timeout=60,capture=True):
  r=subprocess.run(args,text=True,capture_output=capture,timeout=timeout,check=False)
- if r.returncode: raise RuntimeError(shlex.join(args)+': '+(((r.stderr or '').strip()) if capture else '') or 'exit '+str(r.returncode))
+ if r.returncode: raise RuntimeError(shlex.join(args)+': '+((((r.stderr or '').strip()) if capture else '') or 'exit '+str(r.returncode)))
  return r.stdout if capture else ''
 def api(endpoint): return json.loads(command(['gh','api',endpoint]))
 def metadata(d): return d.get('metadata',d) if isinstance(d,dict) else d
@@ -71,24 +71,166 @@ def stage_bundle(state):
  (bundle/'config/repositories.txt').write_text(REPO+'\n'); (bundle/'config/repository-runners.tsv').write_text('# reviewed ubuntu-tiny default\n'); (bundle/'manifest.json').write_text(json.dumps({'upstream':INFRA_REV,'blobs':FILES},indent=2)+'\n')
  bindir=bundle/'bin'; bindir.mkdir(); wrapper=bindir/'incus'; wrapper.write_text('#!/bin/sh\nexec '+shlex.quote(str(Path(shutil.which('incus')).resolve()))+' --force-local "$@"\n'); wrapper.chmod(0o700)
  return bundle
-def apply(state,project):
- for p in ('gh','incus','tmux','sh'):
-  if not shutil.which(p): raise RuntimeError(p+' is required on bak; no host packages are installed')
- command(['gh','auth','status','--hostname','github.com']); api('repos/'+REPO+'/actions/runners?per_page=1')
- existing=subprocess.run(['tmux','has-session','-t','='+SESSION],capture_output=True)
- if existing.returncode==0:
-  if command(['tmux','show-options','-v','-t','='+SESSION,'@melodica-ci-owner']).strip()!=OWNER: raise RuntimeError('unrelated tmux session owns '+SESSION)
-  print('Existing owned runner pool retained.'); return
- project=select_project(project); audit_definition(project); bundle=stage_bundle(state); env=dict(os.environ,INCUS_PROJECT=project,PATH=str(bundle/'bin')+os.pathsep+os.environ.get('PATH',''))
- if subprocess.run(['sh',str(bundle/'scripts/audit-runner-base.sh'),SOURCE],env=env,check=False).returncode: raise RuntimeError('credential-free base audit failed')
- launcher=['env','INCUS_PROJECT='+project,'RUNNER_SOURCE='+SOURCE,'RUNNER_CLASS=ubuntu-tiny','RUNNER_SLOTS=1','RUNNER_RETRY_DELAY=30','RUNNER_OWNER='+OWNER,'PATH='+env['PATH'],'sh',str(bundle/'scripts/run-pool.sh')]
- shell='exec '+shlex.join(launcher)+' >>'+shlex.quote(str(state/'pool.log'))+' 2>&1'; command(['tmux','new-session','-d','-s',SESSION,shell]); command(['tmux','set-option','-t','='+SESSION,'@melodica-ci-owner',OWNER]); print('Started one repository-scoped ephemeral Incus runner slot in '+project+'.'); print('Pool log: '+str(state/'pool.log'))
+# This server is deliberately separate from interactive tmux and its hooks/shell.
+TMUX_SOCKET = 'melodica-ci-v2'
+
+
+def pool_tmux(state):
+    return ['tmux', '-L', TMUX_SOCKET, '-f', str(state / 'tmux.conf')]
+
+
+def pool_config(state):
+    return ("set-option -g default-shell /bin/sh\n"
+            "set-option -g default-command ''\n"
+            "set-option -g destroy-unattached off\n"
+            "set-option -s exit-unattached off\n"
+            "set-window-option -g remain-on-exit on\n"
+            "set-option -g @melodica-ci-owner " + OWNER + "\n"
+            "set-option -g @melodica-ci-state " + shlex.quote(str(state)) + "\n")
+
+
+def pool_entry(log, launcher):
+    # Open logging before exec. Keep the pool as the pane's direct process so its
+    # existing signal/cleanup traps still receive tmux's hangup on shutdown.
+    return ("#!/bin/sh\numask 077\nexec >>" + shlex.quote(str(log)) + " 2>&1\n"
+            "printf '%s\\n' 'melodica-ci: entering runner pool'\n"
+            "exec " + shlex.join(launcher) + "\n")
+
+
+def pool_log_tail(state):
+    log = state / 'pool.log'
+    if not log.exists():
+        return 'pool.log does not exist; the pool entry point was not reached.'
+    # Bound diagnostic reads even after a long-lived pool has accumulated output.
+    with log.open('rb') as stream:
+        stream.seek(0, os.SEEK_END)
+        stream.seek(max(0, stream.tell() - 8192))
+        return stream.read().decode('utf-8', errors='replace')
+
+
+def pool_state(tmux, target, state):
+    fmt = '#{pane_id}\t#{pane_dead}\t#{pane_dead_status}'
+    if target.startswith('%'):
+        output = command(tmux + ['display-message', '-p', '-t', target, fmt]).strip()
+    else:
+        output = command(tmux + ['list-panes', '-s', '-t', target, '-F', fmt]).strip()
+    rows = output.splitlines()
+    fields = rows[0].split('\t') if len(rows) == 1 else []
+    if len(fields) < 2 or not re.fullmatch(r'%[0-9]+', fields[0]):
+        raise RuntimeError('Expected one identifiable pool pane; refusing to start a duplicate')
+    pane, dead = fields[:2]
+    if dead not in ('0', '1'):
+        raise RuntimeError('Unrecognized pool pane state: ' + repr(output))
+    if dead == '1':
+        status = fields[2] if len(fields) > 2 else 'unknown'
+        # Save terminal output too, including errors before shell redirection.
+        captured = command(tmux + ['capture-pane', '-p', '-t', pane, '-S', '-80'])
+        (state / 'pool-pane.txt').write_text(captured)
+        raise RuntimeError('Runner pool exited (status ' + status + '). Pane retained; '
+                           'not starting another worker.\n' + pool_log_tail(state) +
+                           '\nRetained pane output:\n' + captured)
+    return pane
+
+
+def existing_pool(state):
+    private = pool_tmux(state)
+    result = subprocess.run(private + ['list-sessions', '-F', '#{session_name}'],
+                            capture_output=True, text=True, timeout=10, check=False)
+    if result.returncode == 0:
+        owner = command(private + ['show-options', '-gqv', '@melodica-ci-owner']).strip()
+        location = command(private + ['show-options', '-gqv', '@melodica-ci-state']).strip()
+        if owner != OWNER or location != str(state) or result.stdout.splitlines() != [SESSION]:
+            raise RuntimeError('Private tmux socket is not the expected owned pool; left untouched')
+        return private, pool_state(private, '=' + SESSION, state)
+    # Do not duplicate a running pool left by the previous launcher on the
+    # default server. Never kill or reconfigure the user's interactive server.
+    legacy = subprocess.run(['tmux', 'has-session', '-t', '=' + SESSION],
+                            capture_output=True, text=True, timeout=10, check=False)
+    if legacy.returncode == 0:
+        owner = command(['tmux', 'show-options', '-qv', '-t', '=' + SESSION,
+                         '@melodica-ci-owner']).strip()
+        if owner != OWNER:
+            raise RuntimeError('An unowned legacy tmux session already uses ' + SESSION)
+        return ['tmux'], pool_state(['tmux'], '=' + SESSION, state)
+    # A live but empty/unowned private server must not inherit our commands.
+    server = subprocess.run(private + ['show-options', '-gqv', '@melodica-ci-owner'],
+                            capture_output=True, text=True, timeout=10, check=False)
+    if server.returncode == 0:
+        raise RuntimeError('Private tmux server exists without its pool; inspect it before restarting')
+    return None
+
+
+def start_pool(state, bundle, project, path):
+    log = state / 'pool.log'
+    with log.open('a') as stream:
+        stream.write('\nmelodica-ci: preparing private tmux launch\n')
+    (state / 'tmux.conf').write_text(pool_config(state))
+    launcher = ['env', 'INCUS_PROJECT=' + project, 'RUNNER_SOURCE=' + SOURCE,
+                'RUNNER_CLASS=ubuntu-tiny', 'RUNNER_SLOTS=1', 'RUNNER_RETRY_DELAY=30',
+                'RUNNER_OWNER=' + OWNER, 'PATH=' + path, '/bin/sh',
+                str(bundle / 'scripts/run-pool.sh')]
+    entry = bundle / 'start-pool.sh'
+    entry.write_text(pool_entry(log, launcher))
+    entry.chmod(0o700)
+    tmux = pool_tmux(state)
+    # Two command arguments are executed directly, NOT through default-shell -c.
+    # The dedicated config enables remain-on-exit and ownership before this
+    # command starts. There is no post-spawn set-option race.
+    try:
+        identity = command(tmux + ['new-session', '-d', '-P', '-F',
+                           '#{session_id} #{pane_id}', '-s', SESSION, '-c', str(state),
+                           '/bin/sh', str(entry)]).strip()
+        if not re.fullmatch(r'\$[0-9]+ %[0-9]+', identity):
+            raise RuntimeError('Unexpected tmux identity: ' + repr(identity))
+        session, pane = identity.split()
+        (state / 'pool-session.json').write_text(json.dumps(
+            {'socket': TMUX_SOCKET, 'session': session, 'pane': pane,
+             'bundle': str(bundle), 'project': project}, indent=2) + '\n')
+        time.sleep(0.25)
+        pool_state(tmux, pane, state)
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+        # Includes tmux/config errors even before the shell can write pool.log.
+        raise RuntimeError(str(error) + '\nPool log: ' + str(log) + '\n' + pool_log_tail(state)) from error
+    return tmux, pane
+
+
+def apply(state, project):
+    state = state.resolve()
+    for program in ('gh', 'incus', 'tmux', 'sh'):
+        if not shutil.which(program):
+            raise RuntimeError(program + ' is required on bak; no host packages are installed')
+    command(['gh', 'auth', 'status', '--hostname', 'github.com'])
+    api('repos/' + REPO + '/actions/runners?per_page=1')
+    active = existing_pool(state)
+    if active is None:
+        project = select_project(project)
+        audit_definition(project)
+        bundle = stage_bundle(state)
+        env = dict(os.environ, INCUS_PROJECT=project,
+                   PATH=str(bundle / 'bin') + os.pathsep + os.environ.get('PATH', ''))
+        result = subprocess.run(['/bin/sh', str(bundle / 'scripts/audit-runner-base.sh'), SOURCE],
+                                env=env, check=False)
+        if result.returncode:
+            raise RuntimeError('credential-free base audit failed')
+        active = start_pool(state, bundle, project, env['PATH'])
+    print('Runner pool process is alive; this does not yet prove GitHub job pickup.')
+    print('Inspect pane: ' + shlex.join(active[0] + ['capture-pane', '-p', '-t', active[1]]))
+    print('Pool log: ' + str(state / 'pool.log'))
+    print(pool_log_tail(state), end='')
+    try:
+        runners = matching_runners(api('repos/' + REPO + '/actions/runners?per_page=100'))
+        online = sum(runner.get('status') == 'online' for runner in runners)
+        print('Matching online GitHub runners: ' + str(online) +
+              ('; listener registration still pending.' if not online else '.'))
+    except (RuntimeError, ValueError, subprocess.TimeoutExpired) as error:
+        print('Runner pickup unverified: ' + str(error), file=sys.stderr)
+
 def main():
  p=argparse.ArgumentParser(); p.add_argument('--apply',action='store_true'); p.add_argument('--project'); p.add_argument('--ref',default='libpiano-playlist-completeness'); a=p.parse_args()
  if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/-]*',a.ref) or '..' in a.ref: raise ValueError('invalid ref')
  if a.project and a.project not in ('codex-workers','atlas-workers','runners'): raise ValueError('only ordinary runner projects are admitted')
  if not shutil.which('gh'): raise RuntimeError('run on bak with its existing authenticated gh CLI')
- os.umask(0o077); state=Path(os.environ.get('XDG_STATE_HOME',str(Path.home()/'.local/state')))/'melodica-ci'; state.mkdir(parents=True,exist_ok=True); text=json.dumps(diagnose(a.ref),indent=2)+'\n'; (state/'diagnosis.json').write_text(text); print(text,end='')
+ os.umask(0o077); state=Path(os.environ.get('XDG_STATE_HOME',str(Path.home()/'.local/state')))/'melodica-ci'; state.mkdir(parents=True,exist_ok=True); text=json.dumps(diagnose(a.ref),indent=2)+'\n'; (state/'diagnosis.json').write_text(text); print('GitHub diagnosis: '+str(state/'diagnosis.json') if a.apply else text, end='\n' if a.apply else '')
  if a.apply:
   with (state/'apply.lock').open('w') as lock: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB); apply(state,a.project)
  return 0
