@@ -1,8 +1,6 @@
 package main
 
 MELODICA_ABI_VERSION :: u32(1)
-station_prefix :: "{\"returnAllStations\":true,\"userAuthToken\":\""
-station_suffix :: "\",\"syncTime\":"
 
 is_unreserved :: proc "contextless" (c: u8) -> bool {
 	return (c >= 'A' && c <= 'Z') ||
@@ -180,9 +178,8 @@ melodica_station_list_request_size :: proc "c" (
 	if user_auth_token == nil {
 		return 0
 	}
-	return uintptr(len(station_prefix)) +
-	       melodica_json_escape_size(user_auth_token, user_auth_token_len) +
-	       uintptr(len(station_suffix)) + decimal_size(sync_time) + 1
+	return 43 + melodica_json_escape_size(user_auth_token, user_auth_token_len) +
+	       13 + decimal_size(sync_time) + 1
 }
 
 @(export)
@@ -198,8 +195,8 @@ melodica_station_list_request :: proc "c" (
 		return required
 	}
 
-	prefix := station_prefix
-	suffix := station_suffix
+	prefix := "{\"returnAllStations\":true,\"userAuthToken\":\""
+	suffix := "\",\"syncTime\":"
 	out: uintptr = 0
 	for i in 0..<len(prefix) {
 		dst[out] = prefix[i]
