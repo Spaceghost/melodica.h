@@ -11,10 +11,17 @@
 #undef MELODICA_INTERNAL_VIS
 
 #include "station_mutations.h"
+#include "feedback.h"
 
 PianoReturn_t PianoRequest(PianoHandle_t *ph, PianoRequest_t *req,
         const PianoRequestType_t type) {
     switch (type) {
+        case PIANO_REQUEST_RATE_SONG:
+            return piano_request_rate_song(ph, req);
+        case PIANO_REQUEST_ADD_FEEDBACK:
+            return piano_request_add_feedback(ph, req);
+        case PIANO_REQUEST_ADD_TIRED_SONG:
+            return piano_request_tired_song(ph, req);
         case PIANO_REQUEST_RENAME_STATION:
             return piano_request_rename_station(ph, req);
         case PIANO_REQUEST_DELETE_STATION:
@@ -29,6 +36,10 @@ PianoReturn_t PianoRequest(PianoHandle_t *ph, PianoRequest_t *req,
 PianoReturn_t PianoResponse(PianoHandle_t *ph, PianoRequest_t *req) {
     if (req != NULL) {
         switch (req->type) {
+            case PIANO_REQUEST_RATE_SONG:
+            case PIANO_REQUEST_ADD_FEEDBACK:
+            case PIANO_REQUEST_ADD_TIRED_SONG:
+                return piano_response_feedback(ph, req);
             case PIANO_REQUEST_RENAME_STATION:
             case PIANO_REQUEST_DELETE_STATION:
             case PIANO_REQUEST_CREATE_STATION:

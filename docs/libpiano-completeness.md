@@ -4,193 +4,103 @@
 
 Reference: `PromyLOPh/pianobar` commit
 `ad5ec908de10479ecee7d7c0e1030d12146f8f16`, pinned in
-`tests/reference/pianobar.rev`. Request and response behavior is read from
-`src/libpiano/request.c` and `src/libpiano/response.c` at that revision.
-The differential script builds these unmodified alongside upstream piano/list/crypt.
-
-PR #1 was merged into main at `a19d32615908b68b94a1748c7e05a5123937669e`.
-Its five native serializer lanes must not be mistaken for five complete libpiano
-implementations. Full API behavior is currently in the shared C compatibility
-library; independent lane expansion is a separate acceptance gate.
+`tests/reference/pianobar.rev`. The differential gate builds that source unmodified.
+PR #1 merged the five native serializer lanes; those lanes are not yet five complete
+libpiano implementations. Full API behavior remains a separate compatibility league.
 
 ## Request/response inventory
 
-Seven of the 24 public request kinds now have implementations on both sides of
-the request/response boundary. This is an inventory, not a claim that every input
-or upstream quirk for these kinds has already been differentially verified.
+Nine of the 24 public request kinds now have implementations on both sides of the
+request/response boundary: LOGIN, GET_STATIONS, GET_PLAYLIST, SEARCH,
+RENAME_STATION, DELETE_STATION, CREATE_STATION, RATE_SONG and ADD_TIRED_SONG.
+`ADD_FEEDBACK` request construction is implemented because RATE_SONG delegates to it,
+but a successful direct ADD_FEEDBACK response is deliberately not counted: pinned
+upstream asserts in that response case, and melodica returns `PIANO_RET_ERR` rather
+than inventing a successful contract.
 
 | Request family | Status | Evidence / remaining work |
 |---|---|---|
-| LOGIN | Implemented | Existing two-step login and error fixtures; repeat in pinned differential gate |
-| GET_STATIONS | Implemented | Existing station list and QuickMix flag fixtures |
-| GET_PLAYLIST | Implemented | 3 request cases, 12 response cases, independent wire oracle and safety tests; full upstream differential run still required |
-| SEARCH | Implemented, differential pending | Exact request member order/method plus artist/song result ownership; deterministic upstream/candidate probe added |
-| RENAME_STATION, DELETE_STATION, CREATE_STATION | Implemented, differential pending | Exact method/member ordering, state/ownership effects, deterministic upstream/candidate probe; independent json-c request oracle passed |
-| RATE_SONG, ADD_FEEDBACK, ADD_TIRED_SONG | Pending | Delegation, ratings, low-level feedback semantics |
+| LOGIN | Implemented | Existing two-step login/error fixtures; pinned differential pending |
+| GET_STATIONS | Implemented | Station list and QuickMix flag fixtures; pinned differential pending |
+| GET_PLAYLIST | Implemented | Request/response, ownership, wire oracle, fault injection and local benchmark |
+| SEARCH | Implemented, differential pending | Request bytes and owned artist/song results |
+| RENAME_STATION, DELETE_STATION, CREATE_STATION | Implemented, differential pending | Request bytes and state/ownership effects |
+| RATE_SONG, ADD_TIRED_SONG | Implemented, differential pending | Feedback delegation, request restoration and rating state effects |
+| ADD_FEEDBACK | Request implemented | Direct successful response intentionally returns ERR; upstream asserts there |
 | ADD_SEED, DELETE_SEED, DELETE_FEEDBACK, GET_STATION_INFO | Pending | Nested owned data and mutation effects |
 | SET_QUICKMIX, GET_GENRE_STATIONS, TRANSFORM_STATION | Pending | Lists, genres and creator-state transitions |
 | EXPLAIN, BOOKMARK_SONG, BOOKMARK_ARTIST | Pending | Text assembly and exact request payloads |
 | GET_SETTINGS, CHANGE_SETTINGS | Pending | Settings ownership, tristates and optional members |
 | GET_STATION_MODES, SET_STATION_MODE | Pending | Mode fields, active selection and response effects |
 
-The existing public data layout and serializer ABI are unchanged. Unsupported
-`PianoResponse` success envelopes return `PIANO_RET_ERR`; they must not count as
-implemented merely because the server reported `stat: ok`.
+Unsupported successful response kinds must return `PIANO_RET_ERR`; server `stat: ok`
+is never enough to call an unimplemented path complete.
 
-## Playlist slice
+## Implemented compatibility slices
 
-The request uses `station.getPlaylist`, `secure=true`, the upstream member order
-and json-c's historical spaced JSON serialization. Slash escaping and lowercase
-control escape hex digits are wire behavior because the bytes are encrypted.
-The control-digit fix also corrects the shared login/station JSON writer; URL
-percent-escape hex remains uppercase.
+Playlist uses exact upstream member ordering and json-c's historical spaced JSON
+serialization before encryption. The response selects low/medium/high audio,
+preserves ownership semantics, rejects unavailable requested quality, skips non-song
+items, and builds lists with a tail pointer. Local GCC 14.2.0 strict-C99 tests covered
+3 request and 12 response cases, a 255-byte wire oracle, 44 allocation-failure
+positions, and Clang ASan/UBSan/leak checks.
 
-Response handling selects the requested low, medium or high quality, maps
-`aacplus`/`mp3`, preserves unknown encodings as UNKNOWN, and skips items without
-`artistName`. It copies artist, album, title, track/station tokens, URLs, gain,
-length and rating. Missing optional strings remain null; a missing audio map is
-allowed, as in the reference. An existing map lacking the requested quality or
-encoding produces `PIANO_RET_QUALITY_UNAVAILABLE`.
+Search emits `music.search` with `searchText`, `userAuthToken` and signed 32-bit
+`syncTime`; results own artist and song lists. Station mutations implement exact
+rename/delete/create method/member order and successful state changes, including
+same-id replacement on create. Their pinned differentials remain unexecuted because
+hosted jobs have not been assigned runners.
 
-Output is built privately. On late failure it is destroyed and the caller's
-`retPlaylist` remains unchanged. Missing `items` also leaves that output unchanged;
-an empty `items` array sets it to null. Successful replacement does not free a
-pre-existing caller-owned playlist. Callers destroy returned playlists explicitly.
-Request destruction continues not to own `responseData` or request `data`.
+Feedback/rating now follows upstream's high-level delegation: RATE_SONG transforms
+its data into ADD_FEEDBACK temporarily, uses `station.addFeedback`, then restores
+`req->type` and `req->data`. LOVE emits `isPositive:true`; BAN emits false.
+Successful RATE_SONG responses update the song rating. ADD_TIRED_SONG emits
+`user.sleepSong` and marks the song TIRED on success. Direct ADD_FEEDBACK success is
+not exposed as successful behavior because upstream itself asserts there. A new
+shared feedback probe compares request ciphertext, restored request state, success
+rating transitions and error mapping against the untouched reference.
 
-Token traversal is one forward pass through playlist items, and a tail pointer
-avoids repeatedly traversing the list to append songs. Metadata lookup remains
-linear within each item's token subtree. This is not a claim of a fully indexed
-JSON parser or bounded response allocation.
+The existing public ABI is unchanged. `piano.c` wraps hidden internal base
+request/response symbols and intercepts only completeness slices added after that
+base. Lowercase JSON control-escape hex matches json-c wire behavior; URL percent
+escapes remain uppercase.
 
-## Search slice
+## Validation and infrastructure boundary
 
-`PIANO_REQUEST_SEARCH` constructs the upstream `music.search` request with
-`searchText`, `userAuthToken`, and signed 32-bit `syncTime` in the same insertion
-order used by json-c before Blowfish encryption. Search does not set the request's
-TLS flag in the pinned upstream implementation, so the compatibility layer leaves
-`secure=false` as well.
+The pinned gate runs `piano`, `playlist`, `search`, `station_mutations`, and
+`feedback` probes against the same untouched reference archive. Before this slice,
+differential run #39 and comparison run #108 at `5d2f464` completed with no job
+steps; this is pre-execution runner infrastructure failure, not a source verdict.
 
-Successful responses populate owned artist and song lists. Artists copy
-`artistName` and `musicToken`; songs copy `songName`, `artistName`, and `musicToken`.
-A deterministic probe covers an escaped request, Unicode response strings, a
-populated result, an empty result, destruction, and a server error. Construction
-uses tail pointers so list population is linear rather than repeatedly walking the
-result list. No search performance claim is made until the real implementation is
-executed under the retained benchmark environment.
+Local feedback work was still checked where possible: GCC 14.2.0 strict-C99 syntax
+checks passed for the internal header and differential probe, and json-c 0.18 matched
+767 pre-encryption feedback JSON cases: fixed LOVE/BAN cases plus every non-NUL byte
+in station token, track token and auth token positions. Raw commands, results and
+limitations are retained in `docs/evidence/feedback-local-2026-09-14.txt`.
 
-The current parser intentionally rejects malformed array/item/string shapes where
-json-c may coerce or tolerate them. This is the same documented compatibility
-boundary as the playlist parser and must not be silently described as exact parity.
+The parser intentionally rejects some malformed/coercible shapes that json-c may
+tolerate. Escaped object keys, duplicate keys and all permissive json-c coercions are
+not yet comprehensively matched. These remain explicit compatibility gaps.
 
-## Station mutation slice
+## Performance and size evidence
 
-`PIANO_REQUEST_RENAME_STATION`, `PIANO_REQUEST_DELETE_STATION`, and
-`PIANO_REQUEST_CREATE_STATION` now use the pinned upstream method names and JSON
-member order before the common `userAuthToken` and signed 32-bit `syncTime` fields.
-They remain `secure=false`, matching the reference. Create-station distinguishes
-`musicToken` from `trackToken` plus `musicType` for song/artist seeds.
+The only retained full compatibility benchmark remains the same-host playlist run:
+GCC 14.2.0 `-O2`, x86_64 AMD EPYC 9V74, no LTO or native-CPU flags. Median parse /
+build / destroy throughput was 168,286 req/s for 4 songs, 10,669 for 64 songs and
+2,506 for 256 songs. The comparable archive moved from 49,906 to 56,586 bytes when
+playlist support was added. These are initial functionality measurements, not a
+speedup ratio.
 
-Successful rename responses replace the station name with owned storage. Delete
-removes the exact station node from `ph->stations`, destroys its owned fields, and
-frees it. Create parses the returned station, replaces an existing same-id station,
-and appends the newly owned station. A deterministic candidate/upstream probe covers
-escaped request bytes, rename state, delete ownership/list removal, create/replace
-state and server-error mapping.
-
-To keep the installed public ABI unchanged while adding this slice, `piano.c` wraps
-the prior compatibility implementation. Its prior request/response functions are
-compiled as hidden internal base symbols; the public `PianoRequest` and
-`PianoResponse` wrappers intercept only these three new request kinds. The Makefile
-tracks the internal include files explicitly so edits cannot leave a stale
-`piano.o` behind.
-
-Local strict-C99 validation compiled the wrapper/header and probe with
-`-pedantic-errors -Wall -Wextra -Werror`, and symbol inspection confirmed the base
-request/response functions are hidden while the public wrappers retain default
-visibility. An independent json-c 0.18 oracle matched the exact pre-encryption JSON
-for rename/delete/create fixed cases plus all 255 non-NUL byte values in a station
-name and all 255 non-NUL byte values in the user auth token. This validation did not
-build the complete branch or upstream archive and therefore is not a full
-differential result. Raw evidence and limitations are retained in
-`docs/evidence/station-mutations-local-2026-09-14.txt`.
-
-## Validation boundaries
-
-Local execution on September 14, 2026 for the playlist slice:
-
-- Real compatibility sources built with GCC 14.2.0 under strict C99; the shared
-  playlist probe passed 3 request and 12 response cases.
-- An independent installed json-c oracle matched request JSON for all 255 non-NUL
-  input byte values, including control escapes. json-c is test-only.
-- Metadata, malformed structures, invalid quality, absent/empty results,
-  unavailable quality and unsupported response behavior passed local tests.
-- Every one of 44 allocation positions in a four-song response was fault-injected:
-  no leak and no caller-output mutation. The existing JSON API can report token
-  allocation failure as INVALID_RESPONSE rather than OUT_OF_MEMORY; the test
-  records that limitation rather than hiding it.
-- Clang 17 ASan, UBSan and leak detection passed the shared probe and allocation
-  failure suite. This is local execution, not a GitHub-hosted run.
-
-Search and station-mutation additions have narrower local evidence because this
-execution environment cannot resolve github.com and does not have the complete
-repository/reference trees mounted. Search received strict-C99 header/probe syntax
-checks. Station mutations received the strict-C99 wrapper/probe and json-c wire
-oracle checks described above. Neither is promoted to a full candidate-build,
-performance, size or upstream-parity claim.
-
-The pinned upstream comparison is still blocked before execution. GitHub Actions
-differential run 36 completed with no recorded steps at the station-mutation code
-commit; compare run 105 did the same for both jobs. These are runner/infrastructure
-failures, not source verdicts.
-
-The differential gate now runs login/station, playlist, search, and station-mutation
-probes against the same unmodified pinned upstream archive. Search and station
-mutations remain implemented but not upstream-verified until that gate actually
-executes.
-
-Malformed-input guardrails intentionally reject null/non-string song/search fields,
-invalid containers and non-finite/overflowing playlist gains rather than reproducing
-upstream crashes or undefined conversions. Valid JSON numeric strings, booleans,
-null/missing optional playlist numbers and integer saturation have fixtures.
-Escaped object keys, duplicate keys and all permissive json-c coercions are not yet
-comprehensively matched by the existing JSON parser. These remain explicit gaps.
-
-## Actual local performance and size
-
-Same-host native C compatibility library, GCC 14.2.0 `-O2`, x86_64 AMD EPYC 9V74.
-No LTO or native-CPU flags. The playlist benchmark validates counts, consumes
-output, and includes allocation, parsing, list construction and destruction. Five
-measured rounds follow an equal-work warmup.
-
-| Songs per response | Requests/second, local median |
-|---:|---:|
-| 4 | 168,286 |
-| 64 | 10,669 |
-| 256 | 2,506 |
-
-The playlist feature previously returned failure, so these are initial measurements,
-not speedup ratios. The comparable local archives grew from 49,906 to 56,586 bytes
-with the playlist implementation. Archive bytes include non-runtime metadata and
-do not represent stripped code size. Raw command/output and source fingerprints
-are retained in `docs/evidence/playlist-local-2026-09-14.txt`.
-
-No search/station-mutation throughput or post-feature archive-size result is asserted
-because the real branch has not executed in an available runner/toolchain after
-those changes. No new normalized five-language ranking is asserted either. Their
-five workloads and 90% geometric-mean / 80% worst-workload targets remain unchanged.
-C-model experiments must never be described as measured improvements in Odin,
-Nelua or another lane.
+No search, station-mutation or feedback throughput/size movement is asserted until
+the real branch executes. No new C/Odin/Zig/Nelua/Codin ranking is asserted. The
+native serializer league keeps its existing five workloads and competitive gate:
+normalized geometric mean >=90% of the leader and every workload >=80%. A C model
+is never evidence for another language.
 
 ## Next acceptance slices
 
-First obtain a completed pinned upstream differential run for login/station,
-playlist, search and station mutations. Then implement feedback/rating, followed by
-seed/station information, QuickMix/genres, explanation/bookmarks, settings and modes.
-Each slice adds identical upstream and candidate probes before it becomes eligible
-for performance claims.
-
-Expand the native language implementations on a common, independently implemented
-feature surface with the same buffer/error tests. Do not route all languages through
-the C compatibility library and call that language parity. Preserve the primitive
-league while adding complete protocol workloads as a separately versioned suite.
+First obtain a completed pinned differential for the currently implemented slices.
+Then implement seeds and station information, followed by QuickMix/genres,
+explanation/bookmarks, settings and station modes. Each slice must add identical
+upstream/candidate probes before performance claims. Native-language protocol work
+must remain independently implemented rather than routing every lane through C.
