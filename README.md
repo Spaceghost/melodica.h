@@ -10,10 +10,14 @@ The product goal is deliberately obnoxious in a useful way: **one tiny library t
 |---|---|---|---|
 | portable C99 | `include/melodica.h`, `impl/c` | single-header implementation / static library | portability baseline + winner-eligible |
 | Odin | `impl/odin` | native Odin static library | winner-eligible |
+| Zig | `impl/zig` | native Zig static library | winner-eligible |
+| Nelua | `impl/nelua` | Nelua → optimized C → native static library | winner-eligible |
 | Codin C99 | `impl/codin` | `Spaceghost/codin` → strict C99 → GCC/Clang | winner-eligible |
 | Codin native | `impl/codin` | native Odin static library | control only |
 
 `Spaceghost/codin` now owns the compiler backend. `melodica.h` pins a known-green compiler revision instead of carrying a secret patch stack in the application repo. Codin currently has the deliberately staged C99 ladder: minimal sema and range lowering, structs, fixed arrays, enums, slices/strings, multiple returns, `defer`, tagged unions, imports and narrow `$T` monomorphization. Unsupported shapes fail loudly.
+
+The Nelua lane is deliberately low-level: garbage collection is disabled, the shared ABI is exported directly with fixed C names, and the compiler emits an optimized static library. That keeps Nelua in the same allocation-free, C-callable contest as the C/Odin/Zig implementations instead of quietly benchmarking a different runtime model.
 
 ## Portable single-header core
 
@@ -48,14 +52,14 @@ The old libgcrypt compile-time dependency is gone; cipher handles are opaque poi
 ## Build / test / install
 
 ```sh
-make test          # C + Odin + native Codin control + libpiano compatibility
+make test          # C + Odin + Zig + Nelua + native Codin control + libpiano compatibility
 make codin-check   # Codin -> strict C99 -> GCC + Clang + feature fixtures
 make portable      # freestanding native + wasm32 C objects
 make bench         # language shootout microbenchmarks
 make install       # portable C libmelodica.a + libpiano.a + headers
 ```
 
-CI pins Odin `dev-2026-09` by SHA-256 and pins Codin by commit. Every implementation lane must remain bit-for-bit behavior-compatible with `include/melodica.h` on the shared tests.
+CI pins Odin `dev-2026-09` by SHA-256, Zig `0.16.0` by SHA-256, Nelua by exact upstream commit, and Codin by commit. Every implementation lane must remain bit-for-bit behavior-compatible with `include/melodica.h` on the shared tests.
 
 ## Completeness path
 
