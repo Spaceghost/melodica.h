@@ -103,11 +103,12 @@ inline fn writeDecimal(dst: [*]u8, out_in: usize, value_in: usize) usize {
     var digits: [3 * @sizeOf(usize)]u8 = undefined;
     var count: usize = 0;
     var value = value_in;
-    do {
+    while (true) {
         digits[count] = '0' + @as(u8, @intCast(value % 10));
         count += 1;
         value /= 10;
-    } while (value != 0);
+        if (value == 0) break;
+    }
 
     var out = out_in;
     while (count != 0) {
