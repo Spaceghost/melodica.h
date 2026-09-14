@@ -96,10 +96,16 @@ static PianoReturn_t piano_playlist_number(const MelodicaJsonDoc *doc,
 static PianoReturn_t piano_response_playlist(PianoRequest_t *req,
         const MelodicaJsonDoc *doc, const size_t result) {
     PianoRequestDataGetPlaylist_t *data = (PianoRequestDataGetPlaylist_t *)req->data;
-    if (data == NULL || data->quality < PIANO_AQ_LOW || data->quality > PIANO_AQ_HIGH ||
-            result >= doc->count || doc->tokens[result].type != MELODICA_JSON_OBJECT) {
+    if (data == NULL || data->quality < PIANO_AQ_LOW || data->quality > PIANO_AQ_HIGH) {
         return PIANO_RET_INVALID_RESPONSE;
     }
+    /* json-c's object lookup simply reports no member for a missing, null or
+     * non-object result. Upstream therefore returns OK and leaves retPlaylist
+     * untouched for all of those shapes rather than rejecting the response. */
+    if (result == MELODICA_JSON_NONE) return PIANO_RET_OK;
+    if (result >= doc->count) return PIANO_RET_INVALID_RESPONSE;
+    if (doc->tokens[result].type != MELODICA_JSON_OBJECT) return PIANO_RET_OK;
+
     const size_t items = melodica_json_object_get(doc, result, "items");
     /* Unlike an empty array, a missing items member leaves the output alone. */
     if (items == MELODICA_JSON_NONE) return PIANO_RET_OK;
