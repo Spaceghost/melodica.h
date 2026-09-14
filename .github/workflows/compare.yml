@@ -71,23 +71,8 @@ jobs:
       - name: Prove portable C core across freestanding targets
         run: make portable
 
-      - name: Emit strict C99 with Codin and test with GCC + Clang
-        run: make codin-check
-
-      - name: Benchmark portable C
-        run: make bench-c
-
-      - name: Benchmark native Odin
-        run: make bench-odin
-
-      - name: Benchmark Zig
-        run: make bench-zig
-
-      - name: Benchmark Nelua
-        run: make bench-nelua
-
-      - name: Benchmark Codin C99 via GCC
-        run: ./build/codin/bench
+      - name: Run strict-C99 checks and normalized multi-workload shootout
+        run: make shootout
 
       - name: Report artifact sizes
         shell: bash
