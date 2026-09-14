@@ -14,6 +14,7 @@
 #include "feedback.h"
 #include "seeds.h"
 #include "quickmix_genres.h"
+#include "explain_bookmarks.h"
 
 PianoReturn_t PianoRequest(PianoHandle_t *ph, PianoRequest_t *req,
         const PianoRequestType_t type) {
@@ -44,6 +45,12 @@ PianoReturn_t PianoRequest(PianoHandle_t *ph, PianoRequest_t *req,
             return piano_request_get_genre_stations(ph, req);
         case PIANO_REQUEST_TRANSFORM_STATION:
             return piano_request_transform_station(ph, req);
+        case PIANO_REQUEST_EXPLAIN:
+            return piano_request_explain(ph, req);
+        case PIANO_REQUEST_BOOKMARK_SONG:
+            return piano_request_bookmark(ph, req, type, "bookmark.addSongBookmark");
+        case PIANO_REQUEST_BOOKMARK_ARTIST:
+            return piano_request_bookmark(ph, req, type, "bookmark.addArtistBookmark");
         default:
             return melodica_piano_request_base(ph, req, type);
     }
@@ -70,6 +77,10 @@ PianoReturn_t PianoResponse(PianoHandle_t *ph, PianoRequest_t *req) {
             case PIANO_REQUEST_GET_GENRE_STATIONS:
             case PIANO_REQUEST_TRANSFORM_STATION:
                 return piano_response_quickmix_genres(ph, req);
+            case PIANO_REQUEST_EXPLAIN:
+            case PIANO_REQUEST_BOOKMARK_SONG:
+            case PIANO_REQUEST_BOOKMARK_ARTIST:
+                return piano_response_explain_bookmarks(ph, req);
             default:
                 break;
         }
