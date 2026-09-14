@@ -57,13 +57,17 @@ static PianoReturn_t piano_search_string(const MelodicaJsonDoc *doc,
 static PianoReturn_t piano_response_search(PianoRequest_t *req,
         const MelodicaJsonDoc *doc, const size_t result) {
     PianoRequestDataSearch_t *data = (PianoRequestDataSearch_t *)req->data;
-    if (data == NULL || result >= doc->count ||
-            doc->tokens[result].type != MELODICA_JSON_OBJECT) {
-        return PIANO_RET_INVALID_RESPONSE;
-    }
+    if (data == NULL) return PIANO_RET_INVALID_RESPONSE;
 
     PianoSearchResult_t *search = &data->searchResult;
+    /* Upstream clears the caller's result before looking up artists/songs.
+     * json-c object lookup on missing/null/non-object result simply finds no
+     * members, so those shapes are successful empty searches. */
     memset(search, 0, sizeof(*search));
+    if (result == MELODICA_JSON_NONE) return PIANO_RET_OK;
+    if (result >= doc->count) return PIANO_RET_INVALID_RESPONSE;
+    if (doc->tokens[result].type != MELODICA_JSON_OBJECT) return PIANO_RET_OK;
+
     PianoArtist_t *artist_tail = NULL;
     PianoSong_t *song_tail = NULL;
     PianoReturn_t ret = PIANO_RET_OK;
