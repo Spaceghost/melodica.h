@@ -1,5 +1,6 @@
 ODIN ?= odin
 ZIG ?= zig
+NELUA ?= nelua
 CC ?= cc
 AR ?= ar
 CLANG ?= clang
@@ -7,8 +8,9 @@ BUILD ?= build
 PREFIX ?= /usr/local
 DESTDIR ?=
 ODIN_FLAGS ?= -o:speed -reloc-mode:pic -no-entry-point
+NELUA_FLAGS ?= --release -P nogc
 
-.PHONY: all c odin zig codin-native codin-check libpiano test test-c test-odin test-zig test-codin-native test-libpiano test-blowfish test-crypt test-json bench bench-c bench-odin bench-zig bench-codin portable install clean
+.PHONY: all c odin zig nelua codin-native codin-check libpiano test test-c test-odin test-zig test-nelua test-codin-native test-libpiano test-blowfish test-crypt test-json bench bench-c bench-odin bench-zig bench-nelua bench-codin portable install clean
 
 all: test
 
@@ -26,6 +28,10 @@ $(BUILD)/odin/libmelodica.a: impl/odin/melodica.odin
 $(BUILD)/zig/libmelodica.a: impl/zig/melodica.zig
 	mkdir -p $(BUILD)/zig
 	$(ZIG) build-lib $< -O ReleaseFast -fPIC -femit-bin=$@
+
+$(BUILD)/nelua/libmelodica.a: impl/nelua/melodica.nelua
+	mkdir -p $(BUILD)/nelua
+	$(NELUA) $(NELUA_FLAGS) --cc="$(CC)" -A -o $@ $<
 
 $(BUILD)/codin-native/libmelodica.a: impl/codin/melodica.odin
 	mkdir -p $(BUILD)/codin-native
@@ -61,6 +67,10 @@ $(BUILD)/zig/smoke: tests/smoke.c include/melodica.h $(BUILD)/zig/libmelodica.a
 	$(CC) -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude tests/smoke.c \
 		$(BUILD)/zig/libmelodica.a -o $@
 
+$(BUILD)/nelua/smoke: tests/smoke.c include/melodica.h $(BUILD)/nelua/libmelodica.a
+	$(CC) -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude tests/smoke.c \
+		$(BUILD)/nelua/libmelodica.a -o $@
+
 $(BUILD)/codin-native/smoke: tests/smoke.c include/melodica.h $(BUILD)/codin-native/libmelodica.a
 	$(CC) -O2 -std=c11 -Wall -Wextra -Werror -Iinclude tests/smoke.c \
 		$(BUILD)/codin-native/libmelodica.a -lm -ldl -lpthread -o $@
@@ -88,9 +98,14 @@ $(BUILD)/zig/bench: bench/bench.c include/melodica.h $(BUILD)/zig/libmelodica.a
 	$(CC) -O3 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude bench/bench.c \
 		$(BUILD)/zig/libmelodica.a -o $@
 
+$(BUILD)/nelua/bench: bench/bench.c include/melodica.h $(BUILD)/nelua/libmelodica.a
+	$(CC) -O3 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude bench/bench.c \
+		$(BUILD)/nelua/libmelodica.a -o $@
+
 c: $(BUILD)/c/libmelodica.a
 odin: $(BUILD)/odin/libmelodica.a
 zig: $(BUILD)/zig/libmelodica.a
+nelua: $(BUILD)/nelua/libmelodica.a
 codin-native: $(BUILD)/codin-native/libmelodica.a
 libpiano: $(BUILD)/compat/libpiano.a
 
@@ -105,6 +120,9 @@ test-odin: $(BUILD)/odin/smoke
 
 test-zig: $(BUILD)/zig/smoke
 	./$(BUILD)/zig/smoke
+
+test-nelua: $(BUILD)/nelua/smoke
+	./$(BUILD)/nelua/smoke
 
 test-codin-native: $(BUILD)/codin-native/smoke
 	./$(BUILD)/codin-native/smoke
@@ -121,7 +139,7 @@ test-crypt: $(BUILD)/compat/crypt-smoke
 test-json: $(BUILD)/compat/json-smoke
 	./$(BUILD)/compat/json-smoke
 
-test: test-c test-odin test-zig test-codin-native test-blowfish test-crypt test-json test-libpiano
+test: test-c test-odin test-zig test-nelua test-codin-native test-blowfish test-crypt test-json test-libpiano
 
 bench-c: $(BUILD)/c/bench
 	./$(BUILD)/c/bench
@@ -132,10 +150,13 @@ bench-odin: $(BUILD)/odin/bench
 bench-zig: $(BUILD)/zig/bench
 	./$(BUILD)/zig/bench
 
+bench-nelua: $(BUILD)/nelua/bench
+	./$(BUILD)/nelua/bench
+
 bench-codin: codin-check
 	./$(BUILD)/codin/bench
 
-bench: bench-c bench-odin bench-zig bench-codin
+bench: bench-c bench-odin bench-zig bench-nelua bench-codin
 
 portable:
 	mkdir -p $(BUILD)/portable
