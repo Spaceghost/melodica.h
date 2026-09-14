@@ -12,6 +12,7 @@
 
 #include "station_mutations.h"
 #include "feedback.h"
+#include "seeds.h"
 
 PianoReturn_t PianoRequest(PianoHandle_t *ph, PianoRequest_t *req,
         const PianoRequestType_t type) {
@@ -28,6 +29,12 @@ PianoReturn_t PianoRequest(PianoHandle_t *ph, PianoRequest_t *req,
             return piano_request_delete_station(ph, req);
         case PIANO_REQUEST_CREATE_STATION:
             return piano_request_create_station(ph, req);
+        case PIANO_REQUEST_ADD_SEED:
+            return piano_request_add_seed(ph, req);
+        case PIANO_REQUEST_DELETE_FEEDBACK:
+            return piano_request_delete_feedback(ph, req);
+        case PIANO_REQUEST_DELETE_SEED:
+            return piano_request_delete_seed(ph, req);
         default:
             return melodica_piano_request_base(ph, req, type);
     }
@@ -44,6 +51,10 @@ PianoReturn_t PianoResponse(PianoHandle_t *ph, PianoRequest_t *req) {
             case PIANO_REQUEST_DELETE_STATION:
             case PIANO_REQUEST_CREATE_STATION:
                 return piano_response_station_mutation(ph, req);
+            case PIANO_REQUEST_ADD_SEED:
+            case PIANO_REQUEST_DELETE_FEEDBACK:
+            case PIANO_REQUEST_DELETE_SEED:
+                return piano_response_seed_mutation(ph, req);
             default:
                 break;
         }

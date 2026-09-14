@@ -39,7 +39,7 @@ ar rcs "$OUT/libpiano-reference.a" \
     "$REF/src/libpiano/request.o" "$REF/src/libpiano/response.o" "$REF/src/libpiano/list.o"
 # Rebuild both sides rather than benchmarking stale objects from other flags.
 make -B -C "$ROOT" CC="$CC" BUILD="$BUILD_DIR" libpiano
-for probe in piano playlist search station_mutations feedback; do
+for probe in piano playlist search station_mutations feedback seed; do
     "$CC" -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM \
         -I"$REF/src/libpiano" "$ROOT/tests/reference/${probe}_probe.c" \
         "$OUT/libpiano-reference.a" $(pkg-config --libs libcurl libgcrypt json-c) -lm -lpthread \
@@ -72,9 +72,10 @@ done
     size "$OUT/playlist-reference" "$OUT/playlist-melodica" \
         "$OUT/search-reference" "$OUT/search-melodica" \
         "$OUT/station_mutations-reference" "$OUT/station_mutations-melodica" \
-        "$OUT/feedback-reference" "$OUT/feedback-melodica"
+        "$OUT/feedback-reference" "$OUT/feedback-melodica" \
+        "$OUT/seed-reference" "$OUT/seed-melodica"
     printf '\nDynamic dependencies are not included in archive bytes:\n'
-    for binary in playlist search station_mutations feedback; do
+    for binary in playlist search station_mutations feedback seed; do
         ldd "$OUT/$binary-reference"
         ldd "$OUT/$binary-melodica"
     done
@@ -82,7 +83,7 @@ done
 cat "$OUT/artifact-sizes.txt"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     {
-        printf '## libpiano compatibility\n\nReference `%s`; login/station, playlist, search, station-mutation and feedback/rating differential probes passed.\n\n' "$REV"
+        printf '## libpiano compatibility\n\nReference `%s`; login/station, playlist, search, station-mutation, feedback/rating and seed-mutation differential probes passed.\n\n' "$REV"
         printf 'Playlist API timings are a separate league, not a five-language score.\n\n```text\n'
         cat "$OUT"/playlist-*-bench-*.txt
         cat "$OUT/artifact-sizes.txt"
