@@ -1,0 +1,48 @@
+Explain / bookmark local evidence
+Date: 2026-09-14
+Reference pin: ad5ec908de10479ecee7d7c0e1030d12146f8f16
+
+Environment
+-----------
+cc: Debian GCC 14.2.0
+json-c: 0.18
+No LTO or native-CPU tuning was used.
+
+Checks executed
+---------------
+1. The proposed compat/explain_bookmarks.h implementation body compiled as strict C99
+   with -pedantic-errors -Wall -Wextra -Werror in a translation-unit stub containing
+   the public libpiano layouts/enums and the internal helper signatures it consumes.
+   Result: PASS.
+
+2. The proposed explain_bookmarks_probe.c source compiled as strict C99 against a
+   public-layout/API stub matching the fields and API surface consumed by the probe.
+   Result: PASS.
+
+3. An independent json-c 0.18 wire oracle compared the exact pre-encryption object
+   shape used by EXPLAIN, BOOKMARK_SONG and BOOKMARK_ARTIST:
+     trackToken, userAuthToken, syncTime
+   The escaped fixture plus every non-NUL byte independently in trackToken and
+   userAuthToken were checked.
+   Result: 511 cases identical.
+
+4. The pinned upstream explanation text algorithm was reproduced directly against
+   json-c 0.18 and compared with the candidate bounded concatenation logic. Three
+   fixtures matched exactly: one trait, a sparse two-element explanation array, and
+   a three-trait explanation. The one-trait result intentionally preserves upstream's
+   unsigned-length quirk and ends in ", " rather than ".".
+   Result: PASS.
+
+5. The latest hosted pinned differential run was explicitly retried before source
+   changes. The retry again completed with no recorded steps and no runner setup.
+   Result: infrastructure failure; no source verdict.
+
+Scope / limitation
+------------------
+These checks establish strict-C99 syntax for the new implementation/probe shape and
+exact json-c request-wire behavior for 511 byte-variant cases, plus the historical
+explanation text assembly behavior exercised by the new differential probe. They do
+not substitute for the pinned whole-library differential gate. This container cannot
+resolve github.com and libgcrypt development headers are unavailable, so the complete
+upstream/candidate link-and-run cannot be executed locally here. No throughput or
+artifact-size movement is claimed from these checks.
