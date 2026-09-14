@@ -20,77 +20,25 @@ local function hex_digit(n: byte): byte <inline>
 end
 
 local function json_extra(c: byte): csize <inline>
-  if c == 34 or c == 92 or c == 8 or c == 12 or
-     c == 10 or c == 13 or c == 9 then
-    return 1_csize
-  end
-  if c < 32 then
-    return 5_csize
-  end
-  return 0_csize
-end
-
-local function decimal_size(value: usize): csize
-  if value < 10 then
-    return 1_csize
-  end
-  return 1_csize + decimal_size(value // 10_usize)
-end
-
-local function write_decimal(dst: *[0]byte, out: csize, value: usize): csize
-  if value >= 10 then
-    out = write_decimal(dst, out, value // 10_usize)
-  end
-  dst[out] = 48_u8 + (@byte)(value % 10_usize)
-  return out + 1_csize
-end
-
-local function write_json(dst: *[0]byte, out: csize,
-                          src: *[0]byte, src_len: csize): csize <inline>
-  local i: csize = 0
-  while i < src_len do
-    local c = src[i]
-    if c == 34 then
-      dst[out] = 92; dst[out + 1] = 34; out = out + 2
-    elseif c == 92 then
-      dst[out] = 92; dst[out + 1] = 92; out = out + 2
-    elseif c == 8 then
-      dst[out] = 92; dst[out + 1] = 98; out = out + 2
-    elseif c == 12 then
-      dst[out] = 92; dst[out + 1] = 102; out = out + 2
-    elseif c == 10 then
-      dst[out] = 92; dst[out + 1] = 110; out = out + 2
-    elseif c == 13 then
-      dst[out] = 92; dst[out + 1] = 114; out = out + 2
-    elseif c == 9 then
-      dst[out] = 92; dst[out + 1] = 116; out = out + 2
-    elseif c < 32 then
-      dst[out] = 92
-      dst[out + 1] = 117
-      dst[out + 2] = 48
-      dst[out + 3] = 48
-      dst[out + 4] = hex_digit(c >> 4)
-      dst[out + 5] = hex_digit(c & 15)
-      out = out + 6
-    else
-      dst[out] = c
-      out = out + 1
-    end
-    i = i + 1
-  end
-  return out
-end
-
-local function melodica_abi_version(): uint32 <cexport, codename 'melodica_abi_version'>
-  return 1_u32
-end
-
-local function melodica_url_encode_size(src: *[0]byte, src_len: csize): csize
-    <cexport, codename 'melodica_url_encode_size'>
-  if src == nilptr then
+  if c >= 32 then
+    if c == 34 or c == 92 then return 1_csize end
     return 0_csize
   end
+  if c == 8 or c == 12 or c == 10 or c == 13 or c == 9 then
+    return 1_csize
+  end
+  return 5_csize
+end
 
+local function copy_bytes(dst: *[0]byte, src: *[0]byte, src_len: csize): void <inline>
+  local i: csize = 0
+  while i < src_len do
+    dst[i] = src[i]
+    i = i + 1
+  end
+end
+
+local function url_encode_size_impl(src: *[0]byte, src_len: csize): csize <inline>
   local required: csize = 0
   local i: csize = 0
   while i < src_len do
@@ -104,14 +52,7 @@ local function melodica_url_encode_size(src: *[0]byte, src_len: csize): csize
   return required
 end
 
-local function melodica_url_encode(dst: *[0]byte, dst_cap: csize,
-                                   src: *[0]byte, src_len: csize): csize
-    <cexport, codename 'melodica_url_encode'>
-  local required = melodica_url_encode_size(src, src_len)
-  if dst == nilptr or dst_cap < required or src == nilptr then
-    return required
-  end
-
+local function write_url(dst: *[0]byte, src: *[0]byte, src_len: csize): csize <inline>
   local out: csize = 0
   local i: csize = 0
   while i < src_len do
@@ -127,15 +68,10 @@ local function melodica_url_encode(dst: *[0]byte, dst_cap: csize,
     end
     i = i + 1
   end
-  return required
+  return out
 end
 
-local function melodica_json_escape_size(src: *[0]byte, src_len: csize): csize
-    <cexport, codename 'melodica_json_escape_size'>
-  if src == nilptr then
-    return 0_csize
-  end
-
+local function json_escape_size_impl(src: *[0]byte, src_len: csize): csize <inline>
   local required: csize = src_len
   local i: csize = 0
   while i < src_len do
@@ -145,14 +81,128 @@ local function melodica_json_escape_size(src: *[0]byte, src_len: csize): csize
   return required
 end
 
+local function write_json(dst: *[0]byte, out_in: csize,
+                          src: *[0]byte, src_len: csize): csize <inline>
+  local out = out_in
+  local i: csize = 0
+  while i < src_len do
+    local c = src[i]
+    if c >= 32 and c ~= 34 and c ~= 92 then
+      dst[out] = c
+      out = out + 1
+    elseif c == 34 then
+      dst[out] = 92; dst[out + 1] = 34; out = out + 2
+    elseif c == 92 then
+      dst[out] = 92; dst[out + 1] = 92; out = out + 2
+    elseif c == 8 then
+      dst[out] = 92; dst[out + 1] = 98; out = out + 2
+    elseif c == 12 then
+      dst[out] = 92; dst[out + 1] = 102; out = out + 2
+    elseif c == 10 then
+      dst[out] = 92; dst[out + 1] = 110; out = out + 2
+    elseif c == 13 then
+      dst[out] = 92; dst[out + 1] = 114; out = out + 2
+    elseif c == 9 then
+      dst[out] = 92; dst[out + 1] = 116; out = out + 2
+    else
+      dst[out] = 92
+      dst[out + 1] = 117
+      dst[out + 2] = 48
+      dst[out + 3] = 48
+      dst[out + 4] = hex_digit(c >> 4)
+      dst[out + 5] = hex_digit(c & 15)
+      out = out + 6
+    end
+    i = i + 1
+  end
+  return out
+end
+
+local function decimal_size(value_in: usize): csize <inline>
+  local value = value_in
+  local digits: csize = 1
+  while value >= 10 do
+    value = value // 10_usize
+    digits = digits + 1
+  end
+  return digits
+end
+
+local function write_decimal(dst: *[0]byte, out_in: csize, value_in: usize): csize <inline>
+  local digits: [32]byte <noinit>
+  local count: csize = 0
+  local value = value_in
+  repeat
+    digits[count] = 48_u8 + (@byte)(value % 10_usize)
+    count = count + 1
+    value = value // 10_usize
+  until value == 0
+
+  local out = out_in
+  while count ~= 0 do
+    count = count - 1
+    dst[out] = digits[count]
+    out = out + 1
+  end
+  return out
+end
+
+local function station_request_size_impl(user_auth_token: *[0]byte,
+                                         user_auth_token_len: csize,
+                                         sync_time: usize): csize <inline>
+  return STATION_PREFIX_LEN +
+         json_escape_size_impl(user_auth_token, user_auth_token_len) +
+         STATION_SUFFIX_LEN + decimal_size(sync_time) + 1_csize
+end
+
+local function melodica_abi_version(): uint32 <cexport, codename 'melodica_abi_version'>
+  return 1_u32
+end
+
+local function melodica_url_encode_size(src: *[0]byte, src_len: csize): csize
+    <cexport, codename 'melodica_url_encode_size'>
+  if src == nilptr then return 0_csize end
+  return url_encode_size_impl(src, src_len)
+end
+
+local function melodica_url_encode(dst: *[0]byte, dst_cap: csize,
+                                   src: *[0]byte, src_len: csize): csize
+    <cexport, codename 'melodica_url_encode'>
+  if src == nilptr then return 0_csize end
+  if dst ~= nilptr and src_len <= dst_cap // 3_csize then
+    return write_url(dst, src, src_len)
+  end
+
+  local required = url_encode_size_impl(src, src_len)
+  if dst == nilptr or dst_cap < required then return required end
+  if required == src_len then
+    copy_bytes(dst, src, src_len)
+    return required
+  end
+  write_url(dst, src, src_len)
+  return required
+end
+
+local function melodica_json_escape_size(src: *[0]byte, src_len: csize): csize
+    <cexport, codename 'melodica_json_escape_size'>
+  if src == nilptr then return 0_csize end
+  return json_escape_size_impl(src, src_len)
+end
+
 local function melodica_json_escape(dst: *[0]byte, dst_cap: csize,
                                     src: *[0]byte, src_len: csize): csize
     <cexport, codename 'melodica_json_escape'>
-  local required = melodica_json_escape_size(src, src_len)
-  if dst == nilptr or dst_cap < required or src == nilptr then
-    return required
+  if src == nilptr then return 0_csize end
+  if dst ~= nilptr and src_len <= dst_cap // 6_csize then
+    return write_json(dst, 0_csize, src, src_len)
   end
 
+  local required = json_escape_size_impl(src, src_len)
+  if dst == nilptr or dst_cap < required then return required end
+  if required == src_len then
+    copy_bytes(dst, src, src_len)
+    return required
+  end
   write_json(dst, 0_csize, src, src_len)
   return required
 end
@@ -161,12 +211,8 @@ local function melodica_station_list_request_size(user_auth_token: *[0]byte,
                                                    user_auth_token_len: csize,
                                                    sync_time: usize): csize
     <cexport, codename 'melodica_station_list_request_size'>
-  if user_auth_token == nilptr then
-    return 0_csize
-  end
-  return STATION_PREFIX_LEN +
-         melodica_json_escape_size(user_auth_token, user_auth_token_len) +
-         STATION_SUFFIX_LEN + decimal_size(sync_time) + 1_csize
+  if user_auth_token == nilptr then return 0_csize end
+  return station_request_size_impl(user_auth_token, user_auth_token_len, sync_time)
 end
 
 local function melodica_station_list_request(dst: *[0]byte, dst_cap: csize,
@@ -174,11 +220,9 @@ local function melodica_station_list_request(dst: *[0]byte, dst_cap: csize,
                                              user_auth_token_len: csize,
                                              sync_time: usize): csize
     <cexport, codename 'melodica_station_list_request'>
-  local required = melodica_station_list_request_size(
-      user_auth_token, user_auth_token_len, sync_time)
-  if dst == nilptr or dst_cap < required or user_auth_token == nilptr then
-    return required
-  end
+  if user_auth_token == nilptr then return 0_csize end
+  local required = station_request_size_impl(user_auth_token, user_auth_token_len, sync_time)
+  if dst == nilptr or dst_cap < required then return required end
 
   local out: csize = 0
   local i: csize = 0
