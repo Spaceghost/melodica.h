@@ -10,13 +10,13 @@ libpiano implementations. Full API behavior remains a separate compatibility lea
 
 ## Request/response inventory
 
-Nine of the 24 public request kinds now have implementations on both sides of the
+Twelve of the 24 public request kinds now have implementations on both sides of the
 request/response boundary: LOGIN, GET_STATIONS, GET_PLAYLIST, SEARCH,
-RENAME_STATION, DELETE_STATION, CREATE_STATION, RATE_SONG and ADD_TIRED_SONG.
-`ADD_FEEDBACK` request construction is implemented because RATE_SONG delegates to it,
-but a successful direct ADD_FEEDBACK response is deliberately not counted: pinned
-upstream asserts in that response case, and melodica returns `PIANO_RET_ERR` rather
-than inventing a successful contract.
+RENAME_STATION, DELETE_STATION, CREATE_STATION, RATE_SONG, ADD_TIRED_SONG,
+ADD_SEED, DELETE_FEEDBACK and DELETE_SEED. `ADD_FEEDBACK` request construction is
+implemented because RATE_SONG delegates to it, but a successful direct ADD_FEEDBACK
+response is deliberately not counted: pinned upstream asserts in that response case,
+and melodica returns `PIANO_RET_ERR` rather than inventing a successful contract.
 
 | Request family | Status | Evidence / remaining work |
 |---|---|---|
@@ -27,7 +27,8 @@ than inventing a successful contract.
 | RENAME_STATION, DELETE_STATION, CREATE_STATION | Implemented, differential pending | Request bytes and state/ownership effects |
 | RATE_SONG, ADD_TIRED_SONG | Implemented, differential pending | Feedback delegation, request restoration and rating state effects |
 | ADD_FEEDBACK | Request implemented | Direct successful response intentionally returns ERR; upstream asserts there |
-| ADD_SEED, DELETE_SEED, DELETE_FEEDBACK, GET_STATION_INFO | Pending | Nested owned data and mutation effects |
+| ADD_SEED, DELETE_FEEDBACK, DELETE_SEED | Implemented, differential pending | Exact request order/methods and upstream no-op success responses |
+| GET_STATION_INFO | Pending | Nested owned seeds and feedback lists |
 | SET_QUICKMIX, GET_GENRE_STATIONS, TRANSFORM_STATION | Pending | Lists, genres and creator-state transitions |
 | EXPLAIN, BOOKMARK_SONG, BOOKMARK_ARTIST | Pending | Text assembly and exact request payloads |
 | GET_SETTINGS, CHANGE_SETTINGS | Pending | Settings ownership, tristates and optional members |
@@ -51,14 +52,19 @@ rename/delete/create method/member order and successful state changes, including
 same-id replacement on create. Their pinned differentials remain unexecuted because
 hosted jobs have not been assigned runners.
 
-Feedback/rating now follows upstream's high-level delegation: RATE_SONG transforms
-its data into ADD_FEEDBACK temporarily, uses `station.addFeedback`, then restores
+Feedback/rating follows upstream's high-level delegation: RATE_SONG temporarily
+transforms its data into ADD_FEEDBACK, uses `station.addFeedback`, then restores
 `req->type` and `req->data`. LOVE emits `isPositive:true`; BAN emits false.
 Successful RATE_SONG responses update the song rating. ADD_TIRED_SONG emits
 `user.sleepSong` and marks the song TIRED on success. Direct ADD_FEEDBACK success is
-not exposed as successful behavior because upstream itself asserts there. A new
-shared feedback probe compares request ciphertext, restored request state, success
-rating transitions and error mapping against the untouched reference.
+not exposed as successful behavior because upstream itself asserts there.
+
+Seed mutations now cover `station.addMusic`, `station.deleteFeedback` and
+`station.deleteMusic`. ADD_SEED preserves upstream insertion order
+`musicToken`, `stationToken`, then the shared authenticated tail. DELETE_SEED preserves
+upstream seed-id precedence: song, then artist, then station. These three successful
+response kinds are intentional no-ops, matching upstream's response dispatch rather
+than inventing local state mutation.
 
 The existing public ABI is unchanged. `piano.c` wraps hidden internal base
 request/response symbols and intercepts only completeness slices added after that
@@ -67,16 +73,19 @@ escapes remain uppercase.
 
 ## Validation and infrastructure boundary
 
-The pinned gate runs `piano`, `playlist`, `search`, `station_mutations`, and
-`feedback` probes against the same untouched reference archive. Before this slice,
-differential run #39 and comparison run #108 at `5d2f464` completed with no job
-steps; this is pre-execution runner infrastructure failure, not a source verdict.
+The pinned gate now runs `piano`, `playlist`, `search`, `station_mutations`,
+`feedback` and `seed` probes against the same untouched reference archive.
+Differential run #40 was explicitly retried before the seed slice; the retry again
+completed with `steps=null` and no logs. That remains pre-execution runner
+infrastructure failure, not a source verdict.
 
-Local feedback work was still checked where possible: GCC 14.2.0 strict-C99 syntax
-checks passed for the internal header and differential probe, and json-c 0.18 matched
-767 pre-encryption feedback JSON cases: fixed LOVE/BAN cases plus every non-NUL byte
-in station token, track token and auth token positions. Raw commands, results and
-limitations are retained in `docs/evidence/feedback-local-2026-09-14.txt`.
+Local seed work was checked where possible with GCC 14.2.0 strict C99 and json-c
+0.18. The internal header integration stub and deterministic differential probe both
+compiled cleanly. An independent json-c oracle matched 1,788 exact pre-encryption
+request JSON cases across ADD_SEED, DELETE_FEEDBACK and DELETE_SEED, including all
+non-NUL single-byte values in their payload fields and auth-token positions. Raw
+results and limitations are retained in
+`docs/evidence/seeds-local-2026-09-14.txt`.
 
 The parser intentionally rejects some malformed/coercible shapes that json-c may
 tolerate. Escaped object keys, duplicate keys and all permissive json-c coercions are
@@ -91,16 +100,17 @@ build / destroy throughput was 168,286 req/s for 4 songs, 10,669 for 64 songs an
 playlist support was added. These are initial functionality measurements, not a
 speedup ratio.
 
-No search, station-mutation or feedback throughput/size movement is asserted until
-the real branch executes. No new C/Odin/Zig/Nelua/Codin ranking is asserted. The
-native serializer league keeps its existing five workloads and competitive gate:
-normalized geometric mean >=90% of the leader and every workload >=80%. A C model
-is never evidence for another language.
+No search, station-mutation, feedback or seed-mutation throughput/size movement is
+asserted until the real branch executes. No new C/Odin/Zig/Nelua/Codin ranking is
+asserted. The native serializer league keeps its existing five workloads and
+competitive gate: normalized geometric mean >=90% of the leader and every workload
+>=80%. A C model is never evidence for another language.
 
 ## Next acceptance slices
 
 First obtain a completed pinned differential for the currently implemented slices.
-Then implement seeds and station information, followed by QuickMix/genres,
-explanation/bookmarks, settings and station modes. Each slice must add identical
-upstream/candidate probes before performance claims. Native-language protocol work
-must remain independently implemented rather than routing every lane through C.
+Then implement GET_STATION_INFO ownership and nested seed/feedback parsing, followed
+by QuickMix/genres, explanation/bookmarks, settings and station modes. Each slice
+must add identical upstream/candidate probes before performance claims.
+Native-language protocol work must remain independently implemented rather than
+routing every lane through C.
