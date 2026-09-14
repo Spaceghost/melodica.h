@@ -10,15 +10,16 @@ libpiano implementations. Full API behavior remains a separate compatibility lea
 
 ## Request/response inventory
 
-Twenty-one of the 24 public request kinds now have implementations on both sides of the
-request/response boundary: LOGIN, GET_STATIONS, GET_PLAYLIST, SEARCH,
+Twenty-three of the 24 public request kinds now have implementations on both sides of
+the request/response boundary: LOGIN, GET_STATIONS, GET_PLAYLIST, SEARCH,
 RENAME_STATION, DELETE_STATION, CREATE_STATION, RATE_SONG, ADD_TIRED_SONG,
 ADD_SEED, DELETE_FEEDBACK, DELETE_SEED, GET_STATION_INFO, SET_QUICKMIX,
 GET_GENRE_STATIONS, TRANSFORM_STATION, EXPLAIN, BOOKMARK_SONG, BOOKMARK_ARTIST,
-GET_SETTINGS and CHANGE_SETTINGS. `ADD_FEEDBACK` request construction is implemented
-because RATE_SONG delegates to it, but a successful direct ADD_FEEDBACK response is
-deliberately not counted: pinned upstream asserts in that response case, and melodica
-returns `PIANO_RET_ERR` rather than inventing a successful contract.
+GET_SETTINGS, CHANGE_SETTINGS, GET_STATION_MODES and SET_STATION_MODE.
+`ADD_FEEDBACK` request construction is implemented because RATE_SONG delegates to it,
+but a successful direct ADD_FEEDBACK response is deliberately not counted: pinned
+upstream asserts in that response case, and melodica returns `PIANO_RET_ERR` rather
+than inventing a successful contract.
 
 | Request family | Status | Evidence / remaining work |
 |---|---|---|
@@ -34,7 +35,7 @@ returns `PIANO_RET_ERR` rather than inventing a successful contract.
 | SET_QUICKMIX, GET_GENRE_STATIONS, TRANSFORM_STATION | Implemented, differential pending | Exact array/auth ordering, owned genre/category lists and creator-state transition |
 | EXPLAIN, BOOKMARK_SONG, BOOKMARK_ARTIST | Implemented, differential pending | Exact track-token request payloads, upstream text assembly and no-op bookmark success |
 | GET_SETTINGS, CHANGE_SETTINGS | Implemented, differential pending | Exact optional-member order, tristate encoding, username ownership and explicit-filter default |
-| GET_STATION_MODES, SET_STATION_MODE | Pending | Mode fields, active selection and response effects |
+| GET_STATION_MODES, SET_STATION_MODE | Implemented, differential pending | Exact interactive-radio methods/member order, mode-list ownership, active selection and set verification |
 
 Unsupported successful response kinds must return `PIANO_RET_ERR`; server `stat: ok`
 is never enough to call an unimplemented path complete.
@@ -103,6 +104,17 @@ does, assigning a response username does not first free a pre-existing field val
 Local json-c 0.18 request-wire checks matched 1,279 exact cases, including every
 non-NUL byte independently in each string-bearing request field.
 
+GET_STATION_MODES emits `stationId` then the shared authenticated tail to
+`interactiveradio.v1.getAvailableModesSimple`; SET_STATION_MODE inserts signed
+32-bit `modeId` after `stationId` and uses `interactiveradio.v1.setAndGetAvailableModes`.
+Both requests are TLS. GET response parsing owns the returned mode list, preserves
+upstream's zeroed list entry when an available-mode object has no `modeId`, carries
+name/description/algorithmic/takeover fields only when `modeId` exists, and marks the
+mode matching `currentModeId` active. SET succeeds only when the returned
+`currentModeId` equals the requested id. Local json-c 0.18 request-wire checks matched
+1,023 exact cases, including every non-NUL byte independently in station/auth fields
+for both methods and signed conversion of representative mode ids.
+
 The existing public ABI is unchanged. `piano.c` wraps hidden internal base
 request/response symbols and intercepts only completeness slices added after that
 base. Lowercase JSON control-escape hex matches json-c wire behavior; URL percent
@@ -111,10 +123,13 @@ escapes remain uppercase.
 ## Validation and infrastructure boundary
 
 The pinned gate now runs `piano`, `playlist`, `search`, `station_mutations`,
-`feedback`, `seed`, `station_info`, `quickmix_genre`, `explain_bookmarks` and
-`settings` probes against the same untouched reference archive. Differential run #63
-was explicitly retried immediately before the settings slice; attempt 2 again finished
-with zero steps and runner_id 0. It is an infrastructure failure, not a source verdict.
+`feedback`, `seed`, `station_info`, `quickmix_genre`, `explain_bookmarks`, `settings`
+and `station_modes` probes against the same untouched reference archive. Differential
+run #64 was explicitly retried immediately before the station-mode slice; attempt 2
+again finished with zero steps and no assigned runner. At station-mode head
+`afa18aaf8c630144bf74f0e096fd536b0a15525b`, differential run #65 and comparison
+run #134 likewise completed with `steps=null` for every job. These are pre-execution
+infrastructure failures, not source verdicts.
 
 Local QuickMix/genre work was checked with GCC 14.2.0 strict C99 and json-c 0.18. The
 exact internal implementation body passed a strict translation-unit syntax check.
@@ -134,6 +149,13 @@ oracle matched 1,279 exact json-c cases across full/minimal tristates and all fi
 string fields. Commands and limitations are retained in
 `docs/evidence/settings-local-2026-09-14.txt`.
 
+Local station-mode work used GCC 14.2.0 strict C99 and json-c 0.18. The exact internal
+header and differential-probe shapes passed strict syntax checks in a minimal
+declaration harness. An independent request-wire oracle matched 1,023 exact json-c
+cases. The container cannot resolve github.com, so this is not a full local branch
+link or response differential. Commands and scope are retained in
+`docs/evidence/station-modes-local-2026-09-14.txt`.
+
 The parser intentionally rejects some malformed/coercible shapes that json-c may
 tolerate. Escaped object keys, duplicate keys and all permissive json-c coercions are
 not yet comprehensively matched. These remain explicit compatibility gaps.
@@ -148,15 +170,18 @@ playlist support was added. These are initial functionality measurements, not a
 speedup ratio.
 
 No search, station-mutation, feedback, seed-mutation, station-info, QuickMix/genre,
-explanation/bookmark or settings throughput/size movement is asserted until the real
-branch executes. No new C/Odin/Zig/Nelua/Codin ranking is asserted. The native
-serializer league keeps its existing five workloads and competitive gate: normalized
-geometric mean >=90% of the leader and every workload >=80%. A C model is never
-evidence for another language.
+explanation/bookmark, settings or station-mode throughput/size movement is asserted
+until the real branch executes. No new C/Odin/Zig/Nelua/Codin ranking is asserted.
+The native serializer league keeps its existing five workloads and competitive gate:
+normalized geometric mean >=90% of the leader and every workload >=80%. A C model is
+never evidence for another language.
 
 ## Next acceptance slices
 
-First obtain a completed pinned differential for the currently implemented slices.
-Then implement station modes. Each slice must add identical upstream/candidate probes
-before performance claims. Native-language protocol work must remain independently
-implemented rather than routing every lane through C.
+First obtain a completed pinned differential for the implemented surface. The normal
+public request/response families are now implemented; direct successful ADD_FEEDBACK
+remains intentionally unsupported because the pinned upstream asserts on that
+low-level response path. After the differential runs, close observed parser/coercion
+or ownership mismatches before expanding the separate native-language protocol league.
+Native-language protocol work must remain independently implemented rather than
+routing every lane through C.
