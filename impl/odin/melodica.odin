@@ -115,27 +115,40 @@ write_json :: #force_inline proc "contextless" (
 	return out
 }
 
-decimal_size :: #force_inline proc "contextless" (value_in: uintptr) -> uintptr {
-	value := value_in
-	digits: uintptr = 1
-	for value >= 10 {
-		value /= 10
-		digits += 1
+decimal_size :: #force_inline proc "contextless" (value: uintptr) -> uintptr {
+	if value < 10 {
+		return 1
 	}
-	return digits
+	if value < 100 {
+		return 2
+	}
+	if value < 1000 {
+		return 3
+	}
+	if value < 10000 {
+		return 4
+	}
+	return 4 + decimal_size(value / 10000)
 }
 
 write_decimal :: #force_inline proc "contextless" (dst: [^]u8, out_in: uintptr, value_in: uintptr) -> uintptr {
 	digits: [32]u8
 	count: uintptr = 0
 	value := value_in
-	for {
+	for value >= 100 {
+		pair := value % 100
+		value /= 100
+		digits[count] = '0' + u8(pair % 10)
+		digits[count + 1] = '0' + u8(pair / 10)
+		count += 2
+	}
+	if value >= 10 {
 		digits[count] = '0' + u8(value % 10)
+		digits[count + 1] = '0' + u8(value / 10)
+		count += 2
+	} else {
+		digits[count] = '0' + u8(value)
 		count += 1
-		value /= 10
-		if value == 0 {
-			break
-		}
 	}
 
 	out := out_in
