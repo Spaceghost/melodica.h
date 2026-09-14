@@ -180,3 +180,5 @@ install: $(BUILD)/c/libmelodica.a $(BUILD)/compat/libpiano.a
 
 clean:
 	rm -rf $(BUILD)
+
+include tests/reference/playlist.mk

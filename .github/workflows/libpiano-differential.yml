@@ -12,6 +12,7 @@ permissions:
 jobs:
   differential:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -22,46 +23,20 @@ jobs:
             libcurl4-openssl-dev libgcrypt20-dev libjson-c-dev \
             libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libao-dev
 
-      - name: Build melodica libpiano
-        run: make libpiano
+      - name: Test libpiano, playlist safety, and independent wire oracle
+        run: make test-libpiano test-playlist-alloc test-playlist-wire
 
-      - name: Build archived upstream libpiano reference
-        shell: bash
-        run: |
-          set -euxo pipefail
-          git clone --depth=1 https://github.com/PromyLOPh/pianobar.git "$RUNNER_TEMP/pianobar"
-          make -C "$RUNNER_TEMP/pianobar" \
-            src/libpiano/crypt.o src/libpiano/piano.o src/libpiano/request.o \
-            src/libpiano/response.o src/libpiano/list.o
-          ar rcs "$RUNNER_TEMP/libpiano-reference.a" \
-            "$RUNNER_TEMP/pianobar/src/libpiano/crypt.o" \
-            "$RUNNER_TEMP/pianobar/src/libpiano/piano.o" \
-            "$RUNNER_TEMP/pianobar/src/libpiano/request.o" \
-            "$RUNNER_TEMP/pianobar/src/libpiano/response.o" \
-            "$RUNNER_TEMP/pianobar/src/libpiano/list.o"
+      - name: Check playlist ownership with ASan and UBSan
+        run: make test-playlist-sanitize
 
-      - name: Build the same deterministic probe against both libraries
-        shell: bash
-        run: |
-          set -euxo pipefail
-          cc -O2 -std=c99 -Wall -Wextra \
-            -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM \
-            -I"$RUNNER_TEMP/pianobar/src/libpiano" \
-            tests/reference/piano_probe.c "$RUNNER_TEMP/libpiano-reference.a" \
-            $(pkg-config --libs libcurl libgcrypt json-c) -lm -lpthread \
-            -o "$RUNNER_TEMP/piano-reference"
-          cc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror \
-            -Iinclude tests/reference/piano_probe.c build/compat/libpiano.a \
-            -o "$RUNNER_TEMP/piano-melodica"
+      - name: Compare pinned upstream behavior and complete playlist workloads
+        run: sh scripts/libpiano-differential.sh
 
-      - name: Compare instrumented libpiano behavior
-        shell: bash
-        run: |
-          set -euxo pipefail
-          "$RUNNER_TEMP/piano-reference" > "$RUNNER_TEMP/reference.txt"
-          "$RUNNER_TEMP/piano-melodica" > "$RUNNER_TEMP/melodica.txt"
-          echo '--- upstream libpiano ---'
-          cat "$RUNNER_TEMP/reference.txt"
-          echo '--- melodica ---'
-          cat "$RUNNER_TEMP/melodica.txt"
-          diff -u "$RUNNER_TEMP/reference.txt" "$RUNNER_TEMP/melodica.txt"
+      - name: Retain reference, candidate, timings, and size evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: libpiano-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/libpiano-evidence/
+          if-no-files-found: warn
+          retention-days: 14

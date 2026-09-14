@@ -49,7 +49,7 @@ static char *piano_url_encode(const char *s) {
 }
 
 static char piano_hex(const unsigned char n) {
-    return piano_hex_upper(n);
+    return (char)(n < 10u ? '0' + (int)n : 'a' + (int)n - 10);
 }
 
 /* json-c's historical json_object_to_json_string() uses the SPACED format and
@@ -414,6 +414,8 @@ void PianoDestroyRequest(PianoRequest_t *req) {
     memset(req, 0, sizeof(*req));
 }
 
+#include "playlist.h"
+
 PianoReturn_t PianoRequest(PianoHandle_t *ph, PianoRequest_t *req,
         const PianoRequestType_t type) {
     if (req == NULL) return PIANO_RET_ERR;
@@ -466,6 +468,10 @@ PianoReturn_t PianoRequest(PianoHandle_t *ph, PianoRequest_t *req,
             return PIANO_RET_OK;
         }
         return PIANO_RET_ERR;
+    }
+
+    if (type == PIANO_REQUEST_GET_PLAYLIST) {
+        return piano_request_playlist(ph, req);
     }
 
     if (type == PIANO_REQUEST_GET_STATIONS && ph != NULL) {
@@ -662,8 +668,11 @@ PianoReturn_t PianoResponse(PianoHandle_t *ph, PianoRequest_t *req) {
         case PIANO_REQUEST_GET_STATIONS:
             ret = piano_response_stations(ph, &doc, result);
             break;
+        case PIANO_REQUEST_GET_PLAYLIST:
+            ret = piano_response_playlist(req, &doc, result);
+            break;
         default:
-            ret = PIANO_RET_OK;
+            ret = PIANO_RET_ERR;
             break;
     }
 
