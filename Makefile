@@ -10,7 +10,7 @@ DESTDIR ?=
 ODIN_FLAGS ?= -o:speed -reloc-mode:pic -no-entry-point
 NELUA_FLAGS ?= --release -P nogc --cflags=-O3
 
-.PHONY: all c odin zig nelua codin-native codin-check libpiano test test-c test-odin test-zig test-nelua test-codin-native test-libpiano test-blowfish test-crypt test-json bench bench-c bench-odin bench-zig bench-nelua bench-codin portable install clean
+.PHONY: all c odin zig nelua codin-native codin-check libpiano test test-c test-odin test-zig test-nelua test-codin-native test-libpiano test-blowfish test-crypt test-json bench bench-c bench-odin bench-zig bench-nelua bench-codin shootout shootout-gate portable install clean
 
 all: test
 
@@ -157,6 +157,12 @@ bench-codin: codin-check
 	./$(BUILD)/codin/bench
 
 bench: bench-c bench-odin bench-zig bench-nelua bench-codin
+
+shootout: $(BUILD)/c/bench $(BUILD)/odin/bench $(BUILD)/zig/bench $(BUILD)/nelua/bench codin-check
+	./scripts/shootout.sh
+
+shootout-gate: $(BUILD)/c/bench $(BUILD)/odin/bench $(BUILD)/zig/bench $(BUILD)/nelua/bench codin-check
+	SHOOTOUT_FLOOR=0.90 SHOOTOUT_WORST_FLOOR=0.80 ./scripts/shootout.sh
 
 portable:
 	mkdir -p $(BUILD)/portable
