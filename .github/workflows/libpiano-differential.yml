@@ -5,34 +5,37 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: Execution backend
+        type: choice
+        options: [self-hosted, github-hosted]
+        default: self-hosted
 
 permissions:
   contents: read
+concurrency:
+  group: melodica-differential-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   differential:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ fromJSON(inputs.runner == 'github-hosted' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","ubuntu-tiny","spaceghost-melodica.h"]') }}
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Install reference dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            libcurl4-openssl-dev libgcrypt20-dev libjson-c-dev \
-            libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libao-dev
-
-      - name: Test libpiano, playlist safety, and independent wire oracle
-        run: make test-libpiano test-playlist-alloc test-playlist-wire
-
+        run: sh scripts/ci-deps.sh reference
+      - name: Test libpiano, crypto, JSON, playlist safety and independent wire oracle
+        run: make test-blowfish test-crypt test-json test-libpiano test-playlist-alloc test-playlist-wire
       - name: Check playlist ownership with ASan and UBSan
         run: make test-playlist-sanitize
-
       - name: Compare pinned upstream behavior and complete playlist workloads
         run: sh scripts/libpiano-differential.sh
-
-      - name: Retain reference, candidate, timings, and size evidence
+      - name: Retain reference, candidate, timings and size evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
