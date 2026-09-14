@@ -113,36 +113,20 @@ write_json :: proc "contextless" (
 	return out
 }
 
-decimal_size :: proc "contextless" (value_in: uintptr) -> uintptr {
-	value := value_in
-	digits: uintptr = 1
-	for value >= 10 {
-		value /= 10
-		digits += 1
+decimal_size :: proc "contextless" (value: uintptr) -> uintptr {
+	if value < 10 {
+		return 1
 	}
-	return digits
+	return 1 + decimal_size(value / 10)
 }
 
-write_decimal :: proc "contextless" (dst: [^]u8, out_in: uintptr, value_in: uintptr) -> uintptr {
-	digits: [32]u8
-	count: uintptr = 0
-	value := value_in
-	for {
-		digits[count] = '0' + u8(value % 10)
-		count += 1
-		value /= 10
-		if value == 0 {
-			break
-		}
-	}
-
+write_decimal :: proc "contextless" (dst: [^]u8, out_in: uintptr, value: uintptr) -> uintptr {
 	out := out_in
-	for count != 0 {
-		count -= 1
-		dst[out] = digits[count]
-		out += 1
+	if value >= 10 {
+		out = write_decimal(dst, out, value / 10)
 	}
-	return out
+	dst[out] = '0' + u8(value % 10)
+	return out + 1
 }
 
 station_list_request_size_impl :: proc "contextless" (
