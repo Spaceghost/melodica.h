@@ -125,6 +125,9 @@ int main(void) {
     ret = PianoResponse(&ph, &req);
     printf("genres.response=%d\n", (int)ret);
     print_categories(&ph);
+    req.responseData = (char *)"{\"stat\":\"ok\"}";
+    ret = PianoResponse(&ph, &req);
+    printf("genres.missing-result.response=%d\n", (int)ret);
     req.responseData = (char *)"{\"stat\":\"fail\",\"code\":1001}";
     ret = PianoResponse(&ph, &req);
     printf("genres.error=%d\n", (int)ret);
