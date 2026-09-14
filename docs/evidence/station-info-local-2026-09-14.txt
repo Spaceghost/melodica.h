@@ -1,0 +1,71 @@
+Station-info local evidence, 2026-09-14
+
+Environment
+-----------
+cc (Debian 14.2.0-19) 14.2.0
+json-c 0.18
+x86_64
+
+Reference behavior inspected
+----------------------------
+Pinned upstream: PromyLOPh/pianobar ad5ec908de10479ecee7d7c0e1030d12146f8f16
+GET_STATION_INFO request method: station.getStation
+Member order: stationToken, includeExtendedAttributes=true, includeExtraParams=true,
+userAuthToken, syncTime.
+Response parses music.songs, music.artists, feedback.thumbsUp, feedback.thumbsDown.
+Pinned upstream does not populate PianoStationInfo_t.stationSeeds in this response path.
+
+Strict syntax checks
+--------------------
+The proposed combined compat/seeds.h implementation, including GET_STATION_INFO,
+was compiled with a minimal integration stub declaring the same required internal
+helpers and public structures:
+
+  cc -std=c99 -pedantic-errors -Wall -Wextra -Werror \
+     -I/mnt/data -fsyntax-only /mnt/data/seeds_syntax.c
+
+Result: PASS
+
+The deterministic differential probe was syntax-checked against a minimal public
+piano.h API stub:
+
+  cc -std=c99 -pedantic-errors -Wall -Wextra -Werror \
+     -I/mnt/data -fsyntax-only /mnt/data/station_info_probe.c
+
+Result: PASS
+
+Independent json-c wire oracle
+------------------------------
+The candidate pre-encryption builder was compared to json-c 0.18 using the same
+member insertion order and signed 32-bit syncTime:
+
+  cc -O2 -std=c99 -D_DEFAULT_SOURCE -Wall -Wextra -Werror \
+     /mnt/data/station_info_wire_oracle.c $(pkg-config --cflags --libs json-c) \
+     -o /mnt/data/station_info_wire_oracle
+  /mnt/data/station_info_wire_oracle
+
+Result:
+  station-info wire oracle: 511 identical cases
+
+Coverage is the fixed escaped station/auth fixture plus every non-NUL byte separately
+in stationToken and userAuthToken positions. This specifically constrains json-c's
+spaced formatting, slash escaping and lowercase control-byte hex escapes.
+
+Source hashes used for these checks
+-----------------------------------
+90429ce4333e1cddfdcdc1cc7f01cb1de2f83bd3cc074381652143d1585e3a79  compat/seeds.h candidate
+3cd505b0351512c4a0b70372257be8a62410d20f94cd60553c4bc2bd4fe2a24b  compat/piano.c candidate
+57a58d08cce5d5f98a0d88de05dd5eacf6be6e425ad91bd628d4dbf3daea3601  station_info_probe.c
+d5035e8a0167b7d3cdcd2d5649b4c8569349e62507b42aa1a2f395fb836bcf21  station_info_wire_oracle.c
+
+Limitations
+-----------
+This container cannot resolve github.com, so it cannot clone the private branch or
+pinned upstream reference and cannot execute the complete candidate archive here.
+The authoritative same-probe upstream/candidate differential therefore remains the
+GitHub Actions gate. The latest observed hosted differential at prior head 53f849e
+ended before setup with steps=[] and runner_id=0; that is infrastructure failure,
+not a source result.
+
+No station-info throughput, artifact-size movement, or native-language ranking is
+claimed from these checks.

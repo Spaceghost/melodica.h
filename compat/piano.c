@@ -35,6 +35,8 @@ PianoReturn_t PianoRequest(PianoHandle_t *ph, PianoRequest_t *req,
             return piano_request_delete_feedback(ph, req);
         case PIANO_REQUEST_DELETE_SEED:
             return piano_request_delete_seed(ph, req);
+        case PIANO_REQUEST_GET_STATION_INFO:
+            return piano_request_station_info(ph, req);
         default:
             return melodica_piano_request_base(ph, req, type);
     }
@@ -55,6 +57,8 @@ PianoReturn_t PianoResponse(PianoHandle_t *ph, PianoRequest_t *req) {
             case PIANO_REQUEST_DELETE_FEEDBACK:
             case PIANO_REQUEST_DELETE_SEED:
                 return piano_response_seed_mutation(ph, req);
+            case PIANO_REQUEST_GET_STATION_INFO:
+                return piano_response_station_info(ph, req);
             default:
                 break;
         }
