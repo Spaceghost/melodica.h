@@ -1,15 +1,18 @@
 # Compatibility tests have no language-toolchain dependency.
-.PHONY: test-playlist test-playlist-alloc test-playlist-wire test-playlist-sanitize bench-libpiano
+.PHONY: test-playlist test-playlist-alloc test-playlist-wire test-playlist-sanitize test-search bench-libpiano
 
-test-libpiano: test-playlist
-$(BUILD)/compat/piano.o: compat/playlist.h
+test-libpiano: test-playlist test-search
+$(BUILD)/compat/piano.o: compat/playlist.h compat/search.h
 
 PLAYLIST_CFLAGS = -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude -Icompat
 PLAYLIST_SOURCES = compat/piano.c compat/json.c compat/crypt.c compat/blowfish.c
-PLAYLIST_HEADERS = include/piano.h compat/playlist.h compat/json.h compat/crypt.h compat/blowfish.h compat/blowfish_pi.h tests/reference/playlist_fixtures.h
+PLAYLIST_HEADERS = include/piano.h compat/playlist.h compat/search.h compat/json.h compat/crypt.h compat/blowfish.h compat/blowfish_pi.h tests/reference/playlist_fixtures.h
 PLAYLIST_WRAP = -DMELODICA_ALLOC_FAILURE_TEST -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=free
 
 $(BUILD)/compat/playlist-probe: tests/reference/playlist_probe.c tests/reference/playlist_fixtures.h $(BUILD)/compat/libpiano.a
+	$(CC) $(PLAYLIST_CFLAGS) $< $(BUILD)/compat/libpiano.a -o $@
+
+$(BUILD)/compat/search-probe: tests/reference/search_probe.c $(BUILD)/compat/libpiano.a
 	$(CC) $(PLAYLIST_CFLAGS) $< $(BUILD)/compat/libpiano.a -o $@
 
 $(BUILD)/compat/playlist-safety: tests/playlist_safety.c tests/reference/playlist_fixtures.h $(BUILD)/compat/libpiano.a
@@ -25,6 +28,9 @@ $(BUILD)/compat/playlist-wire: tests/reference/playlist_wire.c $(BUILD)/compat/l
 test-playlist: $(BUILD)/compat/playlist-probe $(BUILD)/compat/playlist-safety
 	./$(BUILD)/compat/playlist-probe
 	./$(BUILD)/compat/playlist-safety
+
+test-search: $(BUILD)/compat/search-probe
+	./$(BUILD)/compat/search-probe
 
 test-playlist-alloc: $(BUILD)/compat/playlist-alloc
 	./$(BUILD)/compat/playlist-alloc
