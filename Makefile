@@ -159,10 +159,10 @@ bench-codin: codin-check
 bench: bench-c bench-odin bench-zig bench-nelua bench-codin
 
 shootout: $(BUILD)/c/bench $(BUILD)/odin/bench $(BUILD)/zig/bench $(BUILD)/nelua/bench codin-check
-	./scripts/shootout.sh
+	sh ./scripts/shootout.sh
 
 shootout-gate: $(BUILD)/c/bench $(BUILD)/odin/bench $(BUILD)/zig/bench $(BUILD)/nelua/bench codin-check
-	SHOOTOUT_FLOOR=0.90 SHOOTOUT_WORST_FLOOR=0.80 ./scripts/shootout.sh
+	SHOOTOUT_FLOOR=0.90 SHOOTOUT_WORST_FLOOR=0.80 sh ./scripts/shootout.sh
 
 portable:
 	mkdir -p $(BUILD)/portable
