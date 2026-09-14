@@ -5,8 +5,8 @@ station_prefix :: "{\"returnAllStations\":true,\"userAuthToken\":\""
 station_suffix :: "\",\"syncTime\":"
 
 is_unreserved :: #force_inline proc "contextless" (c: u8) -> bool {
-	return (c >= 'A' && c <= 'Z') ||
-	       (c >= 'a' && c <= 'z') ||
+	folded := c | 0x20
+	return (folded >= 'a' && folded <= 'z') ||
 	       (c >= '0' && c <= '9') ||
 	       c == '-' || c == '.' || c == '_' || c == '~'
 }
