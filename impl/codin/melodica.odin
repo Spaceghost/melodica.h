@@ -234,7 +234,8 @@ melodica_station_list_request :: proc "c" (
 	if user_auth_token == nil {
 		return 0
 	}
-	required := station_list_request_size_impl(user_auth_token, user_auth_token_len, sync_time)
+	auth_required := json_escape_size_impl(user_auth_token, user_auth_token_len)
+	required := 43 + auth_required + 13 + decimal_size(sync_time) + 1
 	if dst == nil || dst_cap < required {
 		return required
 	}
@@ -246,7 +247,12 @@ melodica_station_list_request :: proc "c" (
 		dst[out] = prefix[i]
 		out += 1
 	}
-	out = write_json(dst, out, user_auth_token, user_auth_token_len)
+	if auth_required == user_auth_token_len {
+		copy_bytes(dst + out, user_auth_token, user_auth_token_len)
+		out += user_auth_token_len
+	} else {
+		out = write_json(dst, out, user_auth_token, user_auth_token_len)
+	}
 	for i in 0..<len(suffix) {
 		dst[out] = suffix[i]
 		out += 1
