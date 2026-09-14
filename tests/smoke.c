@@ -53,6 +53,25 @@ int main(void) {
     }
 
     {
+        static const uint8_t input[] =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+        char output[sizeof input - 1];
+
+        size_t needed = melodica_url_encode_size(input, sizeof input - 1);
+        if (needed != sizeof input - 1) {
+            fprintf(stderr, "clean url size mismatch\n");
+            return 1;
+        }
+        if (melodica_url_encode(output, sizeof output, input, sizeof input - 1) != needed) {
+            fprintf(stderr, "clean url encode call mismatch\n");
+            return 1;
+        }
+        if (expect_bytes("clean url", output, needed, (const char *)input, sizeof input - 1)) {
+            return 1;
+        }
+    }
+
+    {
         static const uint8_t input[] = {'a', '"', 'b', '\n', 0x01};
         static const char expected[] = "a\\\"b\\n\\u0001";
         char output[sizeof expected - 1];
