@@ -163,6 +163,14 @@ int main(int argc, char **argv) {
         PIANO_AQ_HIGH, PIANO_RET_OK, 0u, 0);
     response_case(&ph, "absent", "{\"stat\":\"ok\",\"result\":{}}",
         PIANO_AQ_HIGH, PIANO_RET_OK, 0u, 1);
+    response_case(&ph, "missing_result", "{\"stat\":\"ok\"}",
+        PIANO_AQ_HIGH, PIANO_RET_OK, 0u, 1);
+    response_case(&ph, "null_result", "{\"stat\":\"ok\",\"result\":null}",
+        PIANO_AQ_HIGH, PIANO_RET_OK, 0u, 1);
+    response_case(&ph, "scalar_result", "{\"stat\":\"ok\",\"result\":true}",
+        PIANO_AQ_HIGH, PIANO_RET_OK, 0u, 1);
+    response_case(&ph, "array_result", "{\"stat\":\"ok\",\"result\":[]}",
+        PIANO_AQ_HIGH, PIANO_RET_OK, 0u, 1);
     response_case(&ph, "ads", "{\"stat\":\"ok\",\"result\":{\"items\":[{\"adToken\":\"ad\"}]}}",
         PIANO_AQ_HIGH, PIANO_RET_OK, 0u, 0);
     response_case(&ph, "late_failure", PLAYLIST_LATE_FAILURE,
@@ -182,6 +190,6 @@ int main(int argc, char **argv) {
     response_case(&ph, "error", "{\"stat\":\"fail\",\"code\":1001}",
         PIANO_AQ_HIGH, PIANO_RET_P_INVALID_AUTH_TOKEN, 0u, 1);
     PianoDestroy(&ph);
-    puts("playlist probe: 3 request cases, 12 response cases passed");
+    puts("playlist probe: 3 request cases, 16 response cases passed");
     return 0;
 }
