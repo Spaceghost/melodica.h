@@ -1,8 +1,6 @@
 package main
 
 MELODICA_ABI_VERSION :: u32(1)
-station_prefix :: "{\"returnAllStations\":true,\"userAuthToken\":\""
-station_suffix :: "\",\"syncTime\":"
 
 is_unreserved :: proc "contextless" (c: u8) -> bool {
 	return (c >= 'A' && c <= 'Z') ||
@@ -16,6 +14,103 @@ hex_digit :: proc "contextless" (n: u8) -> u8 {
 		return '0' + n
 	}
 	return 'A' + (n - 10)
+}
+
+json_escape_extra :: proc "contextless" (c: u8) -> uintptr {
+	if c >= 0x20 {
+		if c == '"' || c == '\\' {
+			return 1
+		}
+		return 0
+	}
+	switch c {
+	case '\b', '\f', '\n', '\r', '\t':
+		return 1
+	case:
+		return 5
+	}
+}
+
+copy_bytes :: proc "contextless" (dst: [^]u8, src: [^]u8, src_len: uintptr) {
+	for i in 0..<src_len {
+		dst[i] = src[i]
+	}
+}
+
+url_encode_size_impl :: proc "contextless" (src: [^]u8, src_len: uintptr) -> uintptr {
+	required: uintptr = 0
+	for i in 0..<src_len {
+		if is_unreserved(src[i]) {
+			required += 1
+		} else {
+			required += 3
+		}
+	}
+	return required
+}
+
+write_url :: proc "contextless" (dst: [^]u8, src: [^]u8, src_len: uintptr) -> uintptr {
+	out: uintptr = 0
+	for i in 0..<src_len {
+		c := src[i]
+		if is_unreserved(c) {
+			dst[out] = c
+			out += 1
+		} else {
+			dst[out + 0] = '%'
+			dst[out + 1] = hex_digit(c >> 4)
+			dst[out + 2] = hex_digit(c & 0x0f)
+			out += 3
+		}
+	}
+	return out
+}
+
+json_escape_size_impl :: proc "contextless" (src: [^]u8, src_len: uintptr) -> uintptr {
+	required := src_len
+	for i in 0..<src_len {
+		required += json_escape_extra(src[i])
+	}
+	return required
+}
+
+write_json :: proc "contextless" (
+	dst: [^]u8,
+	out_in: uintptr,
+	src: [^]u8,
+	src_len: uintptr,
+) -> uintptr {
+	out := out_in
+	for i in 0..<src_len {
+		c := src[i]
+		if c >= 0x20 && c != '"' && c != '\\' {
+			dst[out] = c
+			out += 1
+		} else {
+			switch c {
+			case '"':
+				dst[out + 0] = '\\'; dst[out + 1] = '"'; out += 2
+			case '\\':
+				dst[out + 0] = '\\'; dst[out + 1] = '\\'; out += 2
+			case '\b':
+				dst[out + 0] = '\\'; dst[out + 1] = 'b'; out += 2
+			case '\f':
+				dst[out + 0] = '\\'; dst[out + 1] = 'f'; out += 2
+			case '\n':
+				dst[out + 0] = '\\'; dst[out + 1] = 'n'; out += 2
+			case '\r':
+				dst[out + 0] = '\\'; dst[out + 1] = 'r'; out += 2
+			case '\t':
+				dst[out + 0] = '\\'; dst[out + 1] = 't'; out += 2
+			case:
+				dst[out + 0] = '\\'; dst[out + 1] = 'u'
+				dst[out + 2] = '0'; dst[out + 3] = '0'
+				dst[out + 4] = hex_digit(c >> 4); dst[out + 5] = hex_digit(c & 0x0f)
+				out += 6
+			}
+		}
+	}
+	return out
 }
 
 decimal_size :: proc "contextless" (value: uintptr) -> uintptr {
@@ -34,6 +129,15 @@ write_decimal :: proc "contextless" (dst: [^]u8, out_in: uintptr, value: uintptr
 	return out + 1
 }
 
+station_list_request_size_impl :: proc "contextless" (
+	user_auth_token: [^]u8,
+	user_auth_token_len: uintptr,
+	sync_time: uintptr,
+) -> uintptr {
+	return 43 + json_escape_size_impl(user_auth_token, user_auth_token_len) +
+	       13 + decimal_size(sync_time) + 1
+}
+
 @(export)
 melodica_abi_version :: proc "c" () -> u32 {
 	return MELODICA_ABI_VERSION
@@ -44,16 +148,7 @@ melodica_url_encode_size :: proc "c" (src: [^]u8, src_len: uintptr) -> uintptr {
 	if src == nil {
 		return 0
 	}
-
-	required: uintptr = 0
-	for i in 0..<src_len {
-		if is_unreserved(src[i]) {
-			required += 1
-		} else {
-			required += 3
-		}
-	}
-	return required
+	return url_encode_size_impl(src, src_len)
 }
 
 @(export)
@@ -63,37 +158,23 @@ melodica_url_encode :: proc "c" (
 	src: [^]u8,
 	src_len: uintptr,
 ) -> uintptr {
-	required := melodica_url_encode_size(src, src_len)
-	if dst == nil || dst_cap < required || src == nil {
+	if src == nil {
+		return 0
+	}
+	if dst != nil && src_len <= dst_cap / 3 {
+		return write_url(dst, src, src_len)
+	}
+
+	required := url_encode_size_impl(src, src_len)
+	if dst == nil || dst_cap < required {
 		return required
 	}
-
-	out: uintptr = 0
-	for i in 0..<src_len {
-		c := src[i]
-		if is_unreserved(c) {
-			dst[out] = c
-			out += 1
-		} else {
-			dst[out + 0] = '%'
-			dst[out + 1] = hex_digit(c >> 4)
-			dst[out + 2] = hex_digit(c & 0x0f)
-			out += 3
-		}
+	if required == src_len {
+		copy_bytes(dst, src, src_len)
+		return required
 	}
+	_ = write_url(dst, src, src_len)
 	return required
-}
-
-json_escape_extra :: proc "contextless" (c: u8) -> uintptr {
-	switch c {
-	case '"', '\\', '\b', '\f', '\n', '\r', '\t':
-		return 1
-	case:
-		if c < 0x20 {
-			return 5
-		}
-	}
-	return 0
 }
 
 @(export)
@@ -101,12 +182,7 @@ melodica_json_escape_size :: proc "c" (src: [^]u8, src_len: uintptr) -> uintptr 
 	if src == nil {
 		return 0
 	}
-
-	required := src_len
-	for i in 0..<src_len {
-		required += json_escape_extra(src[i])
-	}
-	return required
+	return json_escape_size_impl(src, src_len)
 }
 
 @(export)
@@ -116,58 +192,22 @@ melodica_json_escape :: proc "c" (
 	src: [^]u8,
 	src_len: uintptr,
 ) -> uintptr {
-	required := melodica_json_escape_size(src, src_len)
-	if dst == nil || dst_cap < required || src == nil {
-		return required
+	if src == nil {
+		return 0
+	}
+	if dst != nil && src_len <= dst_cap / 6 {
+		return write_json(dst, 0, src, src_len)
 	}
 
-	out: uintptr = 0
-	for i in 0..<src_len {
-		c := src[i]
-		switch c {
-		case '"':
-			dst[out + 0] = '\\'
-			dst[out + 1] = '"'
-			out += 2
-		case '\\':
-			dst[out + 0] = '\\'
-			dst[out + 1] = '\\'
-			out += 2
-		case '\b':
-			dst[out + 0] = '\\'
-			dst[out + 1] = 'b'
-			out += 2
-		case '\f':
-			dst[out + 0] = '\\'
-			dst[out + 1] = 'f'
-			out += 2
-		case '\n':
-			dst[out + 0] = '\\'
-			dst[out + 1] = 'n'
-			out += 2
-		case '\r':
-			dst[out + 0] = '\\'
-			dst[out + 1] = 'r'
-			out += 2
-		case '\t':
-			dst[out + 0] = '\\'
-			dst[out + 1] = 't'
-			out += 2
-		case:
-			if c < 0x20 {
-				dst[out + 0] = '\\'
-				dst[out + 1] = 'u'
-				dst[out + 2] = '0'
-				dst[out + 3] = '0'
-				dst[out + 4] = hex_digit(c >> 4)
-				dst[out + 5] = hex_digit(c & 0x0f)
-				out += 6
-			} else {
-				dst[out] = c
-				out += 1
-			}
-		}
+	required := json_escape_size_impl(src, src_len)
+	if dst == nil || dst_cap < required {
+		return required
 	}
+	if required == src_len {
+		copy_bytes(dst, src, src_len)
+		return required
+	}
+	_ = write_json(dst, 0, src, src_len)
 	return required
 }
 
@@ -180,9 +220,7 @@ melodica_station_list_request_size :: proc "c" (
 	if user_auth_token == nil {
 		return 0
 	}
-	return uintptr(len(station_prefix)) +
-	       melodica_json_escape_size(user_auth_token, user_auth_token_len) +
-	       uintptr(len(station_suffix)) + decimal_size(sync_time) + 1
+	return station_list_request_size_impl(user_auth_token, user_auth_token_len, sync_time)
 }
 
 @(export)
@@ -193,46 +231,22 @@ melodica_station_list_request :: proc "c" (
 	user_auth_token_len: uintptr,
 	sync_time: uintptr,
 ) -> uintptr {
-	required := melodica_station_list_request_size(user_auth_token, user_auth_token_len, sync_time)
-	if dst == nil || dst_cap < required || user_auth_token == nil {
+	if user_auth_token == nil {
+		return 0
+	}
+	required := station_list_request_size_impl(user_auth_token, user_auth_token_len, sync_time)
+	if dst == nil || dst_cap < required {
 		return required
 	}
 
-	prefix := station_prefix
-	suffix := station_suffix
+	prefix := "{\"returnAllStations\":true,\"userAuthToken\":\""
+	suffix := "\",\"syncTime\":"
 	out: uintptr = 0
 	for i in 0..<len(prefix) {
 		dst[out] = prefix[i]
 		out += 1
 	}
-	for i in 0..<user_auth_token_len {
-		c := user_auth_token[i]
-		switch c {
-		case '"':
-			dst[out + 0] = '\\'; dst[out + 1] = '"'; out += 2
-		case '\\':
-			dst[out + 0] = '\\'; dst[out + 1] = '\\'; out += 2
-		case '\b':
-			dst[out + 0] = '\\'; dst[out + 1] = 'b'; out += 2
-		case '\f':
-			dst[out + 0] = '\\'; dst[out + 1] = 'f'; out += 2
-		case '\n':
-			dst[out + 0] = '\\'; dst[out + 1] = 'n'; out += 2
-		case '\r':
-			dst[out + 0] = '\\'; dst[out + 1] = 'r'; out += 2
-		case '\t':
-			dst[out + 0] = '\\'; dst[out + 1] = 't'; out += 2
-		case:
-			if c < 0x20 {
-				dst[out + 0] = '\\'; dst[out + 1] = 'u'
-				dst[out + 2] = '0'; dst[out + 3] = '0'
-				dst[out + 4] = hex_digit(c >> 4); dst[out + 5] = hex_digit(c & 0x0f)
-				out += 6
-			} else {
-				dst[out] = c; out += 1
-			}
-		}
-	}
+	out = write_json(dst, out, user_auth_token, user_auth_token_len)
 	for i in 0..<len(suffix) {
 		dst[out] = suffix[i]
 		out += 1

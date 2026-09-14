@@ -1,0 +1,247 @@
+## pragmas.nogc = true
+
+local STATION_PREFIX: string <comptime> = '{"returnAllStations":true,"userAuthToken":"'
+local STATION_SUFFIX: string <comptime> = '","syncTime":'
+local STATION_PREFIX_LEN: csize <comptime> = 43
+local STATION_SUFFIX_LEN: csize <comptime> = 13
+
+local function is_unreserved(c: byte): boolean <inline>
+  return (c >= 65 and c <= 90) or
+         (c >= 97 and c <= 122) or
+         (c >= 48 and c <= 57) or
+         c == 45 or c == 46 or c == 95 or c == 126
+end
+
+local function hex_digit(n: byte): byte <inline>
+  if n < 10 then
+    return 48_u8 + n
+  end
+  return 65_u8 + (n - 10_u8)
+end
+
+local function json_extra(c: byte): csize <inline>
+  if c >= 32 then
+    if c == 34 or c == 92 then return 1_csize end
+    return 0_csize
+  end
+  if c == 8 or c == 12 or c == 10 or c == 13 or c == 9 then
+    return 1_csize
+  end
+  return 5_csize
+end
+
+local function copy_bytes(dst: *[0]byte, src: *[0]byte, src_len: csize): void <inline>
+  local i: csize = 0
+  while i < src_len do
+    dst[i] = src[i]
+    i = i + 1
+  end
+end
+
+local function url_encode_size_impl(src: *[0]byte, src_len: csize): csize <inline>
+  local required: csize = 0
+  local i: csize = 0
+  while i < src_len do
+    if is_unreserved(src[i]) then
+      required = required + 1
+    else
+      required = required + 3
+    end
+    i = i + 1
+  end
+  return required
+end
+
+local function write_url(dst: *[0]byte, src: *[0]byte, src_len: csize): csize <inline>
+  local out: csize = 0
+  local i: csize = 0
+  while i < src_len do
+    local c = src[i]
+    if is_unreserved(c) then
+      dst[out] = c
+      out = out + 1
+    else
+      dst[out] = 37
+      dst[out + 1] = hex_digit(c >> 4)
+      dst[out + 2] = hex_digit(c & 15)
+      out = out + 3
+    end
+    i = i + 1
+  end
+  return out
+end
+
+local function json_escape_size_impl(src: *[0]byte, src_len: csize): csize <inline>
+  local required: csize = src_len
+  local i: csize = 0
+  while i < src_len do
+    required = required + json_extra(src[i])
+    i = i + 1
+  end
+  return required
+end
+
+local function write_json(dst: *[0]byte, out_in: csize,
+                          src: *[0]byte, src_len: csize): csize <inline>
+  local out = out_in
+  local i: csize = 0
+  while i < src_len do
+    local c = src[i]
+    if c >= 32 and c ~= 34 and c ~= 92 then
+      dst[out] = c
+      out = out + 1
+    elseif c == 34 then
+      dst[out] = 92; dst[out + 1] = 34; out = out + 2
+    elseif c == 92 then
+      dst[out] = 92; dst[out + 1] = 92; out = out + 2
+    elseif c == 8 then
+      dst[out] = 92; dst[out + 1] = 98; out = out + 2
+    elseif c == 12 then
+      dst[out] = 92; dst[out + 1] = 102; out = out + 2
+    elseif c == 10 then
+      dst[out] = 92; dst[out + 1] = 110; out = out + 2
+    elseif c == 13 then
+      dst[out] = 92; dst[out + 1] = 114; out = out + 2
+    elseif c == 9 then
+      dst[out] = 92; dst[out + 1] = 116; out = out + 2
+    else
+      dst[out] = 92
+      dst[out + 1] = 117
+      dst[out + 2] = 48
+      dst[out + 3] = 48
+      dst[out + 4] = hex_digit(c >> 4)
+      dst[out + 5] = hex_digit(c & 15)
+      out = out + 6
+    end
+    i = i + 1
+  end
+  return out
+end
+
+local function decimal_size(value_in: usize): csize <inline>
+  local value = value_in
+  local digits: csize = 1
+  while value >= 10 do
+    value = value // 10_usize
+    digits = digits + 1
+  end
+  return digits
+end
+
+local function write_decimal(dst: *[0]byte, out_in: csize, value_in: usize): csize <inline>
+  local digits: [32]byte <noinit>
+  local count: csize = 0
+  local value = value_in
+  repeat
+    digits[count] = 48_u8 + (@byte)(value % 10_usize)
+    count = count + 1
+    value = value // 10_usize
+  until value == 0
+
+  local out = out_in
+  while count ~= 0 do
+    count = count - 1
+    dst[out] = digits[count]
+    out = out + 1
+  end
+  return out
+end
+
+local function station_request_size_impl(user_auth_token: *[0]byte,
+                                         user_auth_token_len: csize,
+                                         sync_time: usize): csize <inline>
+  return STATION_PREFIX_LEN +
+         json_escape_size_impl(user_auth_token, user_auth_token_len) +
+         STATION_SUFFIX_LEN + decimal_size(sync_time) + 1_csize
+end
+
+local function melodica_abi_version(): uint32 <cexport, codename 'melodica_abi_version'>
+  return 1_u32
+end
+
+local function melodica_url_encode_size(src: *[0]byte, src_len: csize): csize
+    <cexport, codename 'melodica_url_encode_size'>
+  if src == nilptr then return 0_csize end
+  return url_encode_size_impl(src, src_len)
+end
+
+local function melodica_url_encode(dst: *[0]byte, dst_cap: csize,
+                                   src: *[0]byte, src_len: csize): csize
+    <cexport, codename 'melodica_url_encode'>
+  if src == nilptr then return 0_csize end
+  if dst ~= nilptr and src_len <= dst_cap // 3_csize then
+    return write_url(dst, src, src_len)
+  end
+
+  local required = url_encode_size_impl(src, src_len)
+  if dst == nilptr or dst_cap < required then return required end
+  if required == src_len then
+    copy_bytes(dst, src, src_len)
+    return required
+  end
+  write_url(dst, src, src_len)
+  return required
+end
+
+local function melodica_json_escape_size(src: *[0]byte, src_len: csize): csize
+    <cexport, codename 'melodica_json_escape_size'>
+  if src == nilptr then return 0_csize end
+  return json_escape_size_impl(src, src_len)
+end
+
+local function melodica_json_escape(dst: *[0]byte, dst_cap: csize,
+                                    src: *[0]byte, src_len: csize): csize
+    <cexport, codename 'melodica_json_escape'>
+  if src == nilptr then return 0_csize end
+  if dst ~= nilptr and src_len <= dst_cap // 6_csize then
+    return write_json(dst, 0_csize, src, src_len)
+  end
+
+  local required = json_escape_size_impl(src, src_len)
+  if dst == nilptr or dst_cap < required then return required end
+  if required == src_len then
+    copy_bytes(dst, src, src_len)
+    return required
+  end
+  write_json(dst, 0_csize, src, src_len)
+  return required
+end
+
+local function melodica_station_list_request_size(user_auth_token: *[0]byte,
+                                                   user_auth_token_len: csize,
+                                                   sync_time: usize): csize
+    <cexport, codename 'melodica_station_list_request_size'>
+  if user_auth_token == nilptr then return 0_csize end
+  return station_request_size_impl(user_auth_token, user_auth_token_len, sync_time)
+end
+
+local function melodica_station_list_request(dst: *[0]byte, dst_cap: csize,
+                                             user_auth_token: *[0]byte,
+                                             user_auth_token_len: csize,
+                                             sync_time: usize): csize
+    <cexport, codename 'melodica_station_list_request'>
+  if user_auth_token == nilptr then return 0_csize end
+  local required = station_request_size_impl(user_auth_token, user_auth_token_len, sync_time)
+  if dst == nilptr or dst_cap < required then return required end
+
+  local out: csize = 0
+  local i: csize = 0
+  while i < STATION_PREFIX_LEN do
+    dst[out] = STATION_PREFIX.data[i]
+    out = out + 1
+    i = i + 1
+  end
+
+  out = write_json(dst, out, user_auth_token, user_auth_token_len)
+
+  i = 0
+  while i < STATION_SUFFIX_LEN do
+    dst[out] = STATION_SUFFIX.data[i]
+    out = out + 1
+    i = i + 1
+  end
+
+  out = write_decimal(dst, out, sync_time)
+  dst[out] = 125
+  return required
+end
