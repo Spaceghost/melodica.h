@@ -16,28 +16,32 @@ Checks executed
    the public libpiano layouts/enums and the internal helper signatures it consumes.
    Result: PASS.
 
-2. An independent json-c 0.18 oracle compared the QuickMix JSON construction against
+2. The exact quickmix_genre_probe.c source shape was compiled as strict C99 against a
+   public-layout/API stub matching the fields and macros consumed by the probe.
+   Result: PASS.
+
+3. An independent json-c 0.18 oracle compared the QuickMix JSON construction against
    json_object_to_json_string() for every non-NUL byte independently in a selected
    station ID and the user auth token. It also checked the zero-selected-station array.
    Result: 510 byte-variant cases identical, plus the empty-array case identical.
 
-3. A second json-c 0.18 oracle compared the no-payload GET_GENRE_STATIONS body and the
+4. A second json-c 0.18 oracle compared the no-payload GET_GENRE_STATIONS body and the
    TRANSFORM_STATION body against json_object_to_json_string() for every non-NUL byte
    independently in the auth token and transform station token, including signed
    32-bit timestamp extrema used by upstream json_object_new_int().
    Result: 765 byte-variant cases identical.
 
-4. The exact escaped/Unicode JSON response literal used by quickmix_genre_probe.c was
+5. The escaped/Unicode JSON response literal used by quickmix_genre_probe.c was
    compiled as strict C99 and printed as valid JSON text.
    Result: PASS.
 
 Scope / limitation
 ------------------
-These checks establish C syntax for the new implementation body and exact pre-encryption
-json-c wire formatting for 1,275 non-NUL byte-variant cases plus the empty QuickMix
-array. They do not substitute for the pinned whole-library differential gate. The
-container cannot resolve github.com, so it cannot obtain the private branch plus the
-unmodified upstream checkout for a full link/run here. GitHub-hosted jobs have also
-been failing before runner setup. Accordingly no full response-parser equivalence,
-throughput movement, archive-size movement, or five-language score is claimed from
-this local evidence.
+These checks establish strict-C99 syntax for the new implementation body and probe,
+and exact pre-encryption json-c wire formatting for 1,275 non-NUL byte-variant cases
+plus the empty QuickMix array. They do not substitute for the pinned whole-library
+differential gate. The container cannot resolve github.com, so it cannot obtain the
+private branch plus the unmodified upstream checkout for a full link/run here.
+GitHub-hosted jobs have also been failing before runner setup. Accordingly no full
+response-parser equivalence, throughput movement, archive-size movement, or
+five-language score is claimed from this local evidence.
