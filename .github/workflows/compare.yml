@@ -17,6 +17,7 @@ jobs:
       ODIN_SHA256: 167c3e1d7056419dad2e04bb3bd98715b7ff286d4c125f3c5a5ee337c6254283
       ZIG_VERSION: 0.16.0
       ZIG_SHA256: 70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
+      NELUA_REV: a58450563e2d2ec49bff499865c8b5cfdf6ff81a
 
     steps:
       - uses: actions/checkout@v4
@@ -49,6 +50,21 @@ jobs:
           test -x "$RUNNER_TEMP/zig/zig"
           echo "$RUNNER_TEMP/zig" >> "$GITHUB_PATH"
 
+      - name: Install pinned Nelua
+        shell: bash
+        run: |
+          set -euxo pipefail
+          src="$RUNNER_TEMP/nelua"
+          git init "$src"
+          git -C "$src" remote add origin https://github.com/edubart/nelua-lang.git
+          git -C "$src" fetch --depth=1 origin "$NELUA_REV"
+          git -C "$src" checkout --detach FETCH_HEAD
+          test "$(git -C "$src" rev-parse HEAD)" = "$NELUA_REV"
+          make -C "$src" -j"$(nproc)"
+          test -x "$src/nelua"
+          test -x "$src/nelua-lua"
+          echo "$src" >> "$GITHUB_PATH"
+
       - name: Build all native controls and libpiano compatibility
         run: make test
 
@@ -67,6 +83,9 @@ jobs:
       - name: Benchmark Zig
         run: make bench-zig
 
+      - name: Benchmark Nelua
+        run: make bench-nelua
+
       - name: Benchmark Codin C99 via GCC
         run: ./build/codin/bench
 
@@ -78,6 +97,7 @@ jobs:
           printf '%-28s %12s\n' c99-header-core "$(stat -c %s build/c/libmelodica.a)"
           printf '%-28s %12s\n' libpiano-compat "$(stat -c %s build/compat/libpiano.a)"
           printf '%-28s %12s\n' zig "$(stat -c %s build/zig/libmelodica.a)"
+          printf '%-28s %12s\n' nelua "$(stat -c %s build/nelua/libmelodica.a)"
           printf '%-28s %12s\n' wasm32-clang "$(stat -c %s build/portable/wasm32-clang.o)"
           printf '%-28s %12s\n' wasm32-zigcc "$(stat -c %s build/portable/wasm32-zigcc.o)"
           printf '%-28s %12s\n' aarch64-linux-musl-zigcc "$(stat -c %s build/portable/aarch64-linux-musl.o)"
