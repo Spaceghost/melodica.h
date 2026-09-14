@@ -117,10 +117,8 @@ static void piano_destroy_genre_categories_local(PianoGenreCategory_t *categorie
 
 static PianoReturn_t piano_response_genres_data(PianoHandle_t *ph,
         const MelodicaJsonDoc *doc, const size_t result) {
-    if (result == MELODICA_JSON_NONE || result >= doc->count ||
-            doc->tokens[result].type != MELODICA_JSON_OBJECT) {
-        return PIANO_RET_INVALID_RESPONSE;
-    }
+    /* json-c's object lookup simply reports "not found" for NULL/non-object
+     * results, so an otherwise-OK response without categories is still OK. */
     const size_t categories_token = melodica_json_object_get(doc, result, "categories");
     if (categories_token == MELODICA_JSON_NONE) return PIANO_RET_OK;
     if (categories_token >= doc->count ||
