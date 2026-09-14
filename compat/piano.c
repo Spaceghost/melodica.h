@@ -415,6 +415,7 @@ void PianoDestroyRequest(PianoRequest_t *req) {
 }
 
 #include "playlist.h"
+#include "search.h"
 
 PianoReturn_t PianoRequest(PianoHandle_t *ph, PianoRequest_t *req,
         const PianoRequestType_t type) {
@@ -472,6 +473,10 @@ PianoReturn_t PianoRequest(PianoHandle_t *ph, PianoRequest_t *req,
 
     if (type == PIANO_REQUEST_GET_PLAYLIST) {
         return piano_request_playlist(ph, req);
+    }
+
+    if (type == PIANO_REQUEST_SEARCH) {
+        return piano_request_search(ph, req);
     }
 
     if (type == PIANO_REQUEST_GET_STATIONS && ph != NULL) {
@@ -670,6 +675,9 @@ PianoReturn_t PianoResponse(PianoHandle_t *ph, PianoRequest_t *req) {
             break;
         case PIANO_REQUEST_GET_PLAYLIST:
             ret = piano_response_playlist(req, &doc, result);
+            break;
+        case PIANO_REQUEST_SEARCH:
+            ret = piano_response_search(req, &doc, result);
             break;
         default:
             ret = PIANO_RET_ERR;
