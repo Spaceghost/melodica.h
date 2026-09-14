@@ -24,7 +24,7 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner == 'github-hosted' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","ubuntu-tiny","spaceghost-melodica.h"]') }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - name: Install reference dependencies

@@ -1,65 +1,27 @@
-CI repair local evidence
+CI repair evidence
 Date: 2026-09-14
-Repository base: a24657a4a0b7c3b1244e00636b456cfa8a912ec2
+Base: a24657a4a0b7c3b1244e00636b456cfa8a912ec2
 
-Actual unchanged C implementation input blobs:
-include/melodica.h: a3ad26870d802f4d79a85c702d13391e747f0513
-impl/c/melodica.c: e57effc049992a11e815ead271b22450e851bc79
-Both local copies were checked with git hash-object before testing.
+Observed through GitHub:
+- PR #3 remained open and mergeable.
+- Its hosted checks failed before setup with runner_id=0 / no executed steps.
+- PR #2 overlaps only the serializer fast paths; this CI change does not mutate those implementation files.
+- Spaceghost/atlas-infra ordinary runners are repository-scoped and its reviewed allowlist did not include Spaceghost/melodica.h.
+- The reviewed ordinary runner source is runner-ubuntu-base/sealed-v2.336.0 and run-one-ubuntu.sh registers repository-specific labels.
 
-Executed C checks:
-GCC 14.2.0 (Debian 14.2.0-19): implementation compiled separately at -O3;
-conformance linked at -O2; strict C99, pedantic-errors, Wall/Wextra/Werror.
-conformance: 1389 cases, 109834 checks; all bytes, guards, short buffers, decimal boundaries: ok
+Repository changes in this CI repair:
+- PR workflows default to the repository-scoped self-hosted label set and retain a manual github-hosted fallback.
+- The pinned upstream differential remains separate from the five-language serializer shootout.
+- Added a bak-side broker helper which stages hash-verified ordinary atlas-infra runner helpers without editing atlas-infra allowlists/services.
+- Added shared C-ABI conformance tests for the independent C/Odin/Zig/Nelua/Codin artifacts.
+- Replaced the shell/tee scoreboard with a fail-closed parser that refuses stale, incomplete, crashed, duplicate, non-finite or wrong-unit results.
+- Added a native CI driver that attempts every lane, retains per-lane evidence, and withholds rankings unless every required lane/control passes.
 
-Clang 17.0.0: -O1 -g, strict C99, ASan + UBSan + frame pointers;
-ASAN_OPTIONS=detect_leaks=1.
-conformance: 1389 cases, 109834 checks; all bytes, guards, short buffers, decimal boundaries: ok
-No sanitizer finding was emitted.
+Not executed in this environment:
+- bak/Incus runner activation or registration.
+- Odin, Zig, Nelua or Codin compilation.
+- the pinned upstream differential.
+- the five-workload shootout.
+The local container could not resolve github.com and does not provide the required external language toolchains or bak's Incus/GitHub credentials.
 
-Executed orchestration tests:
-python3 -m unittest discover -s tests -p test_ci.py -v
-Ran 20 tests: OK.
-Tests include expected synthetic process/build failures. In each five-lane
-failure scenario the remaining lanes were still attempted and no stale/new
-standings were published. These mocked artifacts are test inputs only and are
-not native-language compilation or benchmark evidence.
-
-Other local checks:
-sh -n scripts/ci-deps.sh scripts/shootout.sh: passed.
-bash -n scripts/ci-toolchains.sh: passed.
-python3 -m py_compile scripts/*.py tests/test_ci.py: passed.
-Workflow YAML parsing and checks for runner labels, source admission, input
-choices, timeouts and 40-character action pins: passed (PyYAML BaseLoader).
-This is YAML validation, not execution by GitHub Actions.
-
-Not executed here:
-- bak activation, Incus base audit, runner registration or live job pickup.
-- toolchain downloads/installation or a complete native-ci run.
-- Odin, Zig, Nelua or Codin compiler execution.
-- full libpiano branch link or pinned upstream differential.
-The container has no odin, zig, nelua, gh or incus command, and cannot resolve
-GitHub. No throughput change, language ranking or new archive-size result is
-claimed. The actual hosted failure annotation remains unread through the
-connector; the host diagnostic command reads it with existing operator auth.
-
-Validation-source SHA256 fingerprints:
-d624a64155699411af1691c56b9cadda7de47e2995011c328a1c7f672e2e987e  .github/workflows/compare.yml
-0b592f3d6cd566fa8b1dee4230424b972450c445c3aa3dbb33f23cb44cc30173  .github/workflows/libpiano-differential.yml
-068fc7901cf978daa4f2ba7d176b9e921790526e9cb5c6813e5ca6ecb701308d  scripts/ci-deps.sh
-0f0407324074faff926b87e9084aba0760bdb791cf4157cbe6a8aae72ccac761  scripts/ci-on-bak.py
-ac4501523f33e295147626ed49dc43a569940a6f17be7e1d8ded407599405d28  scripts/ci-toolchains.sh
-403f3bb078c4fda229f64c5e9e1b4ef4747d7fc8bc4badfd40e7f4399a85e8c6  scripts/native-ci.py
-94830fdd0c0b961d45aa41b32c5dbddcdd31ad86b90107429bc9d935f49ec02f  scripts/shootout.py
-09cfb13fa4afcb71c39174df904b3ef87a8289b1741de71a5ef51c7866a50f58  scripts/shootout.sh
-130bfda37d7c46936ca2e0f4d1c8da9ace636885915ebd544d0bbd9f72b82750  tests/conformance.c
-9d9719827365c5da498088dfea272798fedb60cb59e05bf1b1f78f01e690fb74  tests/test_ci.py
-
-Local CPU/platform:
-Linux-6.18.44-x86_64-with-glibc2.41
-Architecture:                            x86_64
-CPU(s):                                  5
-Model name:                              Intel(R) Xeon(R) Platinum 8272CL CPU @ 2.60GHz
-Thread(s) per core:                      1
-Core(s) per socket:                      5
-Socket(s):                               1
+Therefore this file contains no new performance, artifact-size, compatibility-pass or non-C language execution claim.
