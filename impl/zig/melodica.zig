@@ -203,13 +203,20 @@ export fn melodica_station_list_request(
     sync_time: usize,
 ) usize {
     const auth = auth_opt orelse return 0;
-    const required = stationListRequestSizeImpl(auth, auth_len, sync_time);
+    const auth_required = jsonEscapeSizeImpl(auth, auth_len);
+    const required = station_prefix.len + auth_required +
+        station_suffix.len + decimalSize(sync_time) + 1;
     if (dst_opt == null or dst_cap < required) return required;
     const dst = dst_opt.?;
 
     var out: usize = 0;
     for (station_prefix) |c| { dst[out] = c; out += 1; }
-    out = writeJson(dst, out, auth, auth_len);
+    if (auth_required == auth_len) {
+        copyBytes(dst + out, auth, auth_len);
+        out += auth_len;
+    } else {
+        out = writeJson(dst, out, auth, auth_len);
+    }
     for (station_suffix) |c| { dst[out] = c; out += 1; }
     out = writeDecimal(dst, out, sync_time);
     dst[out] = '}';
