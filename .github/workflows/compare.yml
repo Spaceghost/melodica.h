@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   language-shootout:
-    runs-on: ubuntu-latest
+    runs-on: incus-spaceghost-melodica.h
     env:
       ODIN_VERSION: dev-2026-09
       ODIN_SHA256: 167c3e1d7056419dad2e04bb3bd98715b7ff286d4c125f3c5a5ee337c6254283
@@ -94,7 +94,7 @@ jobs:
           printf '%-28s %12s\n' codin-c99-source "$(stat -c %s build/codin/melodica.c)"
 
   pianobar-source-compat:
-    runs-on: ubuntu-latest
+    runs-on: incus-spaceghost-melodica.h
     steps:
       - uses: actions/checkout@v4
 
