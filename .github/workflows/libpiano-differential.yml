@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   differential:
-    runs-on: ubuntu-latest
+    runs-on: incus-spaceghost-melodica.h
     steps:
       - uses: actions/checkout@v4
 
