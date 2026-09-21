@@ -20,9 +20,7 @@ concurrency:
 
 jobs:
   differential:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ${{ fromJSON(inputs.runner == 'github-hosted' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","ubuntu-tiny","spaceghost-melodica.h"]') }}
-    timeout-minutes: 30
+    runs-on: incus-spaceghost-melodica.h
     steps:
       - uses: actions/checkout@v4
         with:
