@@ -245,15 +245,24 @@ size_t melodica_station_list_request_size(const uint8_t *user_auth_token,
 size_t melodica_station_list_request(char *dst, const size_t dst_cap,
         const uint8_t *user_auth_token, const size_t user_auth_token_len,
         const uintptr_t sync_time) {
-    const size_t required = melodica__station_list_request_size(
-        user_auth_token, user_auth_token_len, sync_time);
-    if (dst == NULL || dst_cap < required || user_auth_token == NULL) return required;
+    if (user_auth_token == NULL) return 0u;
+    const size_t auth_required = melodica__json_escape_size(
+        user_auth_token, user_auth_token_len);
+    const size_t required = (sizeof(melodica__station_prefix) - 1u) +
+        auth_required + (sizeof(melodica__station_suffix) - 1u) +
+        melodica__decimal_size(sync_time) + 1u;
+    if (dst == NULL || dst_cap < required) return required;
 
     size_t out = 0u;
     for (size_t i = 0u; i < sizeof(melodica__station_prefix) - 1u; ++i) {
         dst[out++] = melodica__station_prefix[i];
     }
-    out = melodica__write_json(dst, out, user_auth_token, user_auth_token_len);
+    if (auth_required == user_auth_token_len) {
+        melodica__copy_bytes(dst + out, user_auth_token, user_auth_token_len);
+        out += user_auth_token_len;
+    } else {
+        out = melodica__write_json(dst, out, user_auth_token, user_auth_token_len);
+    }
     for (size_t i = 0u; i < sizeof(melodica__station_suffix) - 1u; ++i) {
         dst[out++] = melodica__station_suffix[i];
     }
