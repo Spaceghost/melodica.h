@@ -1,0 +1,48 @@
+Feedback/rating local evidence, 2026-09-14
+
+Scope
+-----
+This evidence covers only the new RATE_SONG / ADD_FEEDBACK / ADD_TIRED_SONG
+compatibility slice. It is not a completed candidate-vs-upstream differential,
+not a native-language shootout result, and not an artifact-size result.
+
+Environment
+-----------
+cc: GCC 14.2.0 (Debian 14.2.0-19)
+json-c: 0.18
+flags used for syntax checks: -std=c99 -pedantic-errors -Wall -Wextra -Werror
+no LTO; no native-CPU tuning
+
+Executed checks
+---------------
+1. compat/feedback.h was compiled under strict C99 in an API-shaped integration
+   stub with all static entry points referenced. Result: PASS.
+2. tests/reference/feedback_probe.c was compiled under strict C99 against an
+   API-shaped piano.h stub. Result: PASS.
+3. An independent json-c oracle built the upstream object in the exact order
+   stationToken, trackToken, isPositive, userAuthToken, syncTime and compared
+   json_object_to_json_string() bytes against the proposed writer.
+   Fixed LOVE/BAN escaped cases plus every non-NUL single-byte value in each of
+   stationToken, trackToken and userAuthToken were checked: 767 total cases.
+   Result: identical.
+
+Behavior encoded by the slice
+-----------------------------
+- RATE_SONG delegates request construction through ADD_FEEDBACK and restores
+  req->type and req->data before returning, matching upstream's high-level wrapper.
+- LOVE emits isPositive=true; BAN emits false.
+- Successful RATE_SONG responses update song->rating; failed responses do not.
+- ADD_TIRED_SONG uses user.sleepSong and a successful response sets TIRED.
+- Direct ADD_FEEDBACK success response remains deliberately unsupported: pinned
+  upstream asserts in that response case, so melodica returns PIANO_RET_ERR rather
+  than inventing a successful public response contract. Server-error envelopes are
+  still mapped before that dispatch.
+
+Limitations
+-----------
+The private repository/reference trees are not mounted in this execution container,
+so the complete branch and untouched pinned upstream archive were not linked here.
+GitHub-hosted differential and comparison jobs at the prior branch head failed
+before Set up job with steps=null. The new differential probe is therefore pending
+a real runner execution. No performance or size movement is claimed from these
+syntax/wire checks.

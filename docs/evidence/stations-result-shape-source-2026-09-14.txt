@@ -1,0 +1,18 @@
+GET_STATIONS result-shape compatibility correction
+Date: 2026-09-14
+
+Pinned reference: PromyLOPh/pianobar ad5ec908de10479ecee7d7c0e1030d12146f8f16.
+The reference response path obtains `result` without requiring an object and then calls
+json_object_object_get_ex(result, "stations", &stations). If that lookup fails, the
+request returns the existing PIANO_RET_OK and does not modify ph->stations.
+
+The already-retained json-c 0.18 result-shape oracle demonstrates that object lookup
+returns false for missing, null, boolean and array result values. The differential
+piano probe now also covers missing/null/bool/array/string result forms while retaining
+a populated station list, so a real gate execution will compare both the return value
+and ownership/state preservation against pinned upstream.
+
+No new execution result is claimed here. At the commit preceding this correction,
+the repaired workflows were correctly queued for the repository-scoped labels
+[self-hosted, Linux, X64, ubuntu-tiny, spaceghost-melodica.h] but no matching runner
+had claimed them yet.

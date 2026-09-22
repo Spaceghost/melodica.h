@@ -1,0 +1,31 @@
+libpiano result-shape compatibility oracle
+Date: 2026-09-14
+Scope: json-c object lookup semantics used by pinned upstream playlist/search response code.
+
+Toolchain:
+cc (Debian 14.2.0-19) 14.2.0
+json-c 0.18
+optimization: -O2
+
+Oracle operation:
+Parse each valid response shape, look up `result`, then call json_object_object_get_ex()
+on that result for `items`, `artists`, and `songs`, matching the pinned upstream access
+pattern. No melodica implementation was benchmarked in this check.
+
+Observed output:
+missing have_result=0 type=-1 items=0 artists=0 songs=0
+null have_result=1 type=-1 items=0 artists=0 songs=0
+bool have_result=1 type=1 items=0 artists=0 songs=0
+array have_result=1 type=5 items=0 artists=0 songs=0
+object have_result=1 type=4 items=0 artists=0 songs=0
+
+Implication:
+For `stat: ok`, pinned upstream treats missing, null, boolean, array, and otherwise
+non-object `result` values as having no playlist/search members. Playlist therefore
+returns success without replacing retPlaylist. Search first clears searchResult, then
+returns success with empty artists/songs. The candidate previously rejected the
+missing/non-object shapes before reaching those semantics; commits in this branch now
+match the upstream behavior and the same shapes are part of the differential probes.
+
+This is correctness evidence only. It is not a completed upstream differential,
+throughput result, artifact-size result, or evidence for any non-C native lane.

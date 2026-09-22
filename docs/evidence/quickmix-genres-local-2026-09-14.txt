@@ -1,0 +1,52 @@
+QuickMix / genre / transform-station local evidence
+Date: 2026-09-14
+Reference pin: ad5ec908de10479ecee7d7c0e1030d12146f8f16
+Implementation blob checked: compat/quickmix_genres.h f918dc97ea25ce0ba03a27ee8030a65adc1a82b1
+
+Environment
+-----------
+cc: Debian GCC 14.2.0
+json-c: 0.18
+No LTO or native-CPU tuning was used.
+
+Checks executed
+---------------
+1. The compat/quickmix_genres.h implementation body was compiled as strict C99 with
+   -pedantic-errors -Wall -Wextra -Werror in a translation-unit stub containing the
+   public libpiano layouts/enums and the internal helper signatures it consumes.
+   Result: PASS.
+
+2. The quickmix_genre_probe.c source shape was compiled as strict C99 against a
+   public-layout/API stub matching the fields and macros consumed by the probe.
+   Result: PASS.
+
+3. An independent json-c 0.18 oracle compared the QuickMix JSON construction against
+   json_object_to_json_string() for every non-NUL byte independently in a selected
+   station ID and the user auth token. It also checked the zero-selected-station array.
+   Result: 510 byte-variant cases identical, plus the empty-array case identical.
+
+4. A second json-c 0.18 oracle compared the no-payload GET_GENRE_STATIONS body and the
+   TRANSFORM_STATION body against json_object_to_json_string() for every non-NUL byte
+   independently in the auth token and transform station token, including signed
+   32-bit timestamp extrema used by upstream json_object_new_int().
+   Result: 765 byte-variant cases identical.
+
+5. Local json-c 0.18 behavior was checked for GET_GENRE_STATIONS response dispatch:
+   json_object_object_get_ex(NULL, "categories", ...) and lookups on non-object JSON
+   values return not-found rather than failing. The implementation was adjusted so an
+   otherwise-OK response with no result/categories remains OK, matching upstream.
+
+6. The escaped/Unicode JSON response literal used by quickmix_genre_probe.c was
+   compiled as strict C99 and printed as valid JSON text.
+   Result: PASS.
+
+Scope / limitation
+------------------
+These checks establish strict-C99 syntax for the new implementation/probe shape and
+exact pre-encryption json-c wire formatting for 1,275 non-NUL byte-variant cases plus
+the empty QuickMix array. They do not substitute for the pinned whole-library
+differential gate. The container cannot resolve github.com, so it cannot obtain the
+private branch plus the unmodified upstream checkout for a full link/run here.
+GitHub-hosted jobs have also been failing before runner setup. Accordingly no full
+response-parser equivalence, throughput movement, archive-size movement, or
+five-language score is claimed from this local evidence.

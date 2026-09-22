@@ -1,72 +1,84 @@
 # melodica.h
 
-A portable reimplementation of the useful `libpianobar`/`libpiano` core, developed as competing language implementations behind one C ABI.
+A portable libpiano reimplementation, with independently implemented native
+serializer lanes behind one C ABI. Correctness and observable upstream behavior
+come before performance claims.
 
-The product goal is deliberately obnoxious in a useful way: **one tiny library that can be embedded as a single C header, while also becoming a practical drop-in `libpiano` replacement for existing pianobar-era callers.** Correctness comes first; speed, generated/native size, portability, dependency weight and source quality decide the shootout.
+## Two comparison surfaces
 
-## Current lanes
+| Surface | Implementations | What is compared |
+|---|---|---|
+| Allocation-free serializer ABI | C99, Odin, Zig, Nelua, Codin C99 | URL encoding, JSON escaping and station-request construction |
+| Historical `piano.h` API | melodica C compatibility library versus pinned upstream libpiano | Request bytes, response data, return values, state and ownership |
 
-| lane | source | build | role |
-|---|---|---|---|
-| portable C99 | `include/melodica.h`, `impl/c` | single-header implementation / static library | portability baseline + winner-eligible |
-| Odin | `impl/odin` | native Odin static library | winner-eligible |
-| Zig | `impl/zig` | native Zig static library | winner-eligible |
-| Nelua | `impl/nelua` | Nelua → optimized C → native static library | winner-eligible |
-| Codin C99 | `impl/codin` | `Spaceghost/codin` → strict C99 → GCC/Clang | winner-eligible |
-| Codin native | `impl/codin` | native Odin static library | control only |
+Codin native remains an Odin-compiled control, not another independent winner.
+Nelua disables GC and exports fixed C names through its C backend. The full
+`piano.h` implementation is **not yet implemented independently in all five
+languages**. A serializer score is not evidence of full libpiano compatibility.
 
-`Spaceghost/codin` now owns the compiler backend. `melodica.h` pins a known-green compiler revision instead of carrying a secret patch stack in the application repo. Codin currently has the deliberately staged C99 ladder: minimal sema and range lowering, structs, fixed arrays, enums, slices/strings, multiple returns, `defer`, tagged unions, imports and narrow `$T` monomorphization. Unsupported shapes fail loudly.
-
-The Nelua lane is deliberately low-level: garbage collection is disabled, the shared ABI is exported directly with fixed C names, and the compiler emits an optimized static library. That keeps Nelua in the same allocation-free, C-callable contest as the C/Odin/Zig implementations instead of quietly benchmarking a different runtime model.
-
-## Portable single-header core
-
-The common ABI currently provides allocation-free, binary-safe primitives used by the protocol layer:
-
-- RFC 3986 percent encoding
-- JSON string escaping
-- ABI/version reporting
-
-For the zero-dependency C implementation:
+## Portable core
 
 ```c
 #define MELODICA_IMPLEMENTATION
 #include <melodica.h>
 ```
 
-That implementation is strict C99 and has no runtime libc dependency. CI compiles it normally and as a freestanding `wasm32` object.
+The strict-C99 core provides binary-safe, allocation-free percent encoding, JSON
+escaping, station-list request serialization, and ABI/version reporting. Output
+sizes exclude a NUL terminator. A null destination or insufficient capacity
+causes no writes. The existing five-lane workloads and this contract are unchanged.
 
-## libpiano compatibility
+## Implemented libpiano subset
 
-`include/piano.h` now exposes the historical public data model, request/error enums, linked-list helpers and function names. `libpiano.a` currently implements:
+`include/piano.h` preserves the historical public names and data model.
+`libpiano.a` contains portable lifecycle/list helpers, destruction functions,
+station lookup, error mapping, owned JSON parsing and Blowfish support. Request
+and response handling currently covers:
 
-- list append/prepend/delete/get/count with the original intrusive-list semantics
-- `PianoInit`/`PianoDestroy` portable ownership and lifecycle
-- playlist/search/station-info/station-mode destruction
-- request destruction
-- `PianoFindStationById`
-- `PianoErrorToStr`
+- Two-step partner/user login with encrypted sync-time handling.
+- Authenticated station-list retrieval and QuickMix membership flags.
+- Playlist retrieval with TLS selection, exact spaced request JSON and
+  encryption, low/medium/high audio selection, metadata, ad-item filtering,
+  unavailable-quality errors and caller-owned output.
 
-The old libgcrypt compile-time dependency is gone; cipher handles are opaque pointer-sized compatibility fields. **RPC construction and response parsing intentionally still return explicit failure rather than pretending Pandora network compatibility exists.** Those are the next major completeness milestones, followed by crypt/auth transport and a real pianobar compatibility build.
+Unsupported successful response types now return `PIANO_RET_ERR` rather than
+silently reporting completion. The API remains partial:
+`MELODICA_LIBPIANO_RPC_IMPLEMENTED` stays zero. No live Pandora playback or network
+interoperability claim is made by these offline fixtures.
 
-## Build / test / install
+Product code does not depend on json-c or libgcrypt. The independent test oracle
+and upstream reference do. `MELODICA_PIANO_LEGACY_GCRYPT` is available for old
+consumers that depended on transitive gcrypt declarations from `piano.h`.
+
+## Build and test
 
 ```sh
-make test          # C + Odin + Zig + Nelua + native Codin control + libpiano compatibility
-make codin-check   # Codin -> strict C99 -> GCC + Clang + feature fixtures
-make portable      # freestanding native + wasm32 C objects
-make bench         # language shootout microbenchmarks
-make install       # portable C libmelodica.a + libpiano.a + headers
+make test-libpiano             # Existing compatibility tests plus playlist tests
+make test-playlist-alloc       # Allocation-failure/ownership sweep; GNU-compatible linker
+make test-playlist-wire        # Independent json-c wire oracle; requires json-c development files
+make test-playlist-sanitize    # Clang ASan, UBSan and leak checks
+make bench-libpiano            # Full playlist parse/build/free benchmark
+sh scripts/libpiano-differential.sh # Pinned unmodified upstream versus melodica
+
+make test                     # All native serializer lanes plus compatibility tests
+make codin-check              # Codin -> strict C99 -> GCC/Clang checks
+make portable                 # Freestanding/cross-target C builds
+make shootout                 # Existing five-workload normalized serializer scoreboard
+make shootout-gate            # >=90% geometric mean and >=80% worst-workload target
+make install                  # C libmelodica.a, libpiano.a and public headers
 ```
 
-CI pins Odin `dev-2026-09` by SHA-256, Zig `0.16.0` by SHA-256, Nelua by exact upstream commit, and Codin by commit. Every implementation lane must remain bit-for-bit behavior-compatible with `include/melodica.h` on the shared tests.
+The differential script needs git, make, a C compiler, pkg-config, and upstream
+libcurl/libgcrypt/json-c build dependencies. CI provisions them. Upstream is pinned
+in `tests/reference/pianobar.rev`; its source is not patched. The same probes are
+linked against both libraries. Complete playlist benchmarks use matching `-O2`,
+no LTO/native-CPU tuning, five-run medians, and both execution orders. They are a
+separate comparison from the five-language serializer leaderboard.
 
-## Completeness path
+The differential workflow retains plaintext/ciphertext comparisons, timings,
+compiler information, archive sizes and dynamic dependencies, including evidence
+available before a failed check. A pre-setup runner failure is not a source or
+performance verdict.
 
-The next product slices are intentionally concrete:
-
-1. reproduce libpiano request JSON generation without libgcrypt coupling;
-2. reproduce response parsing and ownership semantics with fixture/golden tests;
-3. isolate auth/crypto behind a tiny provider interface so hosted, embedded and browser/WASM builds can choose implementations;
-4. compile a real pianobar consumer against `include/piano.h` as a source-compatibility gate;
-5. grow the language shootout from primitives into the same protocol/state-machine fixtures so the winner is chosen on useful work, not one pleasant microbenchmark.
+See [the completeness ledger](docs/libpiano-completeness.md) for supported
+behavior, remaining work, and the exact scope of current validation.

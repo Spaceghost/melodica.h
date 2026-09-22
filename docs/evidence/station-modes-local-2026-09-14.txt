@@ -1,0 +1,20 @@
+station modes slice local evidence
+2026-09-14T17:01:46Z
+cc (Debian 14.2.0-19) 14.2.0
+json-c 0.18
+Linux localhost 6.18.44 #1 SMP Sat Sep 12 15:35:21 UTC 2026 x86_64 GNU/Linux
+Architecture:                            x86_64
+Model name:                              AMD EPYC 9V74 80-Core Processor
+
+$ cc -std=c99 -pedantic-errors -Wall -Wextra -Werror -fsyntax-only station_modes_syntax.c
+station_modes strict-C99 syntax: pass
+
+$ cc -std=c99 -pedantic-errors -Wall -Wextra -Werror -I<stub> -fsyntax-only station_modes_probe.c
+station_modes differential probe strict-C99 syntax: pass
+
+$ cc -O2 -std=c99 -D_DEFAULT_SOURCE -pedantic-errors -Wall -Wextra -Werror station_modes_oracle.c $(pkg-config --cflags --libs json-c)
+station modes wire oracle: 1023 exact json-c cases
+
+Scope: the syntax checks use a minimal declaration stub around the exact station-mode internal header/probe shapes because this automation container cannot resolve github.com and therefore cannot materialize the private branch for a full local link. The request-wire oracle independently compares json-c 0.18 serialization with the implemented GET_STATION_MODES and SET_STATION_MODE member order/escaping: every non-NUL byte independently in stationId and userAuthToken for both requests (4*255 cases), plus modeId 0, 7 and UINT_MAX. This is request-wire evidence, not a completed pinned upstream differential, response equivalence proof, throughput measurement or five-language benchmark.
+
+Hosted evidence: differential run #64 was explicitly retried before this slice and attempt 2 again completed with steps=null and no runner assignment. At station-mode head afa18aaf8c630144bf74f0e096fd536b0a15525b, differential run #65 and comparison run #134 also completed with steps=null for every job. These are pre-execution infrastructure failures, not source verdicts.

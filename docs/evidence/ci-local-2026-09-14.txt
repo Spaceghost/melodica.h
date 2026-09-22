@@ -1,0 +1,27 @@
+CI repair evidence
+Date: 2026-09-14
+Base: a24657a4a0b7c3b1244e00636b456cfa8a912ec2
+
+Observed through GitHub:
+- PR #3 remained open and mergeable.
+- Its hosted checks failed before setup with runner_id=0 / no executed steps.
+- PR #2 overlaps only the serializer fast paths; this CI change does not mutate those implementation files.
+- Spaceghost/atlas-infra ordinary runners are repository-scoped and its reviewed allowlist did not include Spaceghost/melodica.h.
+- The reviewed ordinary runner source is runner-ubuntu-base/sealed-v2.336.0 and run-one-ubuntu.sh registers repository-specific labels.
+
+Repository changes in this CI repair:
+- PR workflows default to the repository-scoped self-hosted label set and retain a manual github-hosted fallback.
+- The pinned upstream differential remains separate from the five-language serializer shootout.
+- Added a bak-side broker helper which stages hash-verified ordinary atlas-infra runner helpers without editing atlas-infra allowlists/services.
+- Added shared C-ABI conformance tests for the independent C/Odin/Zig/Nelua/Codin artifacts.
+- Replaced the shell/tee scoreboard with a fail-closed parser that refuses stale, incomplete, crashed, duplicate, non-finite or wrong-unit results.
+- Added a native CI driver that attempts every lane, retains per-lane evidence, and withholds rankings unless every required lane/control passes.
+
+Not executed in this environment:
+- bak/Incus runner activation or registration.
+- Odin, Zig, Nelua or Codin compilation.
+- the pinned upstream differential.
+- the five-workload shootout.
+The local container could not resolve github.com and does not provide the required external language toolchains or bak's Incus/GitHub credentials.
+
+Therefore this file contains no new performance, artifact-size, compatibility-pass or non-C language execution claim.
