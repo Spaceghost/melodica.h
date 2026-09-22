@@ -39,6 +39,14 @@ static void print_station(const char *label, const PianoStation_t *station) {
     printf("%s.use_quickmix=%d\n", label, station != NULL ? !!station->useQuickMix : -1);
 }
 
+static void probe_station_result_shape(PianoHandle_t *ph, PianoRequest_t *req,
+        const char *label, char *response) {
+    req->responseData = response;
+    const PianoReturn_t ret = PianoResponse(ph, req);
+    printf("%s.ret=%d\n", label, (int)ret);
+    printf("%s.count=%zu\n", label, PianoListCountP(ph->stations));
+}
+
 int main(void) {
 #ifdef MELODICA_REFERENCE_UPSTREAM
     if (gcry_check_version(NULL) == NULL) return 90;
@@ -101,8 +109,19 @@ int main(void) {
     print_station("station.one", PianoFindStationById(ph.stations, "1"));
     print_station("station.shared", PianoFindStationById(ph.stations, "2"));
     print_station("station.mix", PianoFindStationById(ph.stations, "mix"));
-    PianoDestroyRequest(&req);
 
+    probe_station_result_shape(&ph, &req, "stations.result.missing",
+        (char *)"{\"stat\":\"ok\"}");
+    probe_station_result_shape(&ph, &req, "stations.result.null",
+        (char *)"{\"stat\":\"ok\",\"result\":null}");
+    probe_station_result_shape(&ph, &req, "stations.result.bool",
+        (char *)"{\"stat\":\"ok\",\"result\":false}");
+    probe_station_result_shape(&ph, &req, "stations.result.array",
+        (char *)"{\"stat\":\"ok\",\"result\":[]}");
+    probe_station_result_shape(&ph, &req, "stations.result.string",
+        (char *)"{\"stat\":\"ok\",\"result\":\"x\"}");
+
+    PianoDestroyRequest(&req);
     PianoDestroy(&ph);
     return 0;
 }

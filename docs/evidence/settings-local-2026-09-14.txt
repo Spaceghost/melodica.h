@@ -1,0 +1,16 @@
+settings slice local evidence
+2026-09-14T16:05:09Z
+cc (Debian 14.2.0-19) 14.2.0
+json-c 0.18
+Linux localhost 6.18.44 #1 SMP Sat Sep 12 15:35:21 UTC 2026 x86_64 GNU/Linux
+Architecture:                            x86_64
+Model name:                              AMD EPYC 9V74 80-Core Processor
+
+$ cc -std=c99 -pedantic-errors -Wall -Wextra -Werror -fsyntax-only settings_syntax.c
+settings header strict-C99 syntax: pass
+$ cc -std=c99 -pedantic-errors -Wall -Wextra -Werror -I<stub> -fsyntax-only settings_probe.c
+settings differential probe strict-C99 syntax: pass
+$ cc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror settings_wire_oracle.c $(pkg-config --cflags --libs json-c)
+settings wire oracle: 1279 exact json-c cases
+
+Scope: independent json-c 0.18 wire oracle for GET_SETTINGS and CHANGE_SETTINGS request JSON, including full/minimal tristates and every non-NUL byte independently in currentUsername, currentPassword, newUsername, newPassword, and userAuthToken (5*255 variants plus four fixed cases). This is request-wire evidence, not a branch benchmark or full pinned differential.

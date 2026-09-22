@@ -49,7 +49,7 @@ $(BUILD)/compat/json.o: compat/json.c compat/json.h
 	mkdir -p $(BUILD)/compat
 	$(CC) -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Icompat -c $< -o $@
 
-$(BUILD)/compat/piano.o: compat/piano.c include/piano.h compat/blowfish.h compat/crypt.h compat/json.h
+$(BUILD)/compat/piano.o: compat/piano.c compat/piano_base.inc compat/playlist.h compat/search.h compat/station_mutations.h compat/feedback.h compat/seeds.h compat/quickmix_genres.h compat/explain_bookmarks.h compat/settings.h compat/station_modes.h include/piano.h compat/blowfish.h compat/crypt.h compat/json.h
 	mkdir -p $(BUILD)/compat
 	$(CC) -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude -Icompat -c $< -o $@
 
@@ -180,3 +180,5 @@ install: $(BUILD)/c/libmelodica.a $(BUILD)/compat/libpiano.a
 
 clean:
 	rm -rf $(BUILD)
+
+include tests/reference/playlist.mk

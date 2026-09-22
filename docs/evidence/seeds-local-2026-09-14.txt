@@ -1,0 +1,53 @@
+Seed mutation local evidence, 2026-09-14
+
+Scope
+-----
+This evidence covers ADD_SEED, DELETE_FEEDBACK and DELETE_SEED request construction
+plus their successful no-op response semantics. It is not a completed
+candidate-vs-upstream differential, not a five-language shootout result, and not an
+artifact-size result.
+
+Reference behavior inspected
+----------------------------
+Pinned upstream: PromyLOPh/pianobar ad5ec908de10479ecee7d7c0e1030d12146f8f16.
+request.c uses, in insertion order:
+- ADD_SEED: musicToken, stationToken; method station.addMusic.
+- DELETE_FEEDBACK: feedbackId; method station.deleteFeedback.
+- DELETE_SEED: seedId chosen song > artist > station; method station.deleteMusic.
+The common authenticated request tail then appends userAuthToken and signed int
+syncTime. response.c groups these request kinds with successful no-op responses.
+The pinned reference source was read but not modified.
+
+Environment
+-----------
+cc: GCC 14.2.0 (Debian 14.2.0-19)
+json-c: 0.18
+flags used for local syntax checks: -std=c99 -pedantic-errors -Wall -Wextra -Werror
+no LTO; no native-CPU tuning
+
+Executed checks
+---------------
+1. compat/seeds.h was compiled under strict C99 in an API-shaped integration stub
+   with all request helpers and the response helper exercised. Result: PASS.
+2. tests/reference/seed_probe.c was compiled under strict C99 against an API-shaped
+   piano.h stub. Result: PASS.
+3. An independent json-c oracle built the three upstream request object shapes and
+   compared json_object_to_json_string() bytes against the proposed writer.
+   Fixed escaped cases plus every non-NUL byte in musicToken, stationToken,
+   feedbackId, seedId and the relevant auth-token positions were checked: 1,788
+   total cases. Result: identical.
+
+Hosted differential retry
+-------------------------
+Before this slice, differential run #40 was explicitly retried. The retry again
+completed with steps=null and no job logs, so it remains a pre-execution runner
+infrastructure failure rather than a source verdict.
+
+Limitations
+-----------
+The private melodica repository is not mounted in this execution container and the
+container cannot resolve github.com, so the complete branch and untouched upstream
+archive could not be linked together locally. The deterministic seed probe has been
+added to scripts/libpiano-differential.sh and remains pending an actual hosted runner.
+No throughput, archive-size movement, or C/Odin/Zig/Nelua/Codin standing is claimed
+from these syntax and wire checks.

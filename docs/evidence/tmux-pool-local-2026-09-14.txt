@@ -1,0 +1,55 @@
+Pool startup repair: executed local evidence
+Date: 2026-09-14
+Base commit: d826b986e4a91539710acdae8b72447cf203a089
+Base launcher blob verified before editing: 1d48dad4eb3598c039e4ad0a60ff391dfd1cfb8b
+Python: 3.13.5
+Platform: Linux-6.18.44-x86_64-with-glibc2.41
+
+User-provided bak evidence: existing credential-free base audit passed, followed
+by no-such-session at the separate tmux ownership-tagging call. The transcript
+does not include the pool process stderr and does not establish why it exited.
+
+Command: python3 -m unittest discover -s tests -p test_ci_pool.py -v
+15 tests discovered; 13 passed; 2 real-tmux integration tests skipped because
+no tmux executable is installed in this conversation container.
+The shell-entry tests executed /bin/sh: stderr was retained, exit 37 was
+preserved, missing executable failed visibly, and quoted values were passed
+literally. tmux orchestration was mocked, not represented as a live server.
+
+Python compilation: passed.
+ci-deps.sh POSIX shell syntax: passed.
+Workflow YAML parse and expanded test-discovery command check: passed.
+
+Not executed: real tmux integration, bak activation of the replacement, Incus
+worker registration, GitHub job pickup, full branch link, upstream differential
+or native-language benchmarks. No CI success or performance change is claimed.
+
+SHA256 of changed source inputs:
+65f0ebe70247d59b2bd6289ff771f65e919f3b5482ae0afe0abdbb0bce82e0ea  scripts/ci-on-bak.py
+d13f2c00d875ea8c2c130dd5a0e380381cc7eb9359cf2185b882d79ffdc44382  tests/test_ci_pool.py
+14ec02e9270e25effa228456d29f9f0e37f4fb35d01ed8728e080d3865a79f6c  scripts/ci-deps.sh
+7bd61c9f3cc21bc71e7a10fa89986c560b5b32ced06b2665a6e977fbc062fc9e  .github/workflows/compare.yml
+21e22412d411f9ce66f6bc5a7cbd72ff0261a7f2e1155ce97498b1f91c9ae512  docs/ci.md
+
+Exact local test output:
+test_custom_shell_and_user_config_are_not_used (test_ci_pool.LiveTmuxTests.test_custom_shell_and_user_config_are_not_used) ... skipped 'real tmux is not installed'
+test_immediate_failure_keeps_session_and_status (test_ci_pool.LiveTmuxTests.test_immediate_failure_keeps_session_and_status) ... skipped 'real tmux is not installed'
+test_creation_failure_prints_precreated_log (test_ci_pool.PoolStartupTests.test_creation_failure_prints_precreated_log) ... ok
+test_dead_pane_retains_both_error_sources (test_ci_pool.PoolStartupTests.test_dead_pane_retains_both_error_sources) ... ok
+test_empty_private_server_is_not_reconfigured (test_ci_pool.PoolStartupTests.test_empty_private_server_is_not_reconfigured) ... ok
+test_legacy_pool_not_duplicated (test_ci_pool.PoolStartupTests.test_legacy_pool_not_duplicated) ... ok
+test_log_tail_is_bounded (test_ci_pool.PoolStartupTests.test_log_tail_is_bounded) ... ok
+test_multiple_panes_fail_closed (test_ci_pool.PoolStartupTests.test_multiple_panes_fail_closed) ... ok
+test_nonzero_command_reports_exit_without_stderr (test_ci_pool.PoolStartupTests.test_nonzero_command_reports_exit_without_stderr) ... ok
+test_owned_private_pool_is_reused (test_ci_pool.PoolStartupTests.test_owned_private_pool_is_reused) ... ok
+test_private_config_sets_retention_before_command (test_ci_pool.PoolStartupTests.test_private_config_sets_retention_before_command) ... ok
+test_real_shell_entry_preserves_stderr_and_exit_status (test_ci_pool.PoolStartupTests.test_real_shell_entry_preserves_stderr_and_exit_status) ... ok
+test_real_shell_missing_program_is_logged (test_ci_pool.PoolStartupTests.test_real_shell_missing_program_is_logged) ... ok
+test_start_uses_direct_argv_no_post_spawn_tagging (test_ci_pool.PoolStartupTests.test_start_uses_direct_argv_no_post_spawn_tagging) ... ok
+test_unowned_private_pool_not_changed (test_ci_pool.PoolStartupTests.test_unowned_private_pool_not_changed) ... ok
+
+----------------------------------------------------------------------
+Ran 15 tests in 0.014s
+
+OK (skipped=2)
+

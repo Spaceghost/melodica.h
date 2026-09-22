@@ -1,0 +1,38 @@
+Local execution evidence, 2026-09-14
+Base: a19d32615908b68b94a1748c7e05a5123937669e
+Reference intended for CI: ad5ec908de10479ecee7d7c0e1030d12146f8f16
+
+Commands:
+make test-playlist test-playlist-alloc test-playlist-wire test-playlist-sanitize
+make bench-libpiano
+
+Selected observed output:
+playlist probe: 3 request cases, 12 response cases passed
+playlist safety: metadata, malformed input, ownership and unsupported responses passed
+playlist allocation failures: 44 checked, no leaks or output mutation
+playlist wire: all 255 non-NUL byte values match json-c exactly
+
+cc (Debian 14.2.0-19) 14.2.0
+clang version 17.0.0 (https://github.com/swiftlang/llvm-project.git 10999b6d034fe318f3d56c83bddb6572593a8bb0)
+x86_64
+model name	: AMD EPYC 9V74 80-Core Processor
+ 49906 build/baseline/libpiano.a
+ 56586 build/compat/libpiano.a
+106492 total
+   text	   data	    bss	    dec	    hex	filename
+  10520	      0	      0	  10520	   2918	build/baseline/piano.o
+  13783	     32	      0	  13815	   35f7	build/compat/piano.o
+
+./build/compat/playlist-probe --bench
+playlist_parse_4 168286.324 requests/s median_of=5 iterations=10000
+playlist_parse_64 10669.346 requests/s median_of=5 iterations=750
+playlist_parse_256 2506.090 requests/s median_of=5 iterations=150
+
+Git blob fingerprints of tested sources:
+3ee7392e8529ec593256eeb99547acbd00baaa8b  compat/piano.c
+738fc555e0f5a5762f5131ed7a569ea69ff202ef  compat/playlist.h
+3108b1ab3b17ea062cb8705c09dcc4a5737650bb  tests/reference/playlist_probe.c
+3640fbecd715eed79a576702b71fc6c9422da8e2  tests/reference/playlist_fixtures.h
+579e3c98f65a7e944c0a0e722247e369c8ab8189  tests/reference/playlist_wire.c
+efdf9a5d9b7650ce7098e348951c55c621a0bda5  tests/playlist_safety.c
+e8de08bf0cc869e07b9d511763172ce9b94ae748  tests/reference/playlist.mk
