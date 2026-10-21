@@ -231,11 +231,15 @@ def one_job(source, owner, number, package, state, timeout, pending):
         audit_definition(instance(worker))
         phase('start')
         command(['incus', 'start', worker])
-        phase('upload-runner')
-        command(['incus', 'file', 'push', str(package), worker + '/tmp/actions-runner.tar.gz'], timeout=300)
-        phase('extract-runner')
+        # The container's init may still be preparing /tmp after start returns.
+        # Create a persistent destination explicitly before transferring files.
+        phase('prepare-runner-directory')
         command(['incus', 'exec', worker, '--', 'mkdir', '-p', '/opt/melodica-runner'])
-        command(['incus', 'exec', worker, '--', 'tar', '-xzf', '/tmp/actions-runner.tar.gz',
+        phase('upload-runner')
+        command(['incus', 'file', 'push', str(package.resolve()),
+                 worker + '/opt/melodica-runner/actions-runner.tar.gz'], timeout=300)
+        phase('extract-runner')
+        command(['incus', 'exec', worker, '--', 'tar', '-xzf', '/opt/melodica-runner/actions-runner.tar.gz',
                  '-C', '/opt/melodica-runner'], timeout=300)
         # Exercise the bundled .NET runtime before creating a registration. A
         # missing ICU/OpenSSL dependency must not leave a GitHub runner behind.

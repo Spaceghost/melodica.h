@@ -4,7 +4,7 @@ Canonical command: `make check`, exit **0**, on Fedora 44 x86_64 in
 `bak:melodica-complete-20261020`, workspace `/work/melodica`.
 The compiled source commit is
 [`6e06745d0fc31a34103abd69e333dd5e81bacda4`](https://github.com/Spaceghost/melodica.h/commit/6e06745d0fc31a34103abd69e333dd5e81bacda4).
-The following commit adds these retained outputs and a CI controller queue fix;
+Later commits add these retained outputs and CI controller queue/upload fixes;
 library sources are unchanged. The SDK records its build and release commits
 separately, with the changes between them.
 
@@ -51,3 +51,5 @@ success contract and returns a safe error. See the
 
 GitHub runner execution and exact worker cleanup records accompany the release
 evidence archive; these local reports do not assert that a GitHub job ran.
+That archive also includes the final 52-test harness run, adding the persistent
+runner-upload regression to the canonical snapshot's 51 tests.

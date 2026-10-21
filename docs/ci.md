@@ -86,7 +86,7 @@ objects against melodica's `piano.h`, using
 `MELODICA_PIANO_LEGACY_GCRYPT`. Its dependency graph proves the replacement header
 was included. Installation stages C, Odin, Zig, Nelua and Codin separately and
 compiles a public client using each installation's static pkg-config flags.
-The Python harness passes 51 regression tests; synthetic score outputs
+The Python harness passes 52 regression tests; synthetic score outputs
 inside those tests are fixtures.
 
 ## Performance and evidence
