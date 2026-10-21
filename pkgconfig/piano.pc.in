@@ -1,0 +1,11 @@
+prefix=@PREFIX@
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: melodica libpiano
+Description: Historical libpiano API implemented by melodica
+Version: 1.0.0
+Libs: -L${libdir} -lpiano
+Libs.private: @PRIVATE_LIBS@
+Cflags: -I${includedir}

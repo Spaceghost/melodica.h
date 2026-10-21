@@ -34,6 +34,8 @@ int melodica_json_string_is(const MelodicaJsonDoc *doc, size_t token, const char
 char *melodica_json_string_dup(const MelodicaJsonDoc *doc, size_t token);
 int melodica_json_long(const MelodicaJsonDoc *doc, size_t token, long *value);
 int melodica_json_bool(const MelodicaJsonDoc *doc, size_t token, int *value);
+int melodica_json_double(const MelodicaJsonDoc *doc, size_t token, double *value);
+int melodica_json_is_null(const MelodicaJsonDoc *doc, size_t token);
 
 #define MELODICA_JSON_NONE ((size_t)-1)
 

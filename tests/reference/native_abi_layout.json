@@ -1,0 +1,308 @@
+{
+  "schema": 1,
+  "types": [
+    {
+      "id": 0,
+      "type": "PianoListHead_t",
+      "fields": [
+        "next"
+      ]
+    },
+    {
+      "id": 1,
+      "type": "PianoUserInfo_t",
+      "fields": [
+        "listenerId",
+        "authToken"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "PianoStation_t",
+      "fields": [
+        "head",
+        "isCreator",
+        "isQuickMix",
+        "useQuickMix",
+        "name",
+        "id",
+        "seedId"
+      ]
+    },
+    {
+      "id": 3,
+      "type": "PianoSong_t",
+      "fields": [
+        "head",
+        "artist",
+        "stationId",
+        "album",
+        "audioUrl",
+        "coverArt",
+        "musicId",
+        "title",
+        "seedId",
+        "feedbackId",
+        "detailUrl",
+        "trackToken",
+        "fileGain",
+        "length",
+        "rating",
+        "audioFormat"
+      ]
+    },
+    {
+      "id": 4,
+      "type": "PianoArtist_t",
+      "fields": [
+        "head",
+        "name",
+        "musicId",
+        "seedId",
+        "score"
+      ]
+    },
+    {
+      "id": 5,
+      "type": "PianoGenre_t",
+      "fields": [
+        "head",
+        "name",
+        "musicId"
+      ]
+    },
+    {
+      "id": 6,
+      "type": "PianoGenreCategory_t",
+      "fields": [
+        "head",
+        "name",
+        "genres"
+      ]
+    },
+    {
+      "id": 7,
+      "type": "PianoPartner_t",
+      "fields": [
+        "in",
+        "out",
+        "authToken",
+        "device",
+        "user",
+        "password",
+        "id"
+      ]
+    },
+    {
+      "id": 8,
+      "type": "PianoHandle_t",
+      "fields": [
+        "user",
+        "stations",
+        "genreStations",
+        "partner",
+        "timeOffset"
+      ]
+    },
+    {
+      "id": 9,
+      "type": "PianoSearchResult_t",
+      "fields": [
+        "songs",
+        "artists"
+      ]
+    },
+    {
+      "id": 10,
+      "type": "PianoStationInfo_t",
+      "fields": [
+        "songSeeds",
+        "artistSeeds",
+        "stationSeeds",
+        "feedback"
+      ]
+    },
+    {
+      "id": 11,
+      "type": "PianoSettings_t",
+      "fields": [
+        "username",
+        "explicitContentFilter"
+      ]
+    },
+    {
+      "id": 12,
+      "type": "PianoStationMode_t",
+      "fields": [
+        "head",
+        "name",
+        "description",
+        "isAlgorithmic",
+        "isTakeover",
+        "active",
+        "id"
+      ]
+    },
+    {
+      "id": 13,
+      "type": "PianoRequest_t",
+      "fields": [
+        "type",
+        "secure",
+        "data",
+        "urlPath",
+        "postData",
+        "responseData"
+      ]
+    },
+    {
+      "id": 14,
+      "type": "PianoRequestDataLogin_t",
+      "fields": [
+        "user",
+        "password",
+        "step"
+      ]
+    },
+    {
+      "id": 15,
+      "type": "PianoRequestDataGetPlaylist_t",
+      "fields": [
+        "station",
+        "quality",
+        "retPlaylist"
+      ]
+    },
+    {
+      "id": 16,
+      "type": "PianoRequestDataRateSong_t",
+      "fields": [
+        "song",
+        "rating"
+      ]
+    },
+    {
+      "id": 17,
+      "type": "PianoRequestDataAddFeedback_t",
+      "fields": [
+        "stationId",
+        "trackToken",
+        "rating"
+      ]
+    },
+    {
+      "id": 18,
+      "type": "PianoRequestDataRenameStation_t",
+      "fields": [
+        "station",
+        "newName"
+      ]
+    },
+    {
+      "id": 19,
+      "type": "PianoRequestDataSearch_t",
+      "fields": [
+        "searchStr",
+        "searchResult"
+      ]
+    },
+    {
+      "id": 20,
+      "type": "PianoRequestDataCreateStation_t",
+      "fields": [
+        "token",
+        "type"
+      ]
+    },
+    {
+      "id": 21,
+      "type": "PianoRequestDataAddSeed_t",
+      "fields": [
+        "station",
+        "musicId"
+      ]
+    },
+    {
+      "id": 22,
+      "type": "PianoRequestDataExplain_t",
+      "fields": [
+        "song",
+        "retExplain"
+      ]
+    },
+    {
+      "id": 23,
+      "type": "PianoRequestDataGetStationInfo_t",
+      "fields": [
+        "station",
+        "info"
+      ]
+    },
+    {
+      "id": 24,
+      "type": "PianoRequestDataDeleteSeed_t",
+      "fields": [
+        "song",
+        "artist",
+        "station"
+      ]
+    },
+    {
+      "id": 25,
+      "type": "PianoRequestDataChangeSettings_t",
+      "fields": [
+        "currentUsername",
+        "newUsername",
+        "currentPassword",
+        "newPassword",
+        "explicitContentFilter"
+      ]
+    },
+    {
+      "id": 26,
+      "type": "PianoRequestDataGetStationModes_t",
+      "fields": [
+        "station",
+        "retModes"
+      ]
+    },
+    {
+      "id": 27,
+      "type": "PianoRequestDataSetStationMode_t",
+      "fields": [
+        "station",
+        "id"
+      ]
+    },
+    {
+      "id": 28,
+      "type": "PianoSongRating_t",
+      "fields": []
+    },
+    {
+      "id": 29,
+      "type": "PianoAudioFormat_t",
+      "fields": []
+    },
+    {
+      "id": 30,
+      "type": "PianoAudioQuality_t",
+      "fields": []
+    },
+    {
+      "id": 31,
+      "type": "PianoRequestType_t",
+      "fields": []
+    },
+    {
+      "id": 32,
+      "type": "PianoTristate_t",
+      "fields": []
+    },
+    {
+      "id": 33,
+      "type": "PianoReturn_t",
+      "fields": []
+    }
+  ]
+}

@@ -123,6 +123,8 @@ int main(void) {
     printf("station.info.destroyed=%d\n",
         data.info.songSeeds == NULL && data.info.artistSeeds == NULL &&
         data.info.stationSeeds == NULL && data.info.feedback == NULL ? 1 : 0);
+    /* libpiano frees these lists without clearing the caller's pointers. */
+    memset(&data.info, 0, sizeof(data.info));
 
     req.responseData = (char *)
         "{\"stat\":\"ok\",\"result\":{\"music\":{\"songs\":[],\"artists\":[]},"

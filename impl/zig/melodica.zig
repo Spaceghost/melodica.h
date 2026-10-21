@@ -10,7 +10,7 @@ inline fn isUnreserved(c: u8) bool {
 }
 
 inline fn hexDigit(n: u8) u8 {
-    return if (n < 10) '0' + n else 'A' + (n - 10);
+    return "0123456789ABCDEF"[n];
 }
 
 inline fn jsonExtra(c: u8) usize {
@@ -22,6 +22,17 @@ inline fn jsonExtra(c: u8) usize {
 }
 
 inline fn copyBytes(dst: [*]u8, src: [*]const u8, src_len: usize) void {
+    const dst_address = @intFromPtr(dst);
+    const src_address = @intFromPtr(src);
+    const disjoint = if (dst_address < src_address)
+        src_address - dst_address >= src_len
+    else
+        dst_address - src_address >= src_len;
+    if (disjoint) {
+        @memcpy(dst[0..src_len], src[0..src_len]);
+        return;
+    }
+    // Preserve forward-copy behavior for overlapping source/destination spans.
     var i: usize = 0;
     while (i < src_len) : (i += 1) dst[i] = src[i];
 }
@@ -53,10 +64,30 @@ inline fn writeUrl(dst: [*]u8, src: [*]const u8, src_len: usize) usize {
     return out;
 }
 
+// Packed bytes avoid alignment assumptions and preserve all high UTF-8 bytes.
+inline fn jsonPlain4(src: [*]const u8) bool {
+    const word = @as(u32, src[0]) | (@as(u32, src[1]) << 8) |
+        (@as(u32, src[2]) << 16) | (@as(u32, src[3]) << 24);
+    const quotes = word ^ 0x22222222;
+    const slashes = word ^ 0x5c5c5c5c;
+    const controls = (word -% 0x20202020) & ~word;
+    const quote_zero = (quotes -% 0x01010101) & ~quotes;
+    const slash_zero = (slashes -% 0x01010101) & ~slashes;
+    return ((controls | quote_zero | slash_zero) & 0x80808080) == 0;
+}
+
 inline fn jsonEscapeSizeImpl(src: [*]const u8, src_len: usize) usize {
     var required = src_len;
     var i: usize = 0;
-    while (i < src_len) : (i += 1) required += jsonExtra(src[i]);
+    while (src_len - i >= 4 and jsonPlain4(src + i)) : (i += 4) {}
+    while (i < src_len) : (i += 1) {
+        const c = src[i];
+        if (c == '"' or c == '\\') {
+            required += 1;
+        } else if (c < 0x20) {
+            required += jsonExtra(c);
+        }
+    }
     return required;
 }
 
@@ -65,14 +96,18 @@ inline fn writeJson(dst: [*]u8, out_in: usize, src: [*]const u8, src_len: usize)
     var i: usize = 0;
     while (i < src_len) : (i += 1) {
         const c = src[i];
-        if (c >= 0x20 and c != '"' and c != '\\') {
-            dst[out] = c;
-            out += 1;
+        if (c >= 0x20) {
+            if (c == '"' or c == '\\') {
+                dst[out] = '\\';
+                dst[out + 1] = c;
+                out += 2;
+            } else {
+                dst[out] = c;
+                out += 1;
+            }
             continue;
         }
         switch (c) {
-            '"' => { dst[out] = '\\'; dst[out + 1] = '"'; out += 2; },
-            '\\' => { dst[out] = '\\'; dst[out + 1] = '\\'; out += 2; },
             '\x08' => { dst[out] = '\\'; dst[out + 1] = 'b'; out += 2; },
             '\x0c' => { dst[out] = '\\'; dst[out + 1] = 'f'; out += 2; },
             '\n' => { dst[out] = '\\'; dst[out + 1] = 'n'; out += 2; },
@@ -95,7 +130,10 @@ inline fn writeJson(dst: [*]u8, out_in: usize, src: [*]const u8, src_len: usize)
 inline fn decimalSize(value_in: usize) usize {
     var value = value_in;
     var digits: usize = 1;
-    while (value >= 10) : (value /= 10) digits += 1;
+    while (value >= 10000) : (value /= 10000) digits += 4;
+    if (value >= 1000) return digits + 3;
+    if (value >= 100) return digits + 2;
+    if (value >= 10) return digits + 1;
     return digits;
 }
 
@@ -103,11 +141,20 @@ inline fn writeDecimal(dst: [*]u8, out_in: usize, value_in: usize) usize {
     var digits: [3 * @sizeOf(usize)]u8 = undefined;
     var count: usize = 0;
     var value = value_in;
-    while (true) {
+    while (value >= 100) {
+        const pair = value % 100;
+        value /= 100;
+        digits[count] = '0' + @as(u8, @intCast(pair % 10));
+        digits[count + 1] = '0' + @as(u8, @intCast(pair / 10));
+        count += 2;
+    }
+    if (value >= 10) {
         digits[count] = '0' + @as(u8, @intCast(value % 10));
+        digits[count + 1] = '0' + @as(u8, @intCast(value / 10));
+        count += 2;
+    } else {
+        digits[count] = '0' + @as(u8, @intCast(value));
         count += 1;
-        value /= 10;
-        if (value == 0) break;
     }
 
     var out = out_in;

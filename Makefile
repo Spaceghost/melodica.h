@@ -7,12 +7,32 @@ CLANG ?= clang
 BUILD ?= build
 PREFIX ?= /usr/local
 DESTDIR ?=
-ODIN_FLAGS ?= -o:speed -reloc-mode:pic -no-entry-point
+PIANO_IMPL ?= c
+PIANO_INSTALL_LIB = $(BUILD)/$(if $(filter c,$(PIANO_IMPL)),compat,$(PIANO_IMPL))/libpiano.a
+PIANO_INSTALL_DEPS = $(if $(filter c,$(PIANO_IMPL)),,-ljson-c -lgcrypt -lm -ldl -lpthread)
+ODIN_FLAGS ?= -o:speed -microarch:generic -reloc-mode:pic -no-entry-point
 NELUA_FLAGS ?= --release -P nogc --cflags=-O3
 
 .PHONY: all c odin zig nelua codin-native codin-check libpiano test test-c test-odin test-zig test-nelua test-codin-native test-libpiano test-blowfish test-crypt test-json bench bench-c bench-odin bench-zig bench-nelua bench-codin shootout shootout-gate portable install clean
+.PHONY: check test-install test-pianobar-source
 
 all: test
+
+# Complete validation; each comparison builds first and then times serially.
+check:
+	@test "$(BUILD)" = build || { echo 'make check requires BUILD=build; individual API targets support custom BUILD paths' >&2; exit 64; }
+	$(MAKE) test-blowfish test-crypt test-json test-libpiano test-libpiano-alloc test-json-oracle test-playlist-wire test-libpiano-sanitize portable libpiano-native test-pianobar-source
+	python3 -m unittest discover -s tests -p 'test_ci*.py' -v
+	python3 scripts/native-ci.py
+	BUILD_DIR="$(abspath $(BUILD))" sh scripts/libpiano-differential.sh
+	BUILD_DIR="$(abspath $(BUILD))" python3 scripts/native-piano.py
+	$(MAKE) test-install
+
+test-install: libpiano-native $(BUILD)/c/libmelodica.a $(BUILD)/compat/libpiano.a
+	CC="$(CC)" BUILD="$(BUILD)" sh scripts/install-smoke.sh
+
+test-pianobar-source:
+	CC="$(CC)" BUILD_DIR="$(abspath $(BUILD))" sh scripts/pianobar-source-compat.sh
 
 $(BUILD)/c/melodica.o: impl/c/melodica.c include/melodica.h
 	mkdir -p $(BUILD)/c
@@ -27,7 +47,7 @@ $(BUILD)/odin/libmelodica.a: impl/odin/melodica.odin
 
 $(BUILD)/zig/libmelodica.a: impl/zig/melodica.zig
 	mkdir -p $(BUILD)/zig
-	$(ZIG) build-lib $< -O ReleaseFast -fPIC -femit-bin=$@
+	$(ZIG) build-lib $< -O ReleaseFast -mcpu=baseline -fPIC -femit-bin=$@
 
 $(BUILD)/nelua/libmelodica.a: impl/nelua/melodica.nelua
 	mkdir -p $(BUILD)/nelua
@@ -172,13 +192,17 @@ portable:
 	$(ZIG) cc -target aarch64-linux-musl -std=c99 -pedantic-errors -Wall -Wextra -Werror -ffreestanding -Iinclude -c impl/c/melodica.c -o $(BUILD)/portable/aarch64-linux-musl.o
 	$(ZIG) cc -target x86_64-windows-gnu -std=c99 -pedantic-errors -Wall -Wextra -Werror -ffreestanding -Iinclude -c impl/c/melodica.c -o $(BUILD)/portable/x86_64-windows-gnu.o
 
-install: $(BUILD)/c/libmelodica.a $(BUILD)/compat/libpiano.a
-	install -d $(DESTDIR)$(PREFIX)/include $(DESTDIR)$(PREFIX)/lib
+install: $(BUILD)/c/libmelodica.a $(PIANO_INSTALL_LIB)
+	install -d $(DESTDIR)$(PREFIX)/include $(DESTDIR)$(PREFIX)/lib/pkgconfig $(DESTDIR)$(PREFIX)/share/licenses/melodica
 	install -m 0644 include/melodica.h include/piano.h $(DESTDIR)$(PREFIX)/include/
 	install -m 0644 $(BUILD)/c/libmelodica.a $(DESTDIR)$(PREFIX)/lib/libmelodica.a
-	install -m 0644 $(BUILD)/compat/libpiano.a $(DESTDIR)$(PREFIX)/lib/libpiano.a
+	install -m 0644 $(PIANO_INSTALL_LIB) $(DESTDIR)$(PREFIX)/lib/libpiano.a
+	install -m 0644 LICENSE.libpiano $(DESTDIR)$(PREFIX)/share/licenses/melodica/
+	sed -e 's|@PREFIX@|$(PREFIX)|g' -e 's|@PRIVATE_LIBS@|$(PIANO_INSTALL_DEPS)|g' pkgconfig/piano.pc.in > $(DESTDIR)$(PREFIX)/lib/pkgconfig/piano.pc
+	sed -e 's|@PREFIX@|$(PREFIX)|g' pkgconfig/melodica.pc.in > $(DESTDIR)$(PREFIX)/lib/pkgconfig/melodica.pc
 
 clean:
 	rm -rf $(BUILD)
 
 include tests/reference/playlist.mk
+include mk/native-piano.mk

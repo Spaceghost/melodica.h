@@ -37,6 +37,26 @@ int main(void) {
 
     melodica_json_destroy(&doc);
 
+    assert(melodica_json_parse(&doc,
+        "{\"name\":\"first\",\"na\\u006de\":\"last\",\"empty\":[],"
+        "\"object\":{\"a\":1,\"b\":[true,\"a/b\"],\"a\":2},"
+        "\"number\":\" 12tail\",\"truth\":\"false\",\"zero\":null}"));
+    name = melodica_json_string_dup(&doc, melodica_json_object_get(&doc, 0u, "name"));
+    assert(name != NULL && strcmp(name, "last") == 0); free(name);
+    name = melodica_json_string_dup(&doc, melodica_json_object_get(&doc, 0u, "empty"));
+    assert(name != NULL && strcmp(name, "[ ]") == 0); free(name);
+    name = melodica_json_string_dup(&doc, melodica_json_object_get(&doc, 0u, "object"));
+    assert(name != NULL && strcmp(name,
+        "{ \"a\": 2, \"b\": [ true, \"a\\/b\" ] }") == 0); free(name);
+    assert(melodica_json_long(&doc, melodica_json_object_get(&doc, 0u, "number"), &n));
+    assert(n == 12);
+    assert(melodica_json_bool(&doc, melodica_json_object_get(&doc, 0u, "truth"), &flag));
+    assert(flag == 1);
+    assert(melodica_json_bool(&doc, melodica_json_object_get(&doc, 0u, "zero"), &flag));
+    assert(flag == 0);
+    melodica_json_destroy(&doc);
+
     assert(!melodica_json_parse(&doc, "{\"broken\":[1,}"));
+    assert(!melodica_json_parse(&doc, "{\"bad\":oops}"));
     return 0;
 }

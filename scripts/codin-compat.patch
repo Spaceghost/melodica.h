@@ -1,0 +1,48 @@
+--- a/src/array.h
++++ b/src/array.h
+@@ -19,7 +19,7 @@
+ 	tagptr(context, 0x1)
+ 
+ #define array_valid(array) \
+-	(tagptr_tag(array) != 0x1)
++	((array) != NULL && tagptr_tag(array) != 0x1)
+ 
+ #define array_meta(array) \
+ 	(&RCAST(Array*, (array))[-1])
+--- a/src/c99.c
++++ b/src/c99.c
+@@ -270,6 +270,14 @@
+ 	const char *op = assignment_operator(assignment->assignment);
+ 	if (!op) return unsupported(c, "assignment operator");
+ 	indent(c);
++	const Expression *lhs = assignment->lhs->expressions[0];
++	if (assignment->assignment == ASSIGNMENT_EQ && lhs->kind == EXPRESSION_IDENTIFIER &&
++		string_compare(RCAST(const IdentifierExpression *, lhs)->identifier->contents, SCLIT("_"))) {
++		fputs("(void)(", c->out);
++		if (!emit_expression(c, assignment->rhs->expressions[0])) return false;
++		fputs(");\n", c->out);
++		return true;
++	}
+ 	if (!emit_expression(c, assignment->lhs->expressions[0])) return false;
+ 	fprintf(c->out, " %s ", op);
+ 	if (!emit_expression(c, assignment->rhs->expressions[0])) return false;
+--- a/tools/c99-experimental/augment_multi_return.py
++++ b/tools/c99-experimental/augment_multi_return.py
+@@ -197,7 +197,7 @@
+ 
+ static Bool emit_prototype(C99 *c, const DeclarationStatement *declaration,
+                            Identifier *name, const ProcedureExpression *procedure) {
+-\tif (!sema_declaration_is_exported(declaration)) fputs("static ", c->out);
++\tif (!sema_declaration_is_exported(declaration)) fputs("static inline ", c->out);
+ \tif (!emit_procedure_result_type(c, name, procedure)) return false;
+ \tfprintf(c->out, " %.*s(", SFMT(name->contents));
+ \tif (!emit_parameters(c, procedure)) return false;
+@@ -208,7 +208,7 @@
+ static Bool emit_definition(C99 *c, const DeclarationStatement *declaration,
+                             Identifier *name, const ProcedureExpression *procedure) {
+ \tsema_begin_procedure(&c->sema, procedure);
+-\tif (!sema_declaration_is_exported(declaration)) fputs("static ", c->out);
++\tif (!sema_declaration_is_exported(declaration)) fputs("static inline ", c->out);
+ \tif (!emit_procedure_result_type(c, name, procedure)) return false;
+ \tfprintf(c->out, " %.*s(", SFMT(name->contents));
+ \tif (!emit_parameters(c, procedure)) return false;

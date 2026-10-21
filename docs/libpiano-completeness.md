@@ -1,187 +1,130 @@
-# libpiano completeness and shootout contract
+# libpiano completeness and comparison contract
 
-## Reference and scope
+## Reference and completion scope
 
-Reference: `PromyLOPh/pianobar` commit
-`ad5ec908de10479ecee7d7c0e1030d12146f8f16`, pinned in
-`tests/reference/pianobar.rev`. The differential gate builds that source unmodified.
-PR #1 merged the five native serializer lanes; those lanes are not yet five complete
-libpiano implementations. Full API behavior remains a separate compatibility league.
+The compatibility reference is unmodified
+[`PromyLOPh/pianobar` at `ad5ec908de10479ecee7d7c0e1030d12146f8f16`](https://github.com/PromyLOPh/pianobar/tree/ad5ec908de10479ecee7d7c0e1030d12146f8f16),
+pinned in [pianobar.rev](../tests/reference/pianobar.rev). All five protocol
+implementations pass the same 14 differential probes against that reference.
+`MELODICA_LIBPIANO_RPC_IMPLEMENTED` is enabled.
 
-## Request/response inventory
+Completion covers the reference's defined public behavior: request construction,
+responses, return values, state changes, public ABI and ownership. Cases in which
+the reference asserts or dereferences a null string have no successful response
+contract; melodica returns a safe error for those inputs.
 
-Twenty-three of the 24 public request kinds now have implementations on both sides of
-the request/response boundary: LOGIN, GET_STATIONS, GET_PLAYLIST, SEARCH,
-RENAME_STATION, DELETE_STATION, CREATE_STATION, RATE_SONG, ADD_TIRED_SONG,
-ADD_SEED, DELETE_FEEDBACK, DELETE_SEED, GET_STATION_INFO, SET_QUICKMIX,
-GET_GENRE_STATIONS, TRANSFORM_STATION, EXPLAIN, BOOKMARK_SONG, BOOKMARK_ARTIST,
-GET_SETTINGS, CHANGE_SETTINGS, GET_STATION_MODES and SET_STATION_MODE.
-`ADD_FEEDBACK` request construction is implemented because RATE_SONG delegates to it,
-but a successful direct ADD_FEEDBACK response is deliberately not counted: pinned
-upstream asserts in that response case, and melodica returns `PIANO_RET_ERR` rather
-than inventing a successful contract.
+## Request and response inventory
 
-| Request family | Status | Evidence / remaining work |
+All names below use the `PIANO_REQUEST_` prefix. The 23 normal request kinds have
+both request and response implementations in C, Odin, Zig, Nelua and Codin.
+
+| Group | Request kinds | Status |
 |---|---|---|
-| LOGIN | Implemented | Existing two-step login/error fixtures; pinned differential pending |
-| GET_STATIONS | Implemented | Station list and QuickMix flag fixtures; pinned differential pending |
-| GET_PLAYLIST | Implemented | Request/response, ownership, wire oracle, fault injection and local benchmark |
-| SEARCH | Implemented, differential pending | Request bytes and owned artist/song results |
-| RENAME_STATION, DELETE_STATION, CREATE_STATION | Implemented, differential pending | Request bytes and state/ownership effects |
-| RATE_SONG, ADD_TIRED_SONG | Implemented, differential pending | Feedback delegation, request restoration and rating state effects |
-| ADD_FEEDBACK | Request implemented | Direct successful response intentionally returns ERR; upstream asserts there |
-| ADD_SEED, DELETE_FEEDBACK, DELETE_SEED | Implemented, differential pending | Exact request order/methods and upstream no-op success responses |
-| GET_STATION_INFO | Implemented, differential pending | Nested owned song/artist seeds and thumbs-up/down feedback lists |
-| SET_QUICKMIX, GET_GENRE_STATIONS, TRANSFORM_STATION | Implemented, differential pending | Exact array/auth ordering, owned genre/category lists and creator-state transition |
-| EXPLAIN, BOOKMARK_SONG, BOOKMARK_ARTIST | Implemented, differential pending | Exact track-token request payloads, upstream text assembly and no-op bookmark success |
-| GET_SETTINGS, CHANGE_SETTINGS | Implemented, differential pending | Exact optional-member order, tristate encoding, username ownership and explicit-filter default |
-| GET_STATION_MODES, SET_STATION_MODE | Implemented, differential pending | Exact interactive-radio methods/member order, mode-list ownership, active selection and set verification |
+| Authentication and catalog | LOGIN, GET_STATIONS, GET_PLAYLIST, SEARCH, GET_GENRE_STATIONS | Complete |
+| Station management | RENAME_STATION, DELETE_STATION, CREATE_STATION, TRANSFORM_STATION, SET_QUICKMIX | Complete |
+| Ratings, seeds and station data | RATE_SONG, ADD_TIRED_SONG, ADD_SEED, DELETE_FEEDBACK, DELETE_SEED, GET_STATION_INFO | Complete |
+| Explanation, bookmarks and preferences | EXPLAIN, BOOKMARK_SONG, BOOKMARK_ARTIST, GET_SETTINGS, CHANGE_SETTINGS, GET_STATION_MODES, SET_STATION_MODE | Complete |
+| Low-level feedback | ADD_FEEDBACK | Request construction complete; direct successful response returns `PIANO_RET_ERR` |
 
-Unsupported successful response kinds must return `PIANO_RET_ERR`; server `stat: ok`
-is never enough to call an unimplemented path complete.
+The `ADD_FEEDBACK` exception is intentional: RATE_SONG delegates to its request
+builder, while the pinned upstream asserts on a direct successful ADD_FEEDBACK
+response. No successful behavior is invented for that path.
 
-## Implemented compatibility slices
+Requests preserve the historical method names, TLS choices, JSON member order,
+json-c spaced formatting, control/slash escaping and encrypted bytes. Boundary
+fixtures cover signed 32-bit sync-time conversion, signed partner-id formatting
+and successful URL truncation by the reference's fixed-size buffer.
 
-Playlist uses exact upstream member ordering and json-c's historical spaced JSON
-serialization before encryption. The response selects low/medium/high audio,
-preserves ownership semantics, rejects unavailable requested quality, skips non-song
-items, and builds lists with a tail pointer. Local GCC 14.2.0 strict-C99 tests covered
-3 request and 12 response cases, a 255-byte wire oracle, 44 allocation-failure
-positions, and Clang ASan/UBSan/leak checks.
+## Implementations and ABI
 
-Search emits `music.search` with `searchText`, `userAuthToken` and signed 32-bit
-`syncTime`; results own artist and song lists. Station mutations implement exact
-rename/delete/create method/member order and successful state changes, including
-same-id replacement on create. Their pinned differentials remain unexecuted because
-hosted jobs have not been assigned runners.
+| Implementation | Protocol code | Runtime dependencies |
+|---|---|---|
+| C99 | Native parser, request/response handling and Blowfish | C standard library |
+| Odin | Native Odin implementation | json-c, libgcrypt |
+| Zig | Native Zig implementation | json-c, libgcrypt |
+| Nelua | Native Nelua implementation through its C backend | json-c, libgcrypt |
+| Codin | Odin dialect through the actual pinned Codin parser and general C99 lowering backend | json-c, libgcrypt |
 
-Feedback/rating follows upstream's high-level delegation: RATE_SONG temporarily
-transforms its data into ADD_FEEDBACK, uses `station.addFeedback`, then restores
-`req->type` and `req->data`. LOVE emits `isPositive:true`; BAN emits false.
-Successful RATE_SONG responses update the song rating. ADD_TIRED_SONG emits
-`user.sleepSong` and marks the song TIRED on success. Direct ADD_FEEDBACK success is
-not exposed as successful behavior because upstream itself asserts there.
+Each native archive supplies its own public API functions and passes symbol checks
+for imports of C compatibility internals. The Codin protocol package adapts the
+Odin port and compiles through Codin; compiling it with Odin is a separate control.
+[The compiler compatibility patch](../scripts/codin-compat.patch) fixes absent AST
+arrays and discard assignments. [Provenance](../THIRD_PARTY_NOTICES.md) and the
+[original MIT notice](../LICENSE.libpiano) are retained.
 
-Seed mutations cover `station.addMusic`, `station.deleteFeedback` and
-`station.deleteMusic`. ADD_SEED preserves upstream insertion order
-`musicToken`, `stationToken`, then the shared authenticated tail. DELETE_SEED preserves
-upstream seed-id precedence: song, then artist, then station. These three successful
-response kinds are intentional no-ops, matching upstream's response dispatch rather
-than inventing local state mutation.
+The shared ABI probe compares public sizes, alignments, field offsets, enum values
+and defined error strings with upstream. Each native implementation also passes
+313 checks of its actual compiled type layouts, beyond compiling a C harness
+against `piano.h`.
 
-GET_STATION_INFO emits `station.getStation` with the upstream member order:
-`stationToken`, both extended/extra booleans, `userAuthToken`, then signed 32-bit
-`syncTime`. Its response owns song seeds, artist seeds and feedback entries in
-upstream order, including thumbs-up entries before thumbs-down entries, ratings and
-track lengths. The historical `stationSeeds` field remains untouched because the
-pinned upstream response path does not populate it. New data is built privately and
-committed only after a successful parse, so malformed/OOM responses do not corrupt
-pre-existing caller-owned station-info lists.
+## Parsing and ownership
 
-SET_QUICKMIX now serializes only stations with `useQuickMix` set while excluding the
-QuickMix station itself, preserving list order and json-c's exact spaced array syntax.
-GET_GENRE_STATIONS emits the shared authenticated body with no request-specific
-members and parses owned category/genre lists in response order. New genre data is
-built privately and appended only after a successful parse. TRANSFORM_STATION emits
-`stationToken` first and sets `isCreator` only after an OK response. Local json-c 0.18
-oracles matched 1,275 non-NUL byte-variant request bodies plus the empty QuickMix
-array; full pinned response equivalence remains gated on an executing runner.
+The JSON compatibility probes cover decoded member names, last-value duplicate
+keys, strings and container-to-string serialization, boolean truthiness, numeric
+prefixes, integer saturation, floating-point conversion and Unicode replacement.
+They also cover the reference parser's comments, trailing commas, single quotes,
+case-insensitive primitives and trailing text acceptance.
 
-EXPLAIN, BOOKMARK_SONG and BOOKMARK_ARTIST all use the upstream `trackToken` first,
-then the shared authenticated tail. Explain response text preserves the historical
-768-byte bounded assembly and even the upstream one-element punctuation quirk caused
-by unsigned `array_length - 2`; bookmarks intentionally ignore otherwise-OK response
-bodies. Local strict-C99 syntax checks and a json-c 0.18 request-wire oracle matched
-511 escaped/non-NUL byte cases. The text-assembly fixtures also matched a direct
-reproduction of the pinned upstream algorithm.
+Response fixtures cover empty, absent and scalar results where upstream defines
+behavior; playlist quality selection and ad filtering; same-id station replacement;
+QuickMix membership; station seeds/feedback; explanation punctuation; settings;
+and active mode verification.
 
-GET_SETTINGS emits only the shared authenticated tail and remains non-TLS exactly as
-upstream; CHANGE_SETTINGS is TLS and preserves upstream member order:
-`userInitiatedChange`, current credentials, optional explicit-filter tristate, optional
-new username/password, then auth and signed 32-bit sync time. GET_SETTINGS owns the
-returned username and defaults a missing explicit-content flag to false. As upstream
-does, assigning a response username does not first free a pre-existing field value.
-Local json-c 0.18 request-wire checks matched 1,279 exact cases, including every
-non-NUL byte independently in each string-bearing request field.
+Ownership follows the historical API. The handle owns user, station, genre and
+cipher data. Callers own returned playlists, search results, station information,
+modes, settings strings and explanations. `PianoDestroyRequest` frees its post body
+and leaves response-buffer ownership with the caller. Search/station-info
+destructors free their lists without clearing the caller's fields; reset those
+structures before reuse. Settings and explanation responses can replace output
+pointers, so callers remain responsible for prior outputs.
 
-GET_STATION_MODES emits `stationId` then the shared authenticated tail to
-`interactiveradio.v1.getAvailableModesSimple`; SET_STATION_MODE inserts signed
-32-bit `modeId` after `stationId` and uses `interactiveradio.v1.setAndGetAvailableModes`.
-Both requests are TLS. GET response parsing owns the returned mode list, preserves
-upstream's zeroed list entry when an available-mode object has no `modeId`, carries
-name/description/algorithmic/takeover fields only when `modeId` exists, and marks the
-mode matching `currentModeId` active. SET succeeds only when the returned
-`currentModeId` equals the requested id. Local json-c 0.18 request-wire checks matched
-1,023 exact cases, including every non-NUL byte independently in station/auth fields
-for both methods and signed conversion of representative mode ids.
+C playlist, station-info, genre and station-mode parsers build private results
+before committing successful output. Allocation-failure checks also verify search
+cleanup and unchanged settings/explanation outputs on failure. These checks cover
+102 allocation positions across seven owned-result paths, with no retained leaks
+or partial output in the exercised failures.
 
-The existing public ABI is unchanged. `piano.c` wraps hidden internal base
-request/response symbols and intercepts only completeness slices added after that
-base. Lowercase JSON control-escape hex matches json-c wire behavior; URL percent
-escapes remain uppercase.
+## Completed correctness checks
 
-## Validation and infrastructure boundary
+| Check | Result |
+|---|---|
+| Pinned protocol differential | All five implementations match all 14 probes |
+| Public and native ABI | Upstream ABI comparison and 313 native layout checks per native archive pass |
+| C memory and wire checks | 102 allocation failures, 55 json-c accessor values and all 255 non-NUL request-byte variants pass |
+| Sanitizers | All 14 C probe suites and allocation sweeps pass ASan, UBSan and leak checks |
+| Consumer integration | Eight unchanged historical application objects compile; installed clients for all five variants agree |
 
-The pinned gate now runs `piano`, `playlist`, `search`, `station_mutations`,
-`feedback`, `seed`, `station_info`, `quickmix_genre`, `explain_bookmarks`, `settings`
-and `station_modes` probes against the same untouched reference archive. Differential
-run #64 was explicitly retried immediately before the station-mode slice; attempt 2
-again finished with zero steps and no assigned runner. At station-mode head
-`afa18aaf8c630144bf74f0e096fd536b0a15525b`, differential run #65 and comparison
-run #134 likewise completed with `steps=null` for every job. These are pre-execution
-infrastructure failures, not source verdicts.
+The shared serializer conformance suite also passes 1,591 cases and 125,022 checks
+per implementation. These are offline checks; network transport and live Pandora
+service access are outside the fixture contract.
 
-Local QuickMix/genre work was checked with GCC 14.2.0 strict C99 and json-c 0.18. The
-exact internal implementation body passed a strict translation-unit syntax check.
-Independent json-c wire oracles matched 510 QuickMix byte-variant cases plus the empty
-array and 765 genre/transform byte-variant cases. Commands, results and limitations are
-retained in `docs/evidence/quickmix-genres-local-2026-09-14.txt`.
+## Three comparison leagues
 
-Local explanation/bookmark work was checked with GCC 14.2.0 strict C99 and json-c
-0.18. The implementation/probe shapes passed strict syntax checks; the exact request
-object matched 511 escaped/non-NUL byte variants, and explanation assembly matched the
-upstream json-c algorithm for one-trait, sparse and three-trait fixtures. Details are
-retained in `docs/evidence/explain-bookmarks-local-2026-09-14.txt`.
+| League | Participants and work | Acceptance |
+|---|---|---|
+| Portable serializers | C, Odin, Zig, Nelua and emitted Codin C99; five unchanged workloads | Geometric mean at least 90% of the leader and every workload at least 80% |
+| Full libpiano API | Upstream reference plus all five implementations; 11 complete API fixture suites | Exact differential results before timing; rates are suites/s |
+| Scaled playlists | The same six participants; parse, build and free 4, 64 or 256 songs | Matching results and ownership cleanup before timing; rates are requests/s |
 
-Local settings work used GCC 14.2.0 strict C99 and json-c 0.18. The internal header and
-differential probe shapes passed strict syntax checks. An independent request-wire
-oracle matched 1,279 exact json-c cases across full/minimal tristates and all five
-string fields. Commands and limitations are retained in
-`docs/evidence/settings-local-2026-09-14.txt`.
+Measurements use five-round process medians and two opposite execution orders on
+the same host. Compiler options, source/artifact hashes, archive sizes and dynamic
+dependencies accompany the results. Archive bytes exclude external shared libraries.
+The C implementation's dependency boundary is recorded separately from native
+json-c/libgcrypt dependencies.
 
-Local station-mode work used GCC 14.2.0 strict C99 and json-c 0.18. The exact internal
-header and differential-probe shapes passed strict syntax checks in a minimal
-declaration harness. An independent request-wire oracle matched 1,023 exact json-c
-cases. The container cannot resolve github.com, so this is not a full local branch
-link or response differential. Commands and scope are retained in
-`docs/evidence/station-modes-local-2026-09-14.txt`.
+**Performance acceptance:** final coordinated serializer gate and six-way API /
+playlist measurements are pending. Correctness results above are complete; no
+final performance ranking is asserted here until the retained reports are complete.
 
-The parser intentionally rejects some malformed/coercible shapes that json-c may
-tolerate. Escaped object keys, duplicate keys and all permissive json-c coercions are
-not yet comprehensively matched. These remain explicit compatibility gaps.
+## Reproduce and inspect
 
-## Performance and size evidence
+Run `make check` for the complete default-build validation. Individual checks are
+listed in [CI documentation](ci.md), including native protocol archives, fault
+injection, sanitizers, installed clients and historical consumer compilation.
 
-The only retained full compatibility benchmark remains the same-host playlist run:
-GCC 14.2.0 `-O2`, x86_64 AMD EPYC 9V74, no LTO or native-CPU flags. Median parse /
-build / destroy throughput was 168,286 req/s for 4 songs, 10,669 for 64 songs and
-2,506 for 256 songs. The comparable archive moved from 49,906 to 56,586 bytes when
-playlist support was added. These are initial functionality measurements, not a
-speedup ratio.
-
-No search, station-mutation, feedback, seed-mutation, station-info, QuickMix/genre,
-explanation/bookmark, settings or station-mode throughput/size movement is asserted
-until the real branch executes. No new C/Odin/Zig/Nelua/Codin ranking is asserted.
-The native serializer league keeps its existing five workloads and competitive gate:
-normalized geometric mean >=90% of the leader and every workload >=80%. A C model is
-never evidence for another language.
-
-## Next acceptance slices
-
-First obtain a completed pinned differential for the implemented surface. The normal
-public request/response families are now implemented; direct successful ADD_FEEDBACK
-remains intentionally unsupported because the pinned upstream asserts on that
-low-level response path. After the differential runs, close observed parser/coercion
-or ownership mismatches before expanding the separate native-language protocol league.
-Native-language protocol work must remain independently implemented rather than
-routing every lane through C.
+The completion environment is a Fedora 44 Incus worker on Bak. Current retained
+reports belong in [completion-2026-10-21](evidence/completion-2026-10-21/); source
+hashes and compiler records identify the exact inputs. Earlier
+[playlist](evidence/playlist-local-2026-09-14.txt) and
+[station-mode](evidence/station-modes-local-2026-09-14.txt) logs are historical
+checkpoints, superseded by the coordinated Bak completion evidence.

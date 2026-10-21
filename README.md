@@ -1,84 +1,105 @@
 # melodica.h
 
-A portable libpiano reimplementation, with independently implemented native
-serializer lanes behind one C ABI. Correctness and observable upstream behavior
-come before performance claims.
+A portable serializer library and a complete implementation of the defined
+historical libpiano API, with five implementations behind the same public C ABI.
 
-## Two comparison surfaces
-
-| Surface | Implementations | What is compared |
+| Implementation | Protocol implementation | Protocol runtime dependencies |
 |---|---|---|
-| Allocation-free serializer ABI | C99, Odin, Zig, Nelua, Codin C99 | URL encoding, JSON escaping and station-request construction |
-| Historical `piano.h` API | melodica C compatibility library versus pinned upstream libpiano | Request bytes, response data, return values, state and ownership |
+| C99 | Owned JSON parser and Blowfish implementation | C standard library |
+| Odin | Native Odin procedures | json-c, libgcrypt |
+| Zig | Native Zig procedures | json-c, libgcrypt |
+| Nelua | Native Nelua procedures compiled through its C backend | json-c, libgcrypt |
+| Codin | Odin dialect parsed by pinned Codin and lowered by the general C99 backend | json-c, libgcrypt |
 
-Codin native remains an Odin-compiled control, not another independent winner.
-Nelua disables GC and exports fixed C names through its C backend. The full
-`piano.h` implementation is **not yet implemented independently in all five
-languages**. A serializer score is not evidence of full libpiano compatibility.
+Each native protocol archive implements its own public functions. Codin consumes
+its Odin dialect source through the actual compiler parser; its generated C does
+not forward protocol operations to the C compatibility implementation.
 
-## Portable core
+## Historical libpiano API
+
+`include/piano.h` preserves the upstream structs, enum values, ownership model and
+public functions. All 23 normal request/response kinds are implemented, including
+login, playlists, search, stations, feedback, seeds, genres, bookmarks, settings
+and station modes. `MELODICA_LIBPIANO_RPC_IMPLEMENTED` is enabled.
+
+`ADD_FEEDBACK` request construction is also implemented. Its direct successful
+response returns `PIANO_RET_ERR`: the pinned upstream asserts on that low-level
+response path, which has no defined successful contract.
+
+Fourteen differential probes compare every implementation with untouched
+`PromyLOPh/pianobar` revision `ad5ec908de10479ecee7d7c0e1030d12146f8f16`.
+They cover wire bytes, state, owned results, login boundaries, escaped and duplicate
+JSON keys, coercions, public ABI layouts and errors. Native archives additionally
+pass 313 checks of their actual compiled type layouts. The C parser has allocation
+failure, json-c oracle, ASan, UBSan and leak checks. These are offline comparisons;
+live Pandora service access is outside their scope.
+
+## Standalone portable core
 
 ```c
 #define MELODICA_IMPLEMENTATION
 #include <melodica.h>
 ```
 
-The strict-C99 core provides binary-safe, allocation-free percent encoding, JSON
-escaping, station-list request serialization, and ABI/version reporting. Output
-sizes exclude a NUL terminator. A null destination or insufficient capacity
-causes no writes. The existing five-lane workloads and this contract are unchanged.
+The core header provides binary-safe, allocation-free URL encoding, JSON escaping
+and station-list request serialization. Sizes exclude a NUL terminator; a null
+destination or insufficient capacity produces no writes. It is also available as
+`libmelodica.a` through the shared serializer ABI.
 
-## Implemented libpiano subset
-
-`include/piano.h` preserves the historical public names and data model.
-`libpiano.a` contains portable lifecycle/list helpers, destruction functions,
-station lookup, error mapping, owned JSON parsing and Blowfish support. Request
-and response handling currently covers:
-
-- Two-step partner/user login with encrypted sync-time handling.
-- Authenticated station-list retrieval and QuickMix membership flags.
-- Playlist retrieval with TLS selection, exact spaced request JSON and
-  encryption, low/medium/high audio selection, metadata, ad-item filtering,
-  unavailable-quality errors and caller-owned output.
-
-Unsupported successful response types now return `PIANO_RET_ERR` rather than
-silently reporting completion. The API remains partial:
-`MELODICA_LIBPIANO_RPC_IMPLEMENTED` stays zero. No live Pandora playback or network
-interoperability claim is made by these offline fixtures.
-
-Product code does not depend on json-c or libgcrypt. The independent test oracle
-and upstream reference do. `MELODICA_PIANO_LEGACY_GCRYPT` is available for old
-consumers that depended on transitive gcrypt declarations from `piano.h`.
-
-## Build and test
+## Build and verify
 
 ```sh
-make test-libpiano             # Existing compatibility tests plus playlist tests
-make test-playlist-alloc       # Allocation-failure/ownership sweep; GNU-compatible linker
-make test-playlist-wire        # Independent json-c wire oracle; requires json-c development files
-make test-playlist-sanitize    # Clang ASan, UBSan and leak checks
-make bench-libpiano            # Full playlist parse/build/free benchmark
-sh scripts/libpiano-differential.sh # Pinned unmodified upstream versus melodica
-
-make test                     # All native serializer lanes plus compatibility tests
-make codin-check              # Codin -> strict C99 -> GCC/Clang checks
-make portable                 # Freestanding/cross-target C builds
-make shootout                 # Existing five-workload normalized serializer scoreboard
-make shootout-gate            # >=90% geometric mean and >=80% worst-workload target
-make install                  # C libmelodica.a, libpiano.a and public headers
+make libpiano                 # Portable C protocol archive
+make test-libpiano            # C public API, playlist and search checks
+make libpiano-native          # Odin, Zig, Nelua and Codin protocol archives
+make test-native-libpiano     # Native ABI and pinned protocol comparisons
 ```
 
-The differential script needs git, make, a C compiler, pkg-config, and upstream
-libcurl/libgcrypt/json-c build dependencies. CI provisions them. Upstream is pinned
-in `tests/reference/pianobar.rev`; its source is not patched. The same probes are
-linked against both libraries. Complete playlist benchmarks use matching `-O2`,
-no LTO/native-CPU tuning, five-run medians, and both execution orders. They are a
-separate comparison from the five-language serializer leaderboard.
+```sh
+make check                    # Complete checks, comparisons, timings and installation
+make test-install             # Compile installed clients for all five protocol variants
+sh scripts/pianobar-source-compat.sh # Compile unchanged historical application sources
+```
 
-The differential workflow retains plaintext/ciphertext comparisons, timings,
-compiler information, archive sizes and dynamic dependencies, including evidence
-available before a failed check. A pre-setup runner failure is not a source or
-performance verdict.
+C requires a C99 compiler and make. Native protocol variants require their pinned
+language toolchains plus json-c and libgcrypt development packages. Reference
+comparisons also require libcurl, libao and FFmpeg development packages; sanitizer
+checks use Clang and its runtimes. [CI setup](docs/ci.md) provides dependency and
+toolchain installation commands. The pure C protocol archive does not require
+json-c or libgcrypt at runtime.
 
-See [the completeness ledger](docs/libpiano-completeness.md) for supported
-behavior, remaining work, and the exact scope of current validation.
+Historical consumers that used gcrypt declarations transitively from `piano.h`
+can compile with `-DMELODICA_PIANO_LEGACY_GCRYPT`.
+
+## Install and use
+
+Choose `PIANO_IMPL=c`, `odin`, `zig`, `nelua` or `codin`. Installation provides both
+public headers, `libmelodica.a`, the selected `libpiano.a`, pkg-config metadata and
+the retained license notice. `DESTDIR` supports staged packaging.
+
+```sh
+make install PIANO_IMPL=c PREFIX="$HOME/.local"
+export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+cc -std=c99 examples/compat-client.c $(pkg-config --static --cflags --libs piano) -o compat-client
+./compat-client
+```
+
+`pkg-config --static` includes the selected native variant's link dependencies.
+The [offline example](examples/compat-client.c) uses only the public installed API.
+
+## Three comparison leagues
+
+| League | Work measured | Acceptance |
+|---|---|---|
+| Serializer | Five unchanged workloads across C, Odin, Zig, Nelua and Codin | Geometric mean ≥90% of the leader; every workload ≥80% |
+| Full API | Complete request/response fixture suites | Identical pinned behavior before timing |
+| Scaled playlists | Parse, build and free 4, 64 or 256 songs | Identical results and owned cleanup before timing |
+
+Reports retain five-round medians and opposite execution orders on the same host.
+Compiler versions, flags, source and artifact hashes, archive sizes and dynamic
+dependencies accompany the results. API suite rates count entire suites; playlist
+rates count requests. Archive bytes exclude external runtime libraries.
+
+See the [completeness ledger](docs/libpiano-completeness.md) for the exact contract
+and retained evidence, [CI documentation](docs/ci.md) for reproducible commands, and
+the [libpiano MIT notice](LICENSE.libpiano) for the original attribution.

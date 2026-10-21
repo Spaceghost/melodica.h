@@ -20,24 +20,61 @@ concurrency:
 
 jobs:
   differential:
-    runs-on: incus-spaceghost-melodica.h
+    runs-on: ${{ inputs.runner == 'github-hosted' && 'ubuntu-24.04' || fromJSON('["self-hosted","Linux","X64","ubuntu-tiny","spaceghost-melodica.h"]') }}
+    timeout-minutes: 45
+    env:
+      CC: gcc
+      CLANG: clang
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - name: Install reference dependencies
+        id: deps
         run: sh scripts/ci-deps.sh reference
       - name: Test libpiano, crypto, JSON, playlist safety and independent wire oracle
-        run: make test-blowfish test-crypt test-json test-libpiano test-playlist-alloc test-playlist-wire
+        run: make test-blowfish test-crypt test-json test-json-oracle test-libpiano test-libpiano-alloc test-playlist-alloc test-playlist-wire
       - name: Check playlist ownership with ASan and UBSan
-        run: make test-playlist-sanitize
-      - name: Compare pinned upstream behavior and complete playlist workloads
+        run: make test-playlist-sanitize test-libpiano-sanitize
+      - name: Install and verify every pinned native protocol toolchain
+        id: tools
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        run: bash scripts/ci-toolchains.sh
+      - name: Compare pinned upstream behavior and benchmark every API family
+        id: reference
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: sh scripts/libpiano-differential.sh
-      - name: Retain reference, candidate, timings and size evidence
+      - name: Rebuild every native API and compare all implementations on this host
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' && steps.reference.outcome == 'success' }}
+        run: |
+          make -B libpiano-native
+          python3 scripts/native-piano.py
+      - name: Preserve readable evidence in job logs
         if: always()
+        run: python3 scripts/ci-evidence.py build/libpiano-evidence build/native-piano-evidence build/toolchain-evidence
+      - name: Retain reference, candidate, timings and size evidence
+        id: evidence
+        if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: libpiano-evidence-${{ github.run_id }}-${{ github.run_attempt }}
-          path: build/libpiano-evidence/
+          path: |
+            build/libpiano-evidence/
+            build/native-piano-evidence/
+            build/toolchain-evidence/
+            build/odin/libpiano.a
+            build/zig/libpiano.a
+            build/nelua/libpiano.a
+            build/codin/libpiano.a
+            build/codin/piano.c
+            build/codin/piano-ast.txt
+            build/codin/piano-artifacts.sha256
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 7
+          compression-level: 9
+      - name: Report artifact service failure
+        if: ${{ always() && steps.evidence.outcome == 'failure' }}
+        run: |
+          echo '::warning::Artifact upload failed. Validation evidence is preserved in the job logs.'
+          echo 'Artifact upload failed; inspect the Preserve readable evidence step in this run.' >> "$GITHUB_STEP_SUMMARY"

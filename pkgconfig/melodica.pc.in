@@ -1,0 +1,10 @@
+prefix=@PREFIX@
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: melodica
+Description: Allocation-free portable melodica serializer ABI
+Version: 1.0.0
+Libs: -L${libdir} -lmelodica
+Cflags: -I${includedir}

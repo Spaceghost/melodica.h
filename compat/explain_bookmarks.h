@@ -65,7 +65,7 @@ static PianoReturn_t piano_response_explain_data(PianoRequest_t *req,
         const size_t item = melodica_json_array_get(doc, explanations, i);
         const size_t focus = melodica_json_object_get(doc, item, "focusTraitName");
         if (focus == MELODICA_JSON_NONE) continue;
-        if (focus >= doc->count || doc->tokens[focus].type != MELODICA_JSON_STRING) {
+        if (focus >= doc->count || melodica_json_is_null(doc, focus)) {
             free(text);
             return PIANO_RET_INVALID_RESPONSE;
         }
@@ -102,7 +102,7 @@ static PianoReturn_t piano_response_explain_bookmarks(PianoHandle_t *ph,
     const size_t root = 0u;
     const size_t stat = melodica_json_object_get(&doc, root, "stat");
     if (stat == MELODICA_JSON_NONE || stat >= doc.count ||
-            doc.tokens[stat].type != MELODICA_JSON_STRING) goto cleanup;
+            melodica_json_is_null(&doc, stat)) goto cleanup;
     if (!melodica_json_string_is(&doc, stat, "ok")) {
         ret = piano_response_error(&doc, root, req);
         goto cleanup;

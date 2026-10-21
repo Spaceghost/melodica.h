@@ -27,7 +27,7 @@ extern "C" {
 #define PIANO_RPC_HOST "tuner.pandora.com"
 #define PIANO_RPC_PATH "/services/json/?"
 #define MELODICA_LIBPIANO_COMPAT 1
-#define MELODICA_LIBPIANO_RPC_IMPLEMENTED 0
+#define MELODICA_LIBPIANO_RPC_IMPLEMENTED 1
 
 typedef struct PianoListHead {
     struct PianoListHead *next;

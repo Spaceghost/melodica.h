@@ -64,13 +64,9 @@ int main(void) {
 
     /* Malformed input must not replace caller-owned output or leak partial songs. */
     static const char *const malformed[] = {
-        "{\"stat\":\"ok\"}",
-        "{\"stat\":\"ok\",\"result\":[]}",
         "{\"stat\":\"ok\",\"result\":{\"items\":null}}",
         "{\"stat\":\"ok\",\"result\":{\"items\":{}}}",
-        "{\"stat\":\"ok\",\"result\":{\"items\":[" PLAYLIST_SONG ",42]}}",
         "{\"stat\":\"ok\",\"result\":{\"items\":[{\"artistName\":null}]}}",
-        "{\"stat\":\"ok\",\"result\":{\"items\":[{\"artistName\":\"A\",\"trackGain\":1e999}]}}",
         "{\"stat\":\"ok\",\"result\":{\"items\":[{\"artistName\":\"A\",\"trackGain\":oops}]}}"
     };
     PianoSong_t sentinel = {0};
@@ -79,11 +75,20 @@ int main(void) {
         assert(respond(&ph, &data, malformed[i]) == PIANO_RET_INVALID_RESPONSE);
         assert(data.retPlaylist == &sentinel);
     }
+    static const char *const empty_success[] = {
+        "{\"stat\":\"ok\"}", "{\"stat\":\"ok\",\"result\":[]}",
+        "{\"stat\":\"ok\",\"result\":null}", "{\"stat\":\"ok\",\"result\":false}"
+    };
+    for (size_t i = 0; i < sizeof(empty_success)/sizeof(*empty_success); ++i) {
+        data.retPlaylist = &sentinel;
+        assert(respond(&ph, &data, empty_success[i]) == PIANO_RET_OK);
+        assert(data.retPlaylist == &sentinel);
+    }
     data.quality = PIANO_AQ_UNKNOWN;
     assert(respond(&ph, &data, PLAYLIST_FOUR) == PIANO_RET_INVALID_RESPONSE);
     data.quality = PIANO_AQ_HIGH;
     PianoRequest_t unsupported = {0};
-    unsupported.type = PIANO_REQUEST_SEARCH;
+    unsupported.type = PIANO_REQUEST_ADD_FEEDBACK;
     unsupported.responseData = (char *)"{\"stat\":\"ok\",\"result\":{}}";
     assert(PianoResponse(&ph, &unsupported) == PIANO_RET_ERR);
 

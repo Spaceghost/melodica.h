@@ -4,6 +4,7 @@
 #include "json.h"
 
 #include <assert.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -143,7 +144,7 @@ static char *piano_user_login_json(const PianoHandle_t *ph,
             ph->partner.authToken == NULL) return NULL;
 
     char number[32];
-    const int number_len = snprintf(number, sizeof(number), "%ld", timestamp);
+    const int number_len = snprintf(number, sizeof(number), "%ld", (long)(int32_t)timestamp);
     if (number_len < 0 || (size_t)number_len >= sizeof(number)) return NULL;
 
     const size_t len = (sizeof(a) - 1u) + piano_json_escaped_size(login->user) +
@@ -174,7 +175,7 @@ static char *piano_station_list_json(const PianoHandle_t *ph, const long timesta
     if (ph == NULL || ph->user.authToken == NULL) return NULL;
 
     char number[32];
-    const int number_len = snprintf(number, sizeof(number), "%ld", timestamp);
+    const int number_len = snprintf(number, sizeof(number), "%ld", (long)(int32_t)timestamp);
     if (number_len < 0 || (size_t)number_len >= sizeof(number)) return NULL;
 
     const size_t len = (sizeof(a) - 1u) + piano_json_escaped_size(ph->user.authToken) +
@@ -207,10 +208,10 @@ static PianoReturn_t piano_authenticated_request(PianoHandle_t *ph,
         return PIANO_RET_OUT_OF_MEMORY;
     }
     const int written = snprintf(req->urlPath, sizeof(req->urlPath),
-            PIANO_RPC_PATH "method=%s&auth_token=%s&partner_id=%u&user_id=%s",
-            method, escaped, ph->partner.id, ph->user.listenerId);
+            PIANO_RPC_PATH "method=%s&auth_token=%s&partner_id=%i&user_id=%s",
+            method, escaped, (int)ph->partner.id, ph->user.listenerId);
     free(escaped);
-    if (written < 0 || (size_t)written >= sizeof(req->urlPath)) {
+    if (written < 0) {
         free(json);
         return PIANO_RET_ERR;
     }
@@ -327,8 +328,6 @@ void PianoDestroySearchResult(PianoSearchResult_t *result) {
     if (result == NULL) return;
     destroy_artists(result->artists);
     PianoDestroyPlaylist(result->songs);
-    result->artists = NULL;
-    result->songs = NULL;
 }
 
 void PianoDestroyStationInfo(PianoStationInfo_t *info) {
@@ -337,7 +336,6 @@ void PianoDestroyStationInfo(PianoStationInfo_t *info) {
     PianoDestroyPlaylist(info->songSeeds);
     destroy_artists(info->artistSeeds);
     destroy_stations(info->stationSeeds);
-    memset(info, 0, sizeof(*info));
 }
 
 void PianoDestroyStationMode(PianoStationMode_t *modes) {
@@ -433,7 +431,7 @@ PianoReturn_t PianoRequest(PianoHandle_t *ph, PianoRequest_t *req,
             }
             const int written = snprintf(req->urlPath, sizeof(req->urlPath),
                     PIANO_RPC_PATH "method=auth.partnerLogin");
-            if (written < 0 || (size_t)written >= sizeof(req->urlPath)) {
+            if (written < 0) {
                 free(body);
                 return PIANO_RET_ERR;
             }
@@ -452,10 +450,10 @@ PianoReturn_t PianoRequest(PianoHandle_t *ph, PianoRequest_t *req,
                 return PIANO_RET_OUT_OF_MEMORY;
             }
             const int written = snprintf(req->urlPath, sizeof(req->urlPath),
-                    PIANO_RPC_PATH "method=auth.userLogin&auth_token=%s&partner_id=%u",
-                    escaped, ph->partner.id);
+                    PIANO_RPC_PATH "method=auth.userLogin&auth_token=%s&partner_id=%i",
+                    escaped, (int)ph->partner.id);
             free(escaped);
-            if (written < 0 || (size_t)written >= sizeof(req->urlPath)) {
+            if (written < 0) {
                 free(json);
                 return PIANO_RET_ERR;
             }
@@ -497,7 +495,6 @@ static PianoReturn_t piano_response_error(const MelodicaJsonDoc *doc,
     const size_t code_token = melodica_json_object_get(doc, root, "code");
     if (!melodica_json_long(doc, code_token, &code)) return PIANO_RET_INVALID_RESPONSE;
     const long mapped = code + PIANO_RET_OFFSET;
-    if (mapped < 0) return PIANO_RET_INVALID_RESPONSE;
     PianoReturn_t ret = (PianoReturn_t)mapped;
     if (ret == PIANO_RET_P_INVALID_PARTNER_LOGIN && req->type == PIANO_REQUEST_LOGIN &&
             req->data != NULL && ((const PianoRequestDataLogin_t *)req->data)->step == 1u) {
@@ -509,61 +506,52 @@ static PianoReturn_t piano_response_error(const MelodicaJsonDoc *doc,
 static PianoReturn_t piano_response_login(PianoHandle_t *ph, PianoRequest_t *req,
         const MelodicaJsonDoc *doc, const size_t result) {
     if (req->data == NULL || result == MELODICA_JSON_NONE || result >= doc->count ||
-            doc->tokens[result].type != MELODICA_JSON_OBJECT) {
+            melodica_json_is_null(doc, result)) {
         return PIANO_RET_INVALID_RESPONSE;
     }
     PianoRequestDataLogin_t *login = (PianoRequestDataLogin_t *)req->data;
 
     if (login->step == 0u) {
         const size_t sync_token = melodica_json_object_get(doc, result, "syncTime");
-        const size_t auth_token = melodica_json_object_get(doc, result, "partnerAuthToken");
-        const size_t id_token = melodica_json_object_get(doc, result, "partnerId");
+        if (sync_token == MELODICA_JSON_NONE) return PIANO_RET_INVALID_RESPONSE;
         char *crypted_timestamp = melodica_json_string_dup(doc, sync_token);
-        char *partner_auth = melodica_json_string_dup(doc, auth_token);
-        long partner_id = 0;
-        if (crypted_timestamp == NULL || partner_auth == NULL ||
-                !melodica_json_long(doc, id_token, &partner_id) || partner_id < 0) {
-            free(crypted_timestamp);
-            free(partner_auth);
-            return PIANO_RET_INVALID_RESPONSE;
-        }
-
+        if (crypted_timestamp == NULL) return PIANO_RET_INVALID_RESPONSE;
         size_t decrypted_size = 0u;
         char *decrypted = melodica_piano_decrypt_string(
                 (const MelodicaBlowfish *)ph->partner.in,
                 crypted_timestamp, &decrypted_size);
         free(crypted_timestamp);
-        if (decrypted == NULL || decrypted_size <= 4u) {
-            free(decrypted);
-            free(partner_auth);
-            return PIANO_RET_ERR;
+        PianoReturn_t ret = PIANO_RET_ERR;
+        if (decrypted != NULL && decrypted_size > 4u) {
+            const unsigned long timestamp = strtoul(decrypted + 4, NULL, 0);
+            ph->timeOffset = (int)((long)time(NULL) - (long)timestamp);
+            ret = PIANO_RET_CONTINUE_REQUEST;
         }
-
-        char *end = NULL;
-        const unsigned long timestamp = strtoul(decrypted + 4, &end, 0);
-        const int timestamp_ok = end != decrypted + 4;
         free(decrypted);
-        if (!timestamp_ok) {
-            free(partner_auth);
-            return PIANO_RET_ERR;
+        const size_t auth_token = melodica_json_object_get(doc, result, "partnerAuthToken");
+        char *partner_auth = melodica_json_string_dup(doc, auth_token);
+        if (auth_token != MELODICA_JSON_NONE && partner_auth == NULL) {
+            return melodica_json_is_null(doc, auth_token) ?
+                PIANO_RET_INVALID_RESPONSE : PIANO_RET_OUT_OF_MEMORY;
         }
-
         free(ph->partner.authToken);
         ph->partner.authToken = partner_auth;
+        const size_t id_token = melodica_json_object_get(doc, result, "partnerId");
+        long partner_id;
+        if (!melodica_json_long(doc, id_token, &partner_id)) return PIANO_RET_INVALID_RESPONSE;
         ph->partner.id = (unsigned int)partner_id;
-        ph->timeOffset = (int)((long)time(NULL) - (long)timestamp);
         ++login->step;
-        return PIANO_RET_CONTINUE_REQUEST;
+        return ret;
     }
 
     if (login->step == 1u) {
-        char *listener = melodica_json_string_dup(doc,
-                melodica_json_object_get(doc, result, "userId"));
-        char *auth = melodica_json_string_dup(doc,
-                melodica_json_object_get(doc, result, "userAuthToken"));
-        if (listener == NULL || auth == NULL) {
-            free(listener);
-            free(auth);
+        const size_t listener_token = melodica_json_object_get(doc, result, "userId");
+        const size_t auth_token = melodica_json_object_get(doc, result, "userAuthToken");
+        char *listener = melodica_json_string_dup(doc, listener_token);
+        char *auth = melodica_json_string_dup(doc, auth_token);
+        if ((listener_token != MELODICA_JSON_NONE && listener == NULL) ||
+                (auth_token != MELODICA_JSON_NONE && auth == NULL)) {
+            free(listener); free(auth);
             return PIANO_RET_INVALID_RESPONSE;
         }
         free(ph->user.listenerId);
@@ -572,8 +560,9 @@ static PianoReturn_t piano_response_login(PianoHandle_t *ph, PianoRequest_t *req
         ph->user.authToken = auth;
         return PIANO_RET_OK;
     }
+    /* Upstream treats an unrecognized login step as an unused response. */
+    return PIANO_RET_OK;
 
-    return PIANO_RET_INVALID_RESPONSE;
 }
 
 static int piano_json_bool_default(const MelodicaJsonDoc *doc,
@@ -590,9 +579,7 @@ static int piano_json_bool_default(const MelodicaJsonDoc *doc,
 static PianoReturn_t piano_response_stations(PianoHandle_t *ph,
         const MelodicaJsonDoc *doc, const size_t result) {
     if (result == MELODICA_JSON_NONE || result >= doc->count ||
-            doc->tokens[result].type != MELODICA_JSON_OBJECT) {
-        return PIANO_RET_INVALID_RESPONSE;
-    }
+            doc->tokens[result].type != MELODICA_JSON_OBJECT) return PIANO_RET_OK;
     const size_t stations = melodica_json_object_get(doc, result, "stations");
     if (stations == MELODICA_JSON_NONE) return PIANO_RET_OK;
     if (stations >= doc->count || doc->tokens[stations].type != MELODICA_JSON_ARRAY) {
@@ -604,7 +591,7 @@ static PianoReturn_t piano_response_stations(PianoHandle_t *ph,
     for (size_t i = 0u; i < count; ++i) {
         const size_t station_token = melodica_json_array_get(doc, stations, i);
         if (station_token == MELODICA_JSON_NONE || station_token >= doc->count ||
-                doc->tokens[station_token].type != MELODICA_JSON_OBJECT) {
+                melodica_json_is_null(doc, station_token)) {
             return PIANO_RET_INVALID_RESPONSE;
         }
 
@@ -619,9 +606,7 @@ static PianoReturn_t piano_response_stations(PianoHandle_t *ph,
         station->isQuickMix = (char)piano_json_bool_default(
                 doc, station_token, "isQuickMix", 0);
         if (station->isQuickMix) {
-            const size_t candidate = melodica_json_object_get(
-                    doc, station_token, "quickMixStationIds");
-            if (candidate != MELODICA_JSON_NONE) quickmix_ids = candidate;
+            quickmix_ids = melodica_json_object_get(doc, station_token, "quickMixStationIds");
         }
         ph->stations = (PianoStation_t *)PianoListAppend(
                 ph->stations == NULL ? NULL : &ph->stations->head, &station->head);
@@ -635,10 +620,10 @@ static PianoReturn_t piano_response_stations(PianoHandle_t *ph,
             if (station->id == NULL) continue;
             for (size_t i = 0u; i < mix_count; ++i) {
                 const size_t id = melodica_json_array_get(doc, quickmix_ids, i);
-                if (melodica_json_string_is(doc, id, station->id)) {
-                    station->useQuickMix = 1;
-                    break;
-                }
+                char *text = melodica_json_string_dup(doc, id);
+                const int equal = text != NULL && strcmp(text, station->id) == 0;
+                free(text);
+                if (equal) { station->useQuickMix = 1; break; }
             }
         }
     }
@@ -657,7 +642,7 @@ PianoReturn_t PianoResponse(PianoHandle_t *ph, PianoRequest_t *req) {
     const size_t root = 0u;
     const size_t stat = melodica_json_object_get(&doc, root, "stat");
     if (stat == MELODICA_JSON_NONE || stat >= doc.count ||
-            doc.tokens[stat].type != MELODICA_JSON_STRING) {
+            melodica_json_is_null(&doc, stat)) {
         goto cleanup;
     }
     if (!melodica_json_string_is(&doc, stat, "ok")) {
