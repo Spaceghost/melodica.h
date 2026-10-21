@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
+    inputs:
+      runner:
+        description: Execution backend
+        type: string
+        default: self-hosted
   workflow_dispatch:
     inputs:
       runner:
@@ -20,7 +26,8 @@ concurrency:
 
 jobs:
   language-shootout:
-    runs-on: incus-spaceghost-melodica.h
+    runs-on: ${{ inputs.runner == 'github-hosted' && 'ubuntu-24.04' || fromJSON('["self-hosted","Linux","X64","ubuntu-tiny","spaceghost-melodica.h"]') }}
+    timeout-minutes: 45
     env:
       CC: gcc
       CLANG: clang
@@ -41,9 +48,15 @@ jobs:
         if: ${{ !cancelled() && steps.deps.outcome == 'success' && steps.harness.outcome == 'success' }}
         run: python3 scripts/native-ci.py
       - name: Prove portable C core across freestanding targets
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
         run: make portable
-      - name: Retain logs, exact inputs, artifacts, dependencies and standings
+      - name: Preserve readable evidence in job logs
         if: always()
+        run: python3 scripts/ci-evidence.py build/native-evidence build/toolchain-evidence build/shootout
+      - name: Retain logs, exact inputs, artifacts, dependencies and standings
+        id: evidence
+        if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: native-evidence-${{ github.run_id }}-${{ github.run_attempt }}
@@ -58,10 +71,17 @@ jobs:
             build/codin/
             build/portable/
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 7
+          compression-level: 9
+      - name: Report artifact service failure
+        if: ${{ always() && steps.evidence.outcome == 'failure' }}
+        run: |
+          echo '::warning::Artifact upload failed. Validation evidence is preserved in the job logs.'
+          echo 'Artifact upload failed; inspect the Preserve readable evidence step in this run.' >> "$GITHUB_STEP_SUMMARY"
 
   pianobar-source-compat:
-    runs-on: incus-spaceghost-melodica.h
+    runs-on: ${{ inputs.runner == 'github-hosted' && 'ubuntu-24.04' || fromJSON('["self-hosted","Linux","X64","ubuntu-tiny","spaceghost-melodica.h"]') }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -69,19 +89,23 @@ jobs:
       - name: Install pinned-reference build dependencies
         run: sh scripts/ci-deps.sh reference
       - name: Compile real pinned pianobar sources against melodica piano.h
-        shell: bash
+        run: sh scripts/pianobar-source-compat.sh
+      - name: Preserve readable consumer evidence in job logs
+        if: always()
+        run: python3 scripts/ci-evidence.py build/pianobar-source-evidence
+      - name: Retain unchanged consumer compatibility evidence
+        id: consumer-evidence
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: pianobar-source-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/pianobar-source-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 9
+      - name: Report consumer artifact service failure
+        if: ${{ always() && steps.consumer-evidence.outcome == 'failure' }}
         run: |
-          set -euo pipefail
-          rev=$(cat tests/reference/pianobar.rev)
-          [[ "$rev" =~ ^[0-9a-f]{40}$ ]]
-          src="$RUNNER_TEMP/pianobar-source"
-          git init "$src"
-          git -C "$src" remote add origin https://github.com/PromyLOPh/pianobar.git
-          git -C "$src" fetch --depth=1 origin "$rev"
-          git -C "$src" checkout --detach FETCH_HEAD
-          test "$(git -C "$src" rev-parse HEAD)" = "$rev"
-          make -C "$src" \
-            LIBPIANO_INCLUDE="$GITHUB_WORKSPACE/include" \
-            CFLAGS='-O2 -DNDEBUG -Wall -Wextra -DMELODICA_PIANO_LEGACY_GCRYPT' \
-            src/main.o src/debug.o src/settings.o src/terminal.o \
-            src/ui_act.o src/ui.o src/ui_readline.o src/ui_dispatch.o
+          echo '::warning::Artifact upload failed. Consumer evidence is preserved in the job logs.'
+          echo 'Consumer artifact upload failed; inspect the Preserve readable consumer evidence step.' >> "$GITHUB_STEP_SUMMARY"

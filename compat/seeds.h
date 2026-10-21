@@ -55,7 +55,7 @@ static PianoReturn_t piano_response_seed_mutation(PianoHandle_t *ph, PianoReques
     const size_t root = 0u;
     const size_t stat = melodica_json_object_get(&doc, root, "stat");
     if (stat == MELODICA_JSON_NONE || stat >= doc.count ||
-            doc.tokens[stat].type != MELODICA_JSON_STRING) goto cleanup;
+            melodica_json_is_null(&doc, stat)) goto cleanup;
     if (!melodica_json_string_is(&doc, stat, "ok")) {
         ret = piano_response_error(&doc, root, req);
         goto cleanup;
@@ -152,7 +152,7 @@ static PianoReturn_t piano_station_info_song_seeds(const MelodicaJsonDoc *doc,
     for (size_t item = songs + 1u; item < doc->count &&
             doc->tokens[item].start < doc->tokens[songs].end; ++item) {
         if (doc->tokens[item].parent != songs) continue;
-        if (doc->tokens[item].type != MELODICA_JSON_OBJECT) {
+        if (melodica_json_is_null(doc, item)) {
             ret = PIANO_RET_INVALID_RESPONSE;
             goto fail;
         }
@@ -190,7 +190,7 @@ static PianoReturn_t piano_station_info_artist_seeds(const MelodicaJsonDoc *doc,
     for (size_t item = artists + 1u; item < doc->count &&
             doc->tokens[item].start < doc->tokens[artists].end; ++item) {
         if (doc->tokens[item].parent != artists) continue;
-        if (doc->tokens[item].type != MELODICA_JSON_OBJECT) {
+        if (melodica_json_is_null(doc, item)) {
             ret = PIANO_RET_INVALID_RESPONSE;
             goto fail;
         }
@@ -229,7 +229,7 @@ static PianoReturn_t piano_station_info_feedback(const MelodicaJsonDoc *doc,
         for (size_t item = array + 1u; item < doc->count &&
                 doc->tokens[item].start < doc->tokens[array].end; ++item) {
             if (doc->tokens[item].parent != array) continue;
-            if (doc->tokens[item].type != MELODICA_JSON_OBJECT) {
+            if (melodica_json_is_null(doc, item)) {
                 ret = PIANO_RET_INVALID_RESPONSE;
                 goto fail;
             }
@@ -263,19 +263,14 @@ fail:
 static PianoReturn_t piano_response_station_info_data(PianoRequest_t *req,
         const MelodicaJsonDoc *doc, const size_t result) {
     PianoRequestDataGetStationInfo_t *data = (PianoRequestDataGetStationInfo_t *)req->data;
-    if (data == NULL || result >= doc->count ||
-            doc->tokens[result].type != MELODICA_JSON_OBJECT) {
-        return PIANO_RET_INVALID_RESPONSE;
-    }
+    if (data == NULL) return PIANO_RET_INVALID_RESPONSE;
+    if (result == MELODICA_JSON_NONE) return PIANO_RET_OK;
 
     PianoStationInfo_t parsed;
     memset(&parsed, 0, sizeof(parsed));
     PianoReturn_t ret = PIANO_RET_OK;
     const size_t music = melodica_json_object_get(doc, result, "music");
     if (music != MELODICA_JSON_NONE) {
-        if (music >= doc->count || doc->tokens[music].type != MELODICA_JSON_OBJECT) {
-            return PIANO_RET_INVALID_RESPONSE;
-        }
         ret = piano_station_info_song_seeds(doc, music, &parsed.songSeeds);
         if (ret != PIANO_RET_OK) goto fail;
         ret = piano_station_info_artist_seeds(doc, music, &parsed.artistSeeds);
@@ -284,10 +279,6 @@ static PianoReturn_t piano_response_station_info_data(PianoRequest_t *req,
 
     const size_t feedback = melodica_json_object_get(doc, result, "feedback");
     if (feedback != MELODICA_JSON_NONE) {
-        if (feedback >= doc->count || doc->tokens[feedback].type != MELODICA_JSON_OBJECT) {
-            ret = PIANO_RET_INVALID_RESPONSE;
-            goto fail;
-        }
         ret = piano_station_info_feedback(doc, feedback, &parsed.feedback);
         if (ret != PIANO_RET_OK) goto fail;
     }
@@ -314,7 +305,7 @@ static PianoReturn_t piano_response_station_info(PianoHandle_t *ph, PianoRequest
     const size_t root = 0u;
     const size_t stat = melodica_json_object_get(&doc, root, "stat");
     if (stat == MELODICA_JSON_NONE || stat >= doc.count ||
-            doc.tokens[stat].type != MELODICA_JSON_STRING) goto cleanup;
+            melodica_json_is_null(&doc, stat)) goto cleanup;
     if (!melodica_json_string_is(&doc, stat, "ok")) {
         ret = piano_response_error(&doc, root, req);
         goto cleanup;

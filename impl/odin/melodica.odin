@@ -12,10 +12,8 @@ is_unreserved :: #force_inline proc "contextless" (c: u8) -> bool {
 }
 
 hex_digit :: #force_inline proc "contextless" (n: u8) -> u8 {
-	if n < 10 {
-		return '0' + n
-	}
-	return 'A' + (n - 10)
+	digits := "0123456789ABCDEF"
+	return digits[n]
 }
 
 json_escape_extra :: #force_inline proc "contextless" (c: u8) -> uintptr {
@@ -68,10 +66,28 @@ write_url :: #force_inline proc "contextless" (dst: [^]u8, src: [^]u8, src_len: 
 	return out
 }
 
+// Packed bytes avoid alignment assumptions and preserve all high UTF-8 bytes.
+json_plain4 :: #force_inline proc "contextless" (src: [^]u8) -> bool {
+	word := u32(src[0]) | (u32(src[1]) << 8) | (u32(src[2]) << 16) | (u32(src[3]) << 24)
+	quotes := word ~ u32(0x22222222)
+	slashes := word ~ u32(0x5c5c5c5c)
+	controls := (word - 0x20202020) & ~word
+	quote_zero := (quotes - 0x01010101) & ~quotes
+	slash_zero := (slashes - 0x01010101) & ~slashes
+	return ((controls | quote_zero | slash_zero) & 0x80808080) == 0
+}
+
 json_escape_size_impl :: #force_inline proc "contextless" (src: [^]u8, src_len: uintptr) -> uintptr {
 	required := src_len
-	for i in 0..<src_len {
-		required += json_escape_extra(src[i])
+	i: uintptr = 0
+	for src_len - i >= 4 && json_plain4(&src[i]) { i += 4 }
+	for ; i < src_len; i += 1 {
+		c := src[i]
+		if c == '"' || c == '\\' {
+			required += 1
+		} else if c < 0x20 {
+			required += json_escape_extra(c)
+		}
 	}
 	return required
 }
@@ -85,16 +101,18 @@ write_json :: #force_inline proc "contextless" (
 	out := out_in
 	for i in 0..<src_len {
 		c := src[i]
-		if c >= 0x20 && c != '"' && c != '\\' {
-			dst[out] = c
-			out += 1
+		if c >= 0x20 {
+			if c == '"' || c == '\\' {
+				dst[out] = '\\'
+				dst[out + 1] = c
+				out += 2
+			} else {
+				dst[out] = c
+				out += 1
+			}
 			continue
 		}
 		switch c {
-		case '"':
-			dst[out + 0] = '\\'; dst[out + 1] = '"'; out += 2
-		case '\\':
-			dst[out + 0] = '\\'; dst[out + 1] = '\\'; out += 2
 		case '\b':
 			dst[out + 0] = '\\'; dst[out + 1] = 'b'; out += 2
 		case '\f':
@@ -115,20 +133,17 @@ write_json :: #force_inline proc "contextless" (
 	return out
 }
 
-decimal_size :: #force_inline proc "contextless" (value: uintptr) -> uintptr {
-	if value < 10 {
-		return 1
+decimal_size :: #force_inline proc "contextless" (value_in: uintptr) -> uintptr {
+	value := value_in
+	digits: uintptr = 1
+	for value >= 10000 {
+		value /= 10000
+		digits += 4
 	}
-	if value < 100 {
-		return 2
-	}
-	if value < 1000 {
-		return 3
-	}
-	if value < 10000 {
-		return 4
-	}
-	return 4 + decimal_size(value / 10000)
+	if value >= 1000 { return digits + 3 }
+	if value >= 100 { return digits + 2 }
+	if value >= 10 { return digits + 1 }
+	return digits
 }
 
 write_decimal :: #force_inline proc "contextless" (dst: [^]u8, out_in: uintptr, value_in: uintptr) -> uintptr {
@@ -281,7 +296,7 @@ melodica_station_list_request :: proc "c" (
 		out += 1
 	}
 	if auth_required == user_auth_token_len {
-		copy_bytes(dst + out, user_auth_token, user_auth_token_len)
+		copy_bytes(&dst[out], user_auth_token, user_auth_token_len)
 		out += user_auth_token_len
 	} else {
 		out = write_json(dst, out, user_auth_token, user_auth_token_len)

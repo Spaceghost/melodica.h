@@ -1,6 +1,7 @@
 #include "piano.h"
 
 #include <stdio.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -121,6 +122,28 @@ int main(void) {
     probe_station_result_shape(&ph, &req, "stations.result.string",
         (char *)"{\"stat\":\"ok\",\"result\":\"x\"}");
 
+    PianoDestroyRequest(&req);
+
+    /* json_object_new_int and printf's historical signed partner-id field
+     * define these request boundaries even though handle.id is unsigned. */
+    ph.partner.id = UINT_MAX;
+    ph.timeOffset = INT_MIN;
+    memset(&req, 0, sizeof(req));
+    req.data = &login;
+    ret = PianoRequest(&ph, &req, PIANO_REQUEST_LOGIN);
+    print_request("login1.boundary", ret, &req);
+    PianoDestroyRequest(&req);
+    ret = PianoRequest(&ph, &req, PIANO_REQUEST_GET_STATIONS);
+    print_request("stations.boundary", ret, &req);
+    PianoDestroyRequest(&req);
+
+    char long_auth[1201];
+    memset(long_auth, 'A', sizeof(long_auth) - 1u);
+    long_auth[sizeof(long_auth) - 1u] = '\0';
+    free(ph.user.authToken);
+    ph.user.authToken = copy_string(long_auth);
+    ret = PianoRequest(&ph, &req, PIANO_REQUEST_GET_STATIONS);
+    print_request("stations.truncated_url", ret, &req);
     PianoDestroyRequest(&req);
     PianoDestroy(&ph);
     return 0;

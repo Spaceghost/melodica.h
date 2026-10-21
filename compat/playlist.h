@@ -50,46 +50,23 @@ static PianoReturn_t piano_playlist_string(const MelodicaJsonDoc *doc,
     const size_t token = melodica_json_object_get(doc, object, key);
     *out = NULL;
     if (token == MELODICA_JSON_NONE) return PIANO_RET_OK;
-    if (doc->tokens[token].type != MELODICA_JSON_STRING) return PIANO_RET_INVALID_RESPONSE;
+    if (melodica_json_is_null(doc, token)) return PIANO_RET_INVALID_RESPONSE;
     *out = melodica_json_string_dup(doc, token);
     return *out == NULL ? PIANO_RET_OUT_OF_MEMORY : PIANO_RET_OK;
 }
 
-/* Match json-c's numeric accessors on finite numbers, numeric strings, booleans,
- * null and missing values. Integer strings use integer-prefix conversion;
- * numerical JSON values are truncated and saturated before conversion to int. */
+/* json-c's numeric accessors coerce strings, booleans and null, saturate
+ * integers and preserve non-finite floating point values. */
 static PianoReturn_t piano_playlist_number(const MelodicaJsonDoc *doc,
         const size_t object, const char *key, const int integer, double *out) {
     const size_t token = melodica_json_object_get(doc, object, key);
     *out = 0.0;
     if (token == MELODICA_JSON_NONE) return PIANO_RET_OK;
-    const MelodicaJsonToken *t = &doc->tokens[token];
-    if (t->type == MELODICA_JSON_STRING) {
-        char *text = melodica_json_string_dup(doc, token);
-        if (text == NULL) return PIANO_RET_OUT_OF_MEMORY;
-        *out = integer ? (double)strtoll(text, NULL, 10) : strtod(text, NULL);
-        free(text);
-    } else if (t->type == MELODICA_JSON_PRIMITIVE) {
-        int boolean;
-        if (melodica_json_bool(doc, token, &boolean)) {
-            *out = (double)boolean;
-        } else if (t->end - t->start == 4u &&
-                memcmp(doc->text + t->start, "null", 4u) == 0) {
-            *out = 0.0;
-        } else {
-            char *end;
-            *out = strtod(doc->text + t->start, &end);
-            if (end != doc->text + t->end) return PIANO_RET_INVALID_RESPONSE;
-        }
-    }
     if (integer) {
-        if (isnan(*out)) return PIANO_RET_INVALID_RESPONSE;
-        if (*out > INT_MAX) *out = INT_MAX;
-        if (*out < INT_MIN) *out = INT_MIN;
-        *out = (double)(int)*out;
-    } else if (!isfinite(*out) || *out > FLT_MAX || *out < -FLT_MAX) {
-        return PIANO_RET_INVALID_RESPONSE;
-    }
+        long value;
+        if (!melodica_json_long(doc, token, &value)) return PIANO_RET_OUT_OF_MEMORY;
+        *out = (double)value;
+    } else if (!melodica_json_double(doc, token, out)) return PIANO_RET_OUT_OF_MEMORY;
     return PIANO_RET_OK;
 }
 
@@ -119,10 +96,6 @@ static PianoReturn_t piano_response_playlist(PianoRequest_t *req,
     for (size_t item = items + 1u; item < doc->count &&
             doc->tokens[item].start < doc->tokens[items].end; ++item) {
         if (doc->tokens[item].parent != items) continue;
-        if (doc->tokens[item].type != MELODICA_JSON_OBJECT) {
-            ret = PIANO_RET_INVALID_RESPONSE;
-            goto fail;
-        }
         if (melodica_json_object_get(doc, item, "artistName") == MELODICA_JSON_NONE) continue;
         PianoSong_t *song = (PianoSong_t *)calloc(1u, sizeof(*song));
         if (song == NULL) { ret = PIANO_RET_OUT_OF_MEMORY; goto fail; }

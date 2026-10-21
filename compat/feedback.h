@@ -112,7 +112,7 @@ static PianoReturn_t piano_response_feedback(PianoHandle_t *ph, PianoRequest_t *
     const size_t root = 0u;
     const size_t stat = melodica_json_object_get(&doc, root, "stat");
     if (stat == MELODICA_JSON_NONE || stat >= doc.count ||
-            doc.tokens[stat].type != MELODICA_JSON_STRING) goto cleanup;
+            melodica_json_is_null(&doc, stat)) goto cleanup;
     if (!melodica_json_string_is(&doc, stat, "ok")) {
         ret = piano_response_error(&doc, root, req);
         goto cleanup;

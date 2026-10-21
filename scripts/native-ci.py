@@ -27,6 +27,16 @@ def sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def clear_shootout(output):
+    """Invalidate every metric from an earlier run before attempting a build."""
+    for name in ('scores.tsv', 'standings.txt', 'samples.json', 'manifest.json') + tuple(
+            lane + suffix for lane in LANES
+            for suffix in ('.txt', '.stderr.txt', '.error.txt')):
+        (output / name).unlink(missing_ok=True)
+    for path in output.glob('*-pass-*.txt'):
+        path.unlink()
+
+
 def main():
     if os.environ.get('BUILD', 'build') != 'build':
         raise ValueError('native-ci currently requires BUILD=build (Codin uses that directory)')
@@ -41,14 +51,15 @@ def main():
     compiler = shlex.split(os.environ.get('CC', 'cc'))
     statuses = {}
     # A failed fresh build cannot leave an earlier ranking looking current.
-    for name in ('scores.tsv', 'standings.txt'):
-        (ROOT / 'build/shootout' / name).unlink(missing_ok=True)
+    clear_shootout(ROOT / 'build/shootout')
     with (evidence / 'environment.txt').open('w') as log:
         log.write(platform.platform() + '\n')
         log.write('build policy: Makefile flags; no additional LTO/native CPU options\n')
         for command in (['git', 'rev-parse', 'HEAD'], ['git', 'status', '--short'],
                         ['uname', '-a'], ['lscpu'], compiler + ['--version'],
-                        ['clang', '--version'], [os.environ.get('ODIN', 'odin'), 'version'],
+                        [os.environ.get('GCC', 'gcc'), '--version'],
+                        [os.environ.get('CLANG', 'clang'), '--version'],
+                        [os.environ.get('ODIN', 'odin'), 'version'],
                         [os.environ.get('ZIG', 'zig'), 'version'],
                         [os.environ.get('NELUA', 'nelua'), '--version']):
             try:
@@ -108,7 +119,11 @@ def main():
         print('Benchmark rankings withheld: at least one lane/control failed.', file=sys.stderr)
         return 1
     # All benchmarks execute serially on this host, with the unchanged fixtures.
-    return subprocess.run(['sh', 'scripts/shootout.sh'], cwd=ROOT, check=False).returncode
+    environment = os.environ.copy()
+    environment.setdefault('SHOOTOUT_FLOOR', '0.90')
+    environment.setdefault('SHOOTOUT_WORST_FLOOR', '0.80')
+    return subprocess.run(['sh', 'scripts/shootout.sh'], cwd=ROOT,
+                          env=environment, check=False).returncode
 
 
 if __name__ == '__main__':

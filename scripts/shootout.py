@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Strict scoreboard for the unchanged five-workload native benchmark."""
 import math
+import hashlib
+import json
 import os
 from pathlib import Path
+import platform
+import statistics
 import subprocess
 import sys
 
@@ -63,31 +67,56 @@ def main():
     output = build / 'shootout'
     output.mkdir(parents=True, exist_ok=True)
     # A failed attempt must not leave a previous successful scoreboard behind.
-    for name in ('scores.tsv', 'standings.txt') + tuple(
+    for name in ('scores.tsv', 'standings.txt', 'samples.json', 'manifest.json') + tuple(
             lane + suffix for lane in LANES for suffix in ('.txt', '.stderr.txt', '.error.txt')):
         (output / name).unlink(missing_ok=True)
+    for path in output.glob('*-pass-*.txt'):
+        path.unlink()
     floor = threshold('SHOOTOUT_FLOOR')
     worst_floor = threshold('SHOOTOUT_WORST_FLOOR')
     scores, failures = {}, []
+    samples = {lane: [] for lane in LANES}
+    orders = (LANES, tuple(reversed(LANES)))
+    manifest = {'schema': 1, 'host': platform.node(), 'platform': platform.platform(),
+                'orders': orders, 'aggregation': 'median of two opposite-order process passes',
+                'artifacts': {}}
     for lane in LANES:
-        try:
-            result = subprocess.run([str(build / lane / 'bench')], text=True,
-                                    capture_output=True, timeout=300, check=False)
-            (output / (lane + '.txt')).write_text(result.stdout)
-            (output / (lane + '.stderr.txt')).write_text(result.stderr)
-            print(result.stdout, end='')
-            if result.returncode != 0:
-                raise ValueError('benchmark exited ' + str(result.returncode))
-            scores[lane] = parse_output(result.stdout)
-        except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
-            failures.append(lane + ': ' + str(exc))
-            (output / (lane + '.error.txt')).write_text(str(exc) + '\n')
+        executable = build / lane / 'bench'
+        if executable.is_file():
+            manifest['artifacts'][lane] = {'path': str(executable),
+                'sha256': hashlib.sha256(executable.read_bytes()).hexdigest(),
+                'bytes': executable.stat().st_size}
+    (output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+    for pass_number, order in enumerate(orders, 1):
+        for lane in order:
+            try:
+                result = subprocess.run([str(build / lane / 'bench')], text=True,
+                                        capture_output=True, timeout=300, check=False)
+                stem = lane + '-pass-' + str(pass_number)
+                (output / (stem + '.txt')).write_text(result.stdout)
+                (output / (stem + '-stderr.txt')).write_text(result.stderr)
+                # Keep the historical filenames useful to readers and downstream tools.
+                (output / (lane + '.txt')).write_text(result.stdout)
+                (output / (lane + '.stderr.txt')).write_text(result.stderr)
+                print(f'\n{lane} pass {pass_number}', flush=True)
+                print(result.stdout, end='')
+                if result.returncode != 0:
+                    raise ValueError('benchmark exited ' + str(result.returncode))
+                samples[lane].append(parse_output(result.stdout))
+            except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+                failures.append(lane + f' pass {pass_number}: ' + str(exc))
+                (output / (lane + '.error.txt')).write_text(str(exc) + '\n')
+    (output / 'samples.json').write_text(json.dumps(samples, indent=2) + '\n')
     if failures:
         raise ValueError('no valid scoreboard; ' + '; '.join(failures))
+    for lane in LANES:
+        scores[lane] = {key: statistics.median(sample[key] for sample in samples[lane])
+                        for key in METRICS}
     rows = rank(scores)
     (output / 'scores.tsv').write_text(''.join(
         f'{lane}\t{key}\t{scores[lane][key]}\n' for lane in LANES for key in METRICS))
     lines = ['normalized standings (leader per workload = 100%)',
+             'median of two process passes in opposite lane order; each benchmark keeps its five-round median',
              f'{"lane":8s} ' + ' '.join(f'{key:>15s}' for key in METRICS) + '    geo mean       worst']
     failed = False
     for lane in LANES:

@@ -1,0 +1,1047 @@
+-- Independent libpiano protocol implementation in Nelua.
+-- JSON serialization/coercions use json-c; Blowfish uses libgcrypt. No libpiano
+-- or melodica C protocol symbols are imported or linked by this implementation.
+## pragmas.nogc = true
+## pragmas.noentrypoint = true
+## cinclude '<json-c/json.h>'
+## cinclude '<gcrypt.h>'
+## linklib 'json-c'
+## linklib 'gcrypt'
+require 'C.stdlib'
+require 'C.string'
+require 'C.stdio'
+require 'C.time'
+
+local Json: type <cimport,nodecl,codename 'json_object'> = @record{}
+local function json_object_new_object(): *Json <cimport,nodecl> end
+local function json_object_new_array(): *Json <cimport,nodecl> end
+local function json_object_new_string(s: cstring): *Json <cimport,nodecl> end
+local function json_object_new_boolean(v: cint): *Json <cimport,nodecl> end
+local function json_object_new_int(v: cint): *Json <cimport,nodecl> end
+local function json_object_object_add(j: *Json, k: cstring, v: *Json): cint <cimport,nodecl> end
+local function json_object_array_add(j: *Json, v: *Json): cint <cimport,nodecl> end
+local function json_object_object_get_ex(j: *Json, k: cstring, v: **Json): cint <cimport,nodecl> end
+local function json_array_length(j: *Json): csize <cimport,nodecl,codename 'json_object_array_length'> end
+local function json_object_get_type(j: *Json): cint <cimport,nodecl> end
+local function json_object_array_get_idx(j: *Json, n: csize): *Json <cimport,nodecl> end
+local function json_object_get_string(j: *Json): cstring <cimport,nodecl> end
+local function json_object_get_int(j: *Json): cint <cimport,nodecl> end
+local function json_object_get_double(j: *Json): float64 <cimport,nodecl> end
+local function json_object_get_boolean(j: *Json): cint <cimport,nodecl> end
+local function json_object_to_json_string(j: *Json): cstring <cimport,nodecl> end
+local function json_object_put(j: *Json): cint <cimport,nodecl> end
+local function json_tokener_parse(s: cstring): *Json <cimport,nodecl> end
+local function gcry_check_version(s: cstring): cstring <cimport,nodecl> end
+local function gcry_cipher_open(h: *pointer, algo: cint, mode: cint, flags: cuint): cuint <cimport,nodecl> end
+local function gcry_cipher_setkey(h: pointer, key: pointer, n: csize): cuint <cimport,nodecl> end
+local function gcry_cipher_close(h: pointer): void <cimport,nodecl> end
+local function gcry_cipher_encrypt(h: pointer, dst: pointer, n: csize, src: pointer, m: csize): cuint <cimport,nodecl> end
+local function gcry_cipher_decrypt(h: pointer, dst: pointer, n: csize, src: pointer, m: csize): cuint <cimport,nodecl> end
+
+-- Natural C layouts, mirrored from the public piano.h ABI.
+local List: type = @record{next: *List}
+local User: type = @record{listenerId: cstring, authToken: cstring}
+local Station: type = @record{head: List, isCreator: cchar, isQuickMix: cchar,
+  useQuickMix: cchar, name: cstring, id: cstring, seedId: cstring}
+local Song: type = @record{head: List, artist: cstring, stationId: cstring,
+  album: cstring, audioUrl: cstring, coverArt: cstring, musicId: cstring,
+  title: cstring, seedId: cstring, feedbackId: cstring, detailUrl: cstring,
+  trackToken: cstring, fileGain: float32, length: cuint, rating: cint, audioFormat: cint}
+local Artist: type = @record{head: List, name: cstring, musicId: cstring, seedId: cstring, score: cint}
+local Genre: type = @record{head: List, name: cstring, musicId: cstring}
+local Category: type = @record{head: List, name: cstring, genres: *Genre}
+local Partner: type = @record{input: pointer, output: pointer, authToken: cstring,
+  device: cstring, user: cstring, password: cstring, id: cuint}
+local Handle: type = @record{user: User, stations: *Station, genreStations: *Category,
+  partner: Partner, timeOffset: cint}
+local SearchResult: type = @record{songs: *Song, artists: *Artist}
+local StationInfo: type = @record{songSeeds: *Song, artistSeeds: *Artist,
+  stationSeeds: *Station, feedback: *Song}
+local Settings: type = @record{username: cstring, explicitContentFilter: boolean}
+local Mode: type = @record{head: List, name: cstring, description: cstring,
+  isAlgorithmic: boolean, isTakeover: boolean, active: boolean, id: cint}
+local Request: type = @record{kind: cint, secure: boolean, data: pointer,
+  urlPath: [1024]cchar, postData: cstring, responseData: cstring}
+local LoginData: type = @record{user: cstring, password: cstring, step: byte}
+local PlaylistData: type = @record{station: *Station, quality: cint, retPlaylist: *Song}
+local RateData: type = @record{song: *Song, rating: cint}
+local FeedbackData: type = @record{stationId: cstring, trackToken: cstring, rating: cint}
+local RenameData: type = @record{station: *Station, newName: cstring}
+local SearchData: type = @record{searchStr: cstring, searchResult: SearchResult}
+local CreateData: type = @record{token: cstring, kind: cint}
+local AddSeedData: type = @record{station: *Station, musicId: cstring}
+local ExplainData: type = @record{song: *Song, retExplain: cstring}
+local InfoData: type = @record{station: *Station, info: StationInfo}
+local DeleteSeedData: type = @record{song: *Song, artist: *Artist, station: *Station}
+local ChangeData: type = @record{currentUsername: cstring, newUsername: cstring,
+  currentPassword: cstring, newPassword: cstring, explicitContentFilter: cint}
+local GetModeData: type = @record{station: *Station, retModes: *Mode}
+local SetModeData: type = @record{station: *Station, id: cuint}
+
+local function dup(s: cstring): cstring
+  if s == nilptr then return nilptr end
+  local n = C.strlen(s) + 1_csize
+  local p = (@cstring)(C.malloc(n))
+  if p ~= nilptr then C.memcpy(p, s, n) end
+  return p
+end
+local function get(j: *Json, key: cstring): *Json
+  local v: *Json = nilptr
+  json_object_object_get_ex(j, key, &v)
+  return v
+end
+local function json_object_array_length(j: *Json): csize
+  if j == nilptr or json_object_get_type(j) ~= 5 then return 0 end
+  return json_array_length(j)
+end
+local function has(j: *Json, key: cstring): boolean
+  return json_object_object_get_ex(j, key, nilptr) ~= 0
+end
+local function text(j: *Json, key: cstring): cstring
+  return dup(json_object_get_string(get(j, key)))
+end
+local function flag(j: *Json, key: cstring, fallback: boolean): boolean
+  if not has(j, key) then return fallback end
+  return json_object_get_boolean(get(j, key)) ~= 0
+end
+local function integer(j: *Json, key: cstring): cint
+  return json_object_get_int(get(j, key))
+end
+local function add(j: *Json, key: cstring, value: cstring): void
+  json_object_object_add(j, key, json_object_new_string(value))
+end
+local function boolean_member(j: *Json, key: cstring, value: boolean): void
+  json_object_object_add(j, key, json_object_new_boolean(value and 1 or 0))
+end
+
+local function PianoListCount(list: *List): csize <cexport, codename 'PianoListCount'>
+  local n: csize = 0
+  while list ~= nilptr do n = n + 1; list = list.next end
+  return n
+end
+local function PianoListAppend(list: *List, node: *List): pointer <cexport, codename 'PianoListAppend'>
+  if list == nilptr then return node end
+  local tail = list
+  while tail.next ~= nilptr do tail = tail.next end
+  tail.next = node
+  return list
+end
+local function PianoListPrepend(list: *List, node: *List): pointer <cexport, codename 'PianoListPrepend'>
+  node.next = list
+  return node
+end
+local function PianoListDelete(list: *List, node: *List): pointer <cexport, codename 'PianoListDelete'>
+  if list == node then return list.next end
+  local prev = list
+  while prev ~= nilptr and prev.next ~= node do prev = prev.next end
+  if prev ~= nilptr then prev.next = node.next end
+  return list
+end
+local function PianoListGet(list: *List, n: csize): pointer <cexport, codename 'PianoListGet'>
+  while list ~= nilptr and n ~= 0 do list = list.next; n = n - 1 end
+  return list
+end
+
+local function destroy_stations(station: *Station): void
+  while station ~= nilptr do
+    local next = (@*Station)(station.head.next)
+    C.free(station.name); C.free(station.id); C.free(station.seedId); C.free(station)
+    station = next
+  end
+end
+local function destroy_artists(artist: *Artist): void
+  while artist ~= nilptr do
+    local next = (@*Artist)(artist.head.next)
+    C.free(artist.name); C.free(artist.musicId); C.free(artist.seedId); C.free(artist)
+    artist = next
+  end
+end
+local function PianoDestroyPlaylist(song: *Song): void <cexport, codename 'PianoDestroyPlaylist'>
+  while song ~= nilptr do
+    local next = (@*Song)(song.head.next)
+    C.free(song.artist); C.free(song.stationId); C.free(song.album); C.free(song.audioUrl)
+    C.free(song.coverArt); C.free(song.musicId); C.free(song.title); C.free(song.seedId)
+    C.free(song.feedbackId); C.free(song.detailUrl); C.free(song.trackToken); C.free(song)
+    song = next
+  end
+end
+local function PianoDestroySearchResult(result: *SearchResult): void <cexport, codename 'PianoDestroySearchResult'>
+  destroy_artists(result.artists); PianoDestroyPlaylist(result.songs)
+end
+local function PianoDestroyStationInfo(info: *StationInfo): void <cexport, codename 'PianoDestroyStationInfo'>
+  PianoDestroyPlaylist(info.songSeeds); destroy_artists(info.artistSeeds)
+  destroy_stations(info.stationSeeds); PianoDestroyPlaylist(info.feedback)
+end
+local function PianoDestroyStationMode(mode: *Mode): void <cexport, codename 'PianoDestroyStationMode'>
+  while mode ~= nilptr do
+    local next = (@*Mode)(mode.head.next)
+    C.free(mode.name); C.free(mode.description); C.free(mode); mode = next
+  end
+end
+local function PianoDestroy(ph: *Handle): void <cexport, codename 'PianoDestroy'>
+  C.free(ph.user.listenerId); C.free(ph.user.authToken)
+  destroy_stations(ph.stations)
+  C.free(ph.partner.authToken); C.free(ph.partner.device)
+  C.free(ph.partner.user); C.free(ph.partner.password)
+  if ph.partner.input ~= nilptr then gcry_cipher_close(ph.partner.input) end
+  if ph.partner.output ~= nilptr then gcry_cipher_close(ph.partner.output) end
+  local category = ph.genreStations
+  while category ~= nilptr do
+    local next = (@*Category)(category.head.next)
+    local genre = category.genres
+    while genre ~= nilptr do
+      local nextgenre = (@*Genre)(genre.head.next)
+      C.free(genre.name); C.free(genre.musicId); C.free(genre); genre = nextgenre
+    end
+    C.free(category.name); C.free(category); category = next
+  end
+  C.memset(ph, 0, #@Handle)
+end
+local function PianoDestroyRequest(req: *Request): void <cexport, codename 'PianoDestroyRequest'>
+  C.free(req.postData); C.memset(req, 0, #@Request)
+end
+local function PianoFindStationById(station: *Station, id: cstring): *Station <cexport, codename 'PianoFindStationById'>
+  if id == nilptr then return nilptr end
+  while station ~= nilptr do
+    if station.id ~= nilptr and C.strcmp(station.id, id) == 0 then return station end
+    station = (@*Station)(station.head.next)
+  end
+  return nilptr
+end
+local function PianoInit(ph: *Handle, user: cstring, password: cstring, device: cstring,
+    inkey: cstring, outkey: cstring): cint <cexport, codename 'PianoInit'>
+  C.memset(ph, 0, #@Handle)
+  gcry_check_version(nilptr)
+  ph.partner.user = dup(user); ph.partner.password = dup(password); ph.partner.device = dup(device)
+  if ph.partner.user == nilptr or ph.partner.password == nilptr or ph.partner.device == nilptr then
+    PianoDestroy(ph); return 4
+  end
+  if gcry_cipher_open(&ph.partner.input, 4, 1, 0) ~= 0 or
+     gcry_cipher_setkey(ph.partner.input, inkey, C.strlen(inkey)) ~= 0 or
+     gcry_cipher_open(&ph.partner.output, 4, 1, 0) ~= 0 or
+     gcry_cipher_setkey(ph.partner.output, outkey, C.strlen(outkey)) ~= 0 then
+    PianoDestroy(ph); return 7
+  end
+  return 1
+end
+
+local function crypt(h: pointer, source: cstring, decrypt: boolean): cstring
+  local n = C.strlen(source)
+  local source_bytes = (@*[0]byte)(source)
+  local size: csize
+  if decrypt then
+    if n % 16_csize ~= 0 then return nilptr end
+    size = n // 2_csize
+  else
+    size = (n + 7_csize) // 8_csize * 8_csize
+  end
+  local bytes = (@*[0]byte)(C.calloc(size + 1_csize, 1))
+  if bytes == nilptr then return nilptr end
+  if decrypt then
+    for i: csize = 0, <size do
+      local hex: [3]cchar = {(@cchar)(source_bytes[i * 2_csize]), (@cchar)(source_bytes[i * 2_csize + 1_csize]), 0}
+      bytes[i] = (@byte)(C.strtol((@cstring)(&hex), nilptr, 16))
+    end
+    if gcry_cipher_decrypt(h, bytes, size, nilptr, 0) ~= 0 then C.free(bytes); return nilptr end
+    return (@cstring)(bytes)
+  end
+  C.memcpy(bytes, source, n)
+  if gcry_cipher_encrypt(h, bytes, size, nilptr, 0) ~= 0 then C.free(bytes); return nilptr end
+  local result = (@*[0]byte)(C.calloc(size * 2_csize + 1_csize, 1))
+  if result ~= nilptr then
+    local hex = (@*[0]byte)((@cstring)('0123456789abcdef'))
+    for i: csize = 0, <size do
+      result[i * 2_csize] = (@byte)(hex[bytes[i] >> 4])
+      result[i * 2_csize + 1_csize] = (@byte)(hex[bytes[i] & 15])
+    end
+  end
+  C.free(bytes)
+  return (@cstring)(result)
+end
+local function escape(s: cstring): cstring
+  if s == nilptr then return nilptr end
+  local n = C.strlen(s)
+  local p = (@*[0]byte)(C.malloc(n * 3_csize + 1_csize))
+  if p == nilptr then return nilptr end
+  local hex = (@*[0]byte)((@cstring)('0123456789ABCDEF'))
+  local source_bytes = (@*[0]byte)(s)
+  local out: csize = 0
+  for i: csize = 0, <n do
+    local c = source_bytes[i]
+    if (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or
+       (c >= 48 and c <= 57) or c == 45 or c == 46 or c == 95 or c == 126 then
+      p[out] = c; out = out + 1
+    else
+      p[out] = 37; p[out+1] = (@byte)(hex[c >> 4]); p[out+2] = (@byte)(hex[c & 15]); out = out + 3
+    end
+  end
+  p[out] = 0
+  return (@cstring)(p)
+end
+
+local function PianoRequest(ph: *Handle, req: *Request, kind: cint): cint <cexport, codename 'PianoRequest'>
+  req.kind = kind; req.secure = false
+  local j = json_object_new_object()
+  if j == nilptr then return 4 end
+  local method: cstring = nilptr
+  local encrypted = true
+  local timestamp = (@cint)(C.time(nilptr) - ph.timeOffset)
+  if kind == 1 then
+    local data = (@*LoginData)(req.data)
+    if data.step == 0 then
+      req.secure = true
+      encrypted = false
+      add(j, 'username', ph.partner.user); add(j, 'password', ph.partner.password)
+      add(j, 'deviceModel', ph.partner.device); add(j, 'version', '5'); boolean_member(j, 'includeUrls', true)
+      C.snprintf((@cstring)(&req.urlPath), 1024, '/services/json/?method=auth.partnerLogin')
+    elseif data.step == 1 then
+      req.secure = true
+      add(j, 'loginType', 'user'); add(j, 'username', data.user); add(j, 'password', data.password)
+      add(j, 'partnerAuthToken', ph.partner.authToken)
+      json_object_object_add(j, 'syncTime', json_object_new_int(timestamp))
+      local auth = escape(ph.partner.authToken)
+      if auth == nilptr then json_object_put(j); return 4 end
+      C.snprintf((@cstring)(&req.urlPath), 1024,
+        '/services/json/?method=auth.userLogin&auth_token=%s&partner_id=%i', auth, (@cint)(ph.partner.id))
+      C.free(auth)
+    end
+  elseif kind == 2 then
+    boolean_member(j, 'returnAllStations', true); method = 'user.getStationList'
+  elseif kind == 3 then
+    local data = (@*PlaylistData)(req.data)
+    add(j, 'stationToken', data.station.id); boolean_member(j, 'includeTrackLength', true)
+    method = 'station.getPlaylist'; req.secure = true
+  elseif kind == 4 or kind == 5 then
+    local station: cstring; local track: cstring; local rating: cint
+    if kind == 4 then
+      local data = (@*RateData)(req.data)
+      station = data.song.stationId; track = data.song.trackToken; rating = data.rating
+    else
+      local data = (@*FeedbackData)(req.data)
+      station = data.stationId; track = data.trackToken; rating = data.rating
+    end
+    add(j, 'stationToken', station); add(j, 'trackToken', track)
+    boolean_member(j, 'isPositive', rating == 1); method = 'station.addFeedback'
+  elseif kind == 7 then
+    local data = (@*RenameData)(req.data)
+    add(j, 'stationToken', data.station.id); add(j, 'stationName', data.newName)
+    method = 'station.renameStation'
+  elseif kind == 8 or kind == 15 then
+    local station = (@*Station)(req.data)
+    add(j, 'stationToken', station.id)
+    if kind == 8 then method = 'station.deleteStation' else method = 'station.transformSharedStation' end
+  elseif kind == 9 then
+    local data = (@*SearchData)(req.data)
+    add(j, 'searchText', data.searchStr); method = 'music.search'
+  elseif kind == 10 then
+    local data = (@*CreateData)(req.data)
+    if data.kind == 0 then add(j, 'musicToken', data.token)
+    else
+      add(j, 'trackToken', data.token)
+      if data.kind == 1 then add(j, 'musicType', 'song') else add(j, 'musicType', 'artist') end
+    end
+    method = 'station.createStation'
+  elseif kind == 11 then
+    local data = (@*AddSeedData)(req.data)
+    add(j, 'musicToken', data.musicId); add(j, 'stationToken', data.station.id); method = 'station.addMusic'
+  elseif kind == 12 or kind == 16 or kind == 18 or kind == 19 then
+    local song: *Song
+    if kind == 16 then song = (@*ExplainData)(req.data).song else song = (@*Song)(req.data) end
+    add(j, 'trackToken', song.trackToken)
+    if kind == 12 then method = 'user.sleepSong'
+    elseif kind == 16 then method = 'track.explainTrack'
+    elseif kind == 18 then method = 'bookmark.addSongBookmark'
+    else method = 'bookmark.addArtistBookmark' end
+  elseif kind == 13 then
+    local a = json_object_new_array()
+    local station = ph.stations
+    while station ~= nilptr do
+      if station.useQuickMix ~= 0 and station.isQuickMix == 0 then
+        json_object_array_add(a, json_object_new_string(station.id))
+      end
+      station = (@*Station)(station.head.next)
+    end
+    json_object_object_add(j, 'quickMixStationIds', a); method = 'user.setQuickMix'
+  elseif kind == 14 then method = 'station.getGenreStations'
+  elseif kind == 20 then
+    local data = (@*InfoData)(req.data)
+    add(j, 'stationToken', data.station.id)
+    boolean_member(j, 'includeExtendedAttributes', true); boolean_member(j, 'includeExtraParams', true)
+    method = 'station.getStation'
+  elseif kind == 21 then
+    add(j, 'feedbackId', (@*Song)(req.data).feedbackId); method = 'station.deleteFeedback'
+  elseif kind == 22 then
+    local data = (@*DeleteSeedData)(req.data)
+    local seed: cstring = nilptr
+    if data.song ~= nilptr then seed = data.song.seedId
+    elseif data.artist ~= nilptr then seed = data.artist.seedId
+    elseif data.station ~= nilptr then seed = data.station.seedId end
+    add(j, 'seedId', seed); method = 'station.deleteMusic'
+  elseif kind == 23 then method = 'user.getSettings'
+  elseif kind == 24 then
+    local data = (@*ChangeData)(req.data)
+    boolean_member(j, 'userInitiatedChange', true)
+    add(j, 'currentUsername', data.currentUsername); add(j, 'currentPassword', data.currentPassword)
+    if data.explicitContentFilter ~= 0 then
+      boolean_member(j, 'isExplicitContentFilterEnabled', data.explicitContentFilter == 2)
+    end
+    if data.newUsername ~= nilptr then add(j, 'newUsername', data.newUsername) end
+    if data.newPassword ~= nilptr then add(j, 'newPassword', data.newPassword) end
+    method = 'user.changeSettings'; req.secure = true
+  elseif kind == 25 then
+    add(j, 'stationId', (@*GetModeData)(req.data).station.id)
+    method = 'interactiveradio.v1.getAvailableModesSimple'; req.secure = true
+  elseif kind == 26 then
+    local data = (@*SetModeData)(req.data)
+    add(j, 'stationId', data.station.id)
+    json_object_object_add(j, 'modeId', json_object_new_int((@cint)(data.id)))
+    method = 'interactiveradio.v1.setAndGetAvailableModes'; req.secure = true
+  else json_object_put(j); return 0 end
+  if method ~= nilptr then
+    local auth = escape(ph.user.authToken)
+    if auth == nilptr then json_object_put(j); return 4 end
+    C.snprintf((@cstring)(&req.urlPath), 1024,
+      '/services/json/?method=%s&auth_token=%s&partner_id=%i&user_id=%s',
+      method, auth, (@cint)(ph.partner.id), ph.user.listenerId)
+    C.free(auth)
+    add(j, 'userAuthToken', ph.user.authToken)
+    json_object_object_add(j, 'syncTime', json_object_new_int(timestamp))
+  end
+  local serialized = json_object_to_json_string(j)
+  if encrypted then req.postData = crypt(ph.partner.output, serialized, false)
+  else req.postData = dup(serialized) end
+  json_object_put(j)
+  return req.postData ~= nilptr and 1 or 4
+end
+
+local function parse_station(j: *Json): *Station
+  local station = (@*Station)(C.calloc(1, #@Station))
+  if station == nilptr then return nilptr end
+  station.name = text(j, 'stationName'); station.id = text(j, 'stationToken')
+  station.isCreator = flag(j, 'isShared', true) and 0 or 1
+  station.isQuickMix = flag(j, 'isQuickMix', false) and 1 or 0
+  return station
+end
+local function parse_song(j: *Json): *Song
+  local song = (@*Song)(C.calloc(1, #@Song))
+  if song == nilptr then return nilptr end
+  song.title = text(j, 'songName'); song.artist = text(j, 'artistName')
+  return song
+end
+local function parse_artist(j: *Json): *Artist
+  local artist = (@*Artist)(C.calloc(1, #@Artist))
+  if artist == nilptr then return nilptr end
+  artist.name = text(j, 'artistName')
+  return artist
+end
+local function concat(dst: cstring, src: cstring): void
+  if src == nilptr then return end
+  local used = C.strlen(dst)
+  if used < 767_csize then C.strncat(dst, src, 767_csize - used) end
+end
+
+local function response_body(ph: *Handle, req: *Request, result: *Json): cint
+  local kind = req.kind
+  if kind == 1 then
+    local data = (@*LoginData)(req.data)
+    if data.step == 0 then
+      local sync = get(result, 'syncTime')
+      if sync == nilptr then return 2 end
+      local source = json_object_get_string(sync)
+      local decoded = crypt(ph.partner.input, source, true)
+      local ret: cint = 0
+      if decoded ~= nilptr and C.strlen(source) // 2_csize > 4_csize then
+        ph.timeOffset = (@cint)(C.time(nilptr) - (@clong)(C.strtoul((@cstring)(&(@*[0]byte)(decoded)[4]), nilptr, 0)))
+        ret = 3
+      end
+      C.free(decoded)
+      ph.partner.authToken = text(result, 'partnerAuthToken')
+      if not has(result, 'partnerId') then return 2 end
+      ph.partner.id = (@cuint)(integer(result, 'partnerId')); data.step = data.step + 1
+      return ret
+    end
+    if data.step ~= 1 then return 1 end
+    if ph.user.listenerId ~= nilptr then C.free(ph.user.listenerId); C.free(ph.user.authToken) end
+    ph.user.listenerId = text(result, 'userId'); ph.user.authToken = text(result, 'userAuthToken')
+  elseif kind == 2 then
+    local stations = get(result, 'stations')
+    local mix: *Json = nilptr
+    for i: csize = 0, <json_object_array_length(stations) do
+      local value = json_object_array_get_idx(stations, i)
+      local station = parse_station(value)
+      if station == nilptr then return 4 end
+      if station.isQuickMix ~= 0 then mix = get(value, 'quickMixStationIds') end
+      ph.stations = (@*Station)(PianoListAppend((@*List)(ph.stations), &station.head))
+    end
+    local station = ph.stations
+    while station ~= nilptr do
+      for i: csize = 0, <json_object_array_length(mix) do
+        local id = json_object_get_string(json_object_array_get_idx(mix, i))
+        if id ~= nilptr and station.id ~= nilptr and C.strcmp(id, station.id) == 0 then station.useQuickMix = 1 end
+      end
+      station = (@*Station)(station.head.next)
+    end
+  elseif kind == 3 then
+    local data = (@*PlaylistData)(req.data)
+    if not has(result, 'items') then return 1 end
+    local items = get(result, 'items')
+    local list: *Song = nilptr
+    for i: csize = 0, <json_object_array_length(items) do
+      local item = json_object_array_get_idx(items, i)
+      if has(item, 'artistName') then
+        local song = (@*Song)(C.calloc(1, #@Song))
+        if song == nilptr then PianoDestroyPlaylist(list); return 4 end
+        if has(item, 'audioUrlMap') then
+          local quality: cstring = 'highQuality'
+          if data.quality == 1 then quality = 'lowQuality' elseif data.quality == 2 then quality = 'mediumQuality' end
+          local map = get(get(item, 'audioUrlMap'), quality)
+          local encoding = json_object_get_string(get(map, 'encoding'))
+          if not has(map, 'encoding') or encoding == nilptr then
+            C.free(song); PianoDestroyPlaylist(list); return 6
+          end
+          if C.strcmp(encoding, 'aacplus') == 0 then song.audioFormat = 1
+          elseif C.strcmp(encoding, 'mp3') == 0 then song.audioFormat = 2 end
+          song.audioUrl = text(map, 'audioUrl')
+        end
+        song.artist = text(item, 'artistName'); song.album = text(item, 'albumName')
+        song.title = text(item, 'songName'); song.trackToken = text(item, 'trackToken')
+        song.stationId = text(item, 'stationId'); song.coverArt = text(item, 'albumArtUrl')
+        song.detailUrl = text(item, 'songDetailUrl')
+        song.fileGain = (@float32)(json_object_get_double(get(item, 'trackGain')))
+        song.length = (@cuint)(integer(item, 'trackLength'))
+        if integer(item, 'songRating') == 1 then song.rating = 1 end
+        list = (@*Song)(PianoListAppend((@*List)(list), &song.head))
+      end
+    end
+    data.retPlaylist = list
+  elseif kind == 4 then
+    local data = (@*RateData)(req.data); data.song.rating = data.rating
+  elseif kind == 5 then return 0
+  elseif kind == 7 then
+    local data = (@*RenameData)(req.data)
+    local name = dup(data.newName)
+    if name == nilptr then return 4 end
+    C.free(data.station.name); data.station.name = name
+  elseif kind == 8 then
+    local station = (@*Station)(req.data)
+    ph.stations = (@*Station)(PianoListDelete((@*List)(ph.stations), &station.head))
+    station.head.next = nilptr; destroy_stations(station)
+  elseif kind == 9 then
+    local data = (@*SearchData)(req.data)
+    C.memset(&data.searchResult, 0, #@SearchResult)
+    local artists = get(result, 'artists')
+    for i: csize = 0, <json_object_array_length(artists) do
+      local artist = parse_artist(json_object_array_get_idx(artists, i))
+      if artist == nilptr then PianoDestroySearchResult(&data.searchResult); return 4 end
+      artist.musicId = text(json_object_array_get_idx(artists, i), 'musicToken')
+      data.searchResult.artists = (@*Artist)(PianoListAppend((@*List)(data.searchResult.artists), &artist.head))
+    end
+    local songs = get(result, 'songs')
+    for i: csize = 0, <json_object_array_length(songs) do
+      local song = parse_song(json_object_array_get_idx(songs, i))
+      if song == nilptr then PianoDestroySearchResult(&data.searchResult); return 4 end
+      song.musicId = text(json_object_array_get_idx(songs, i), 'musicToken')
+      data.searchResult.songs = (@*Song)(PianoListAppend((@*List)(data.searchResult.songs), &song.head))
+    end
+  elseif kind == 10 then
+    local station = parse_station(result)
+    if station == nilptr then return 4 end
+    local old = PianoFindStationById(ph.stations, station.id)
+    if old ~= nilptr then
+      ph.stations = (@*Station)(PianoListDelete((@*List)(ph.stations), &old.head))
+      old.head.next = nilptr; destroy_stations(old)
+    end
+    ph.stations = (@*Station)(PianoListAppend((@*List)(ph.stations), &station.head))
+  elseif kind == 12 then (@*Song)(req.data).rating = 3
+  elseif kind == 14 then
+    local categories = get(result, 'categories')
+    for i: csize = 0, <json_object_array_length(categories) do
+      local value = json_object_array_get_idx(categories, i)
+      local category = (@*Category)(C.calloc(1, #@Category))
+      if category == nilptr then return 4 end
+      category.name = text(value, 'categoryName')
+      ph.genreStations = (@*Category)(PianoListAppend((@*List)(ph.genreStations), &category.head))
+      local genres = get(value, 'stations')
+      for k: csize = 0, <json_object_array_length(genres) do
+        local entry = json_object_array_get_idx(genres, k)
+        local genre = (@*Genre)(C.calloc(1, #@Genre))
+        if genre == nilptr then return 4 end
+        genre.name = text(entry, 'stationName'); genre.musicId = text(entry, 'stationToken')
+        category.genres = (@*Genre)(PianoListAppend((@*List)(category.genres), &genre.head))
+      end
+    end
+  elseif kind == 15 then (@*Station)(req.data).isCreator = 1
+  elseif kind == 16 then
+    local data = (@*ExplainData)(req.data)
+    local explanations = get(result, 'explanations')
+    local n = json_object_array_length(explanations)
+    if n > 0 then
+      data.retExplain = (@cstring)(C.calloc(768, 1))
+      if data.retExplain == nilptr then return 4 end
+      concat(data.retExplain, "We're playing this track because it features ")
+      for i: csize = 0, <n do
+        local value = get(json_object_array_get_idx(explanations, i), 'focusTraitName')
+        if value ~= nilptr then
+          concat(data.retExplain, json_object_get_string(value))
+          local before_last = (@csize)(n - 2_csize)
+          if i < before_last then concat(data.retExplain, ', ')
+          elseif i == before_last then concat(data.retExplain, ' and ')
+          else concat(data.retExplain, '.') end
+        end
+      end
+    end
+  elseif kind == 20 then
+    local data = (@*InfoData)(req.data)
+    local music = get(result, 'music')
+    local songs = get(music, 'songs')
+    for i: csize = 0, <json_object_array_length(songs) do
+      local song = parse_song(json_object_array_get_idx(songs, i))
+      if song == nilptr then return 4 end
+      song.seedId = text(json_object_array_get_idx(songs, i), 'seedId')
+      data.info.songSeeds = (@*Song)(PianoListAppend((@*List)(data.info.songSeeds), &song.head))
+    end
+    local artists = get(music, 'artists')
+    for i: csize = 0, <json_object_array_length(artists) do
+      local artist = parse_artist(json_object_array_get_idx(artists, i))
+      if artist == nilptr then return 4 end
+      artist.seedId = text(json_object_array_get_idx(artists, i), 'seedId')
+      data.info.artistSeeds = (@*Artist)(PianoListAppend((@*List)(data.info.artistSeeds), &artist.head))
+    end
+    local feedback = get(result, 'feedback')
+    for side: cint = 0, <2 do
+      local entries: *Json
+      if side == 0 then entries = get(feedback, 'thumbsUp') else entries = get(feedback, 'thumbsDown') end
+      for i: csize = 0, <json_object_array_length(entries) do
+        local entry = json_object_array_get_idx(entries, i)
+        local song = parse_song(entry)
+        if song == nilptr then return 4 end
+        song.feedbackId = text(entry, 'feedbackId')
+        song.rating = flag(entry, 'isPositive', false) and 1 or 2
+        song.length = (@cuint)(integer(entry, 'trackLength'))
+        data.info.feedback = (@*Song)(PianoListAppend((@*List)(data.info.feedback), &song.head))
+      end
+    end
+  elseif kind == 23 then
+    local settings = (@*Settings)(req.data)
+    settings.username = text(result, 'username')
+    settings.explicitContentFilter = flag(result, 'isExplicitContentFilterEnabled', false)
+  elseif kind == 25 then
+    local data = (@*GetModeData)(req.data)
+    local active: cint = -1
+    if has(result, 'currentModeId') then active = integer(result, 'currentModeId') end
+    local modes = get(result, 'availableModes')
+    for i: csize = 0, <json_object_array_length(modes) do
+      local value = json_object_array_get_idx(modes, i)
+      local mode = (@*Mode)(C.calloc(1, #@Mode))
+      if mode == nilptr then return 4 end
+      if has(value, 'modeId') then
+        mode.id = integer(value, 'modeId'); mode.name = text(value, 'modeName')
+        mode.description = text(value, 'modeDescription')
+        mode.isAlgorithmic = flag(value, 'isAlgorithmicMode', false)
+        mode.isTakeover = flag(value, 'isTakeoverMode', false); mode.active = active == mode.id
+      end
+      data.retModes = (@*Mode)(PianoListAppend((@*List)(data.retModes), &mode.head))
+    end
+  elseif kind == 26 then
+    local data = (@*SetModeData)(req.data)
+    local active: cint = -1
+    if has(result, 'currentModeId') then active = integer(result, 'currentModeId') end
+    if (@cuint)(active) ~= data.id then return 0 end
+  elseif kind ~= 11 and kind ~= 13 and kind ~= 18 and kind ~= 19 and
+      kind ~= 21 and kind ~= 22 and kind ~= 24 then return 0 end
+  return 1
+end
+
+local function PianoResponse(ph: *Handle, req: *Request): cint <cexport, codename 'PianoResponse'>
+  if req.responseData == nilptr then return 2 end
+  local j = json_tokener_parse(req.responseData)
+  if j == nilptr then return 2 end
+  local status = json_object_get_string(get(j, 'stat'))
+  local ret: cint = 2
+  if status ~= nilptr then
+    if C.strcmp(status, 'ok') == 0 then ret = response_body(ph, req, get(j, 'result'))
+    elseif has(j, 'code') then
+      ret = integer(j, 'code') + 1024
+      if ret == 2026 and req.kind == 1 and (@*LoginData)(req.data).step == 1 then ret = 5 end
+    end
+  end
+  json_object_put(j)
+  return ret
+end
+
+local function PianoErrorToStr(ret: cint): cstring <cexport, codename 'PianoErrorToStr'>
+  if ret == 0 then return 'Unknown.'
+  elseif ret == 1 then return 'Everything is fine :)'
+  elseif ret == 2 then return 'Invalid response.'
+  elseif ret == 3 then return 'Fix your program.'
+  elseif ret == 4 then return 'Out of memory.'
+  elseif ret == 5 then return 'Wrong email address or password.'
+  elseif ret == 6 then return 'Selected audio quality is not available.'
+  elseif ret == 7 then return 'libgcrypt initialization failed.'
+  elseif ret == 1024 then return 'Internal error.'
+  elseif ret == 2032 then return 'Call not allowed.'
+  elseif ret == 2025 then return 'Invalid auth token.'
+  elseif ret == 1025 then return 'Maintenance mode.'
+  elseif ret == 2029 then return 'Max number of stations reached.'
+  elseif ret == 2024 then return 'Read only mode. Try again later.'
+  elseif ret == 2030 then return 'Station does not exist.'
+  elseif ret == 2026 then return 'Invalid partner login.'
+  elseif ret == 1036 then return 'Pandora is not available in your country. Set up a control proxy (see manpage).'
+  elseif ret == 2034 then return 'Invalid partner credentials.'
+  elseif ret == 2027 then return 'Listener not authorized.'
+  elseif ret == 2063 then return 'Access denied. Try again later.' end
+  return 'No error message available.'
+end
+
+-- Query native compiler layout metadata for the independent C ABI verifier.
+local function melodica_piano_abi_layout(type_id: uint32, property: uint32): usize
+    <cexport, codename 'melodica_piano_abi_layout'>
+  if type_id == 0 then
+    if property == 0 then return #@List
+    elseif property == 1 then return #[List.value.align]#
+    elseif property == 2 then return #[List.value.fields[1].offset]#
+    elseif property == 3 then return #[List.value.fields[1].type.size]#
+    end
+  elseif type_id == 1 then
+    if property == 0 then return #@User
+    elseif property == 1 then return #[User.value.align]#
+    elseif property == 2 then return #[User.value.fields[1].offset]#
+    elseif property == 3 then return #[User.value.fields[1].type.size]#
+    elseif property == 4 then return #[User.value.fields[2].offset]#
+    elseif property == 5 then return #[User.value.fields[2].type.size]#
+    end
+  elseif type_id == 2 then
+    if property == 0 then return #@Station
+    elseif property == 1 then return #[Station.value.align]#
+    elseif property == 2 then return #[Station.value.fields[1].offset]#
+    elseif property == 3 then return #[Station.value.fields[1].type.size]#
+    elseif property == 4 then return #[Station.value.fields[2].offset]#
+    elseif property == 5 then return #[Station.value.fields[2].type.size]#
+    elseif property == 6 then return #[Station.value.fields[3].offset]#
+    elseif property == 7 then return #[Station.value.fields[3].type.size]#
+    elseif property == 8 then return #[Station.value.fields[4].offset]#
+    elseif property == 9 then return #[Station.value.fields[4].type.size]#
+    elseif property == 10 then return #[Station.value.fields[5].offset]#
+    elseif property == 11 then return #[Station.value.fields[5].type.size]#
+    elseif property == 12 then return #[Station.value.fields[6].offset]#
+    elseif property == 13 then return #[Station.value.fields[6].type.size]#
+    elseif property == 14 then return #[Station.value.fields[7].offset]#
+    elseif property == 15 then return #[Station.value.fields[7].type.size]#
+    end
+  elseif type_id == 3 then
+    if property == 0 then return #@Song
+    elseif property == 1 then return #[Song.value.align]#
+    elseif property == 2 then return #[Song.value.fields[1].offset]#
+    elseif property == 3 then return #[Song.value.fields[1].type.size]#
+    elseif property == 4 then return #[Song.value.fields[2].offset]#
+    elseif property == 5 then return #[Song.value.fields[2].type.size]#
+    elseif property == 6 then return #[Song.value.fields[3].offset]#
+    elseif property == 7 then return #[Song.value.fields[3].type.size]#
+    elseif property == 8 then return #[Song.value.fields[4].offset]#
+    elseif property == 9 then return #[Song.value.fields[4].type.size]#
+    elseif property == 10 then return #[Song.value.fields[5].offset]#
+    elseif property == 11 then return #[Song.value.fields[5].type.size]#
+    elseif property == 12 then return #[Song.value.fields[6].offset]#
+    elseif property == 13 then return #[Song.value.fields[6].type.size]#
+    elseif property == 14 then return #[Song.value.fields[7].offset]#
+    elseif property == 15 then return #[Song.value.fields[7].type.size]#
+    elseif property == 16 then return #[Song.value.fields[8].offset]#
+    elseif property == 17 then return #[Song.value.fields[8].type.size]#
+    elseif property == 18 then return #[Song.value.fields[9].offset]#
+    elseif property == 19 then return #[Song.value.fields[9].type.size]#
+    elseif property == 20 then return #[Song.value.fields[10].offset]#
+    elseif property == 21 then return #[Song.value.fields[10].type.size]#
+    elseif property == 22 then return #[Song.value.fields[11].offset]#
+    elseif property == 23 then return #[Song.value.fields[11].type.size]#
+    elseif property == 24 then return #[Song.value.fields[12].offset]#
+    elseif property == 25 then return #[Song.value.fields[12].type.size]#
+    elseif property == 26 then return #[Song.value.fields[13].offset]#
+    elseif property == 27 then return #[Song.value.fields[13].type.size]#
+    elseif property == 28 then return #[Song.value.fields[14].offset]#
+    elseif property == 29 then return #[Song.value.fields[14].type.size]#
+    elseif property == 30 then return #[Song.value.fields[15].offset]#
+    elseif property == 31 then return #[Song.value.fields[15].type.size]#
+    elseif property == 32 then return #[Song.value.fields[16].offset]#
+    elseif property == 33 then return #[Song.value.fields[16].type.size]#
+    end
+  elseif type_id == 4 then
+    if property == 0 then return #@Artist
+    elseif property == 1 then return #[Artist.value.align]#
+    elseif property == 2 then return #[Artist.value.fields[1].offset]#
+    elseif property == 3 then return #[Artist.value.fields[1].type.size]#
+    elseif property == 4 then return #[Artist.value.fields[2].offset]#
+    elseif property == 5 then return #[Artist.value.fields[2].type.size]#
+    elseif property == 6 then return #[Artist.value.fields[3].offset]#
+    elseif property == 7 then return #[Artist.value.fields[3].type.size]#
+    elseif property == 8 then return #[Artist.value.fields[4].offset]#
+    elseif property == 9 then return #[Artist.value.fields[4].type.size]#
+    elseif property == 10 then return #[Artist.value.fields[5].offset]#
+    elseif property == 11 then return #[Artist.value.fields[5].type.size]#
+    end
+  elseif type_id == 5 then
+    if property == 0 then return #@Genre
+    elseif property == 1 then return #[Genre.value.align]#
+    elseif property == 2 then return #[Genre.value.fields[1].offset]#
+    elseif property == 3 then return #[Genre.value.fields[1].type.size]#
+    elseif property == 4 then return #[Genre.value.fields[2].offset]#
+    elseif property == 5 then return #[Genre.value.fields[2].type.size]#
+    elseif property == 6 then return #[Genre.value.fields[3].offset]#
+    elseif property == 7 then return #[Genre.value.fields[3].type.size]#
+    end
+  elseif type_id == 6 then
+    if property == 0 then return #@Category
+    elseif property == 1 then return #[Category.value.align]#
+    elseif property == 2 then return #[Category.value.fields[1].offset]#
+    elseif property == 3 then return #[Category.value.fields[1].type.size]#
+    elseif property == 4 then return #[Category.value.fields[2].offset]#
+    elseif property == 5 then return #[Category.value.fields[2].type.size]#
+    elseif property == 6 then return #[Category.value.fields[3].offset]#
+    elseif property == 7 then return #[Category.value.fields[3].type.size]#
+    end
+  elseif type_id == 7 then
+    if property == 0 then return #@Partner
+    elseif property == 1 then return #[Partner.value.align]#
+    elseif property == 2 then return #[Partner.value.fields[1].offset]#
+    elseif property == 3 then return #[Partner.value.fields[1].type.size]#
+    elseif property == 4 then return #[Partner.value.fields[2].offset]#
+    elseif property == 5 then return #[Partner.value.fields[2].type.size]#
+    elseif property == 6 then return #[Partner.value.fields[3].offset]#
+    elseif property == 7 then return #[Partner.value.fields[3].type.size]#
+    elseif property == 8 then return #[Partner.value.fields[4].offset]#
+    elseif property == 9 then return #[Partner.value.fields[4].type.size]#
+    elseif property == 10 then return #[Partner.value.fields[5].offset]#
+    elseif property == 11 then return #[Partner.value.fields[5].type.size]#
+    elseif property == 12 then return #[Partner.value.fields[6].offset]#
+    elseif property == 13 then return #[Partner.value.fields[6].type.size]#
+    elseif property == 14 then return #[Partner.value.fields[7].offset]#
+    elseif property == 15 then return #[Partner.value.fields[7].type.size]#
+    end
+  elseif type_id == 8 then
+    if property == 0 then return #@Handle
+    elseif property == 1 then return #[Handle.value.align]#
+    elseif property == 2 then return #[Handle.value.fields[1].offset]#
+    elseif property == 3 then return #[Handle.value.fields[1].type.size]#
+    elseif property == 4 then return #[Handle.value.fields[2].offset]#
+    elseif property == 5 then return #[Handle.value.fields[2].type.size]#
+    elseif property == 6 then return #[Handle.value.fields[3].offset]#
+    elseif property == 7 then return #[Handle.value.fields[3].type.size]#
+    elseif property == 8 then return #[Handle.value.fields[4].offset]#
+    elseif property == 9 then return #[Handle.value.fields[4].type.size]#
+    elseif property == 10 then return #[Handle.value.fields[5].offset]#
+    elseif property == 11 then return #[Handle.value.fields[5].type.size]#
+    end
+  elseif type_id == 9 then
+    if property == 0 then return #@SearchResult
+    elseif property == 1 then return #[SearchResult.value.align]#
+    elseif property == 2 then return #[SearchResult.value.fields[1].offset]#
+    elseif property == 3 then return #[SearchResult.value.fields[1].type.size]#
+    elseif property == 4 then return #[SearchResult.value.fields[2].offset]#
+    elseif property == 5 then return #[SearchResult.value.fields[2].type.size]#
+    end
+  elseif type_id == 10 then
+    if property == 0 then return #@StationInfo
+    elseif property == 1 then return #[StationInfo.value.align]#
+    elseif property == 2 then return #[StationInfo.value.fields[1].offset]#
+    elseif property == 3 then return #[StationInfo.value.fields[1].type.size]#
+    elseif property == 4 then return #[StationInfo.value.fields[2].offset]#
+    elseif property == 5 then return #[StationInfo.value.fields[2].type.size]#
+    elseif property == 6 then return #[StationInfo.value.fields[3].offset]#
+    elseif property == 7 then return #[StationInfo.value.fields[3].type.size]#
+    elseif property == 8 then return #[StationInfo.value.fields[4].offset]#
+    elseif property == 9 then return #[StationInfo.value.fields[4].type.size]#
+    end
+  elseif type_id == 11 then
+    if property == 0 then return #@Settings
+    elseif property == 1 then return #[Settings.value.align]#
+    elseif property == 2 then return #[Settings.value.fields[1].offset]#
+    elseif property == 3 then return #[Settings.value.fields[1].type.size]#
+    elseif property == 4 then return #[Settings.value.fields[2].offset]#
+    elseif property == 5 then return #[Settings.value.fields[2].type.size]#
+    end
+  elseif type_id == 12 then
+    if property == 0 then return #@Mode
+    elseif property == 1 then return #[Mode.value.align]#
+    elseif property == 2 then return #[Mode.value.fields[1].offset]#
+    elseif property == 3 then return #[Mode.value.fields[1].type.size]#
+    elseif property == 4 then return #[Mode.value.fields[2].offset]#
+    elseif property == 5 then return #[Mode.value.fields[2].type.size]#
+    elseif property == 6 then return #[Mode.value.fields[3].offset]#
+    elseif property == 7 then return #[Mode.value.fields[3].type.size]#
+    elseif property == 8 then return #[Mode.value.fields[4].offset]#
+    elseif property == 9 then return #[Mode.value.fields[4].type.size]#
+    elseif property == 10 then return #[Mode.value.fields[5].offset]#
+    elseif property == 11 then return #[Mode.value.fields[5].type.size]#
+    elseif property == 12 then return #[Mode.value.fields[6].offset]#
+    elseif property == 13 then return #[Mode.value.fields[6].type.size]#
+    elseif property == 14 then return #[Mode.value.fields[7].offset]#
+    elseif property == 15 then return #[Mode.value.fields[7].type.size]#
+    end
+  elseif type_id == 13 then
+    if property == 0 then return #@Request
+    elseif property == 1 then return #[Request.value.align]#
+    elseif property == 2 then return #[Request.value.fields[1].offset]#
+    elseif property == 3 then return #[Request.value.fields[1].type.size]#
+    elseif property == 4 then return #[Request.value.fields[2].offset]#
+    elseif property == 5 then return #[Request.value.fields[2].type.size]#
+    elseif property == 6 then return #[Request.value.fields[3].offset]#
+    elseif property == 7 then return #[Request.value.fields[3].type.size]#
+    elseif property == 8 then return #[Request.value.fields[4].offset]#
+    elseif property == 9 then return #[Request.value.fields[4].type.size]#
+    elseif property == 10 then return #[Request.value.fields[5].offset]#
+    elseif property == 11 then return #[Request.value.fields[5].type.size]#
+    elseif property == 12 then return #[Request.value.fields[6].offset]#
+    elseif property == 13 then return #[Request.value.fields[6].type.size]#
+    end
+  elseif type_id == 14 then
+    if property == 0 then return #@LoginData
+    elseif property == 1 then return #[LoginData.value.align]#
+    elseif property == 2 then return #[LoginData.value.fields[1].offset]#
+    elseif property == 3 then return #[LoginData.value.fields[1].type.size]#
+    elseif property == 4 then return #[LoginData.value.fields[2].offset]#
+    elseif property == 5 then return #[LoginData.value.fields[2].type.size]#
+    elseif property == 6 then return #[LoginData.value.fields[3].offset]#
+    elseif property == 7 then return #[LoginData.value.fields[3].type.size]#
+    end
+  elseif type_id == 15 then
+    if property == 0 then return #@PlaylistData
+    elseif property == 1 then return #[PlaylistData.value.align]#
+    elseif property == 2 then return #[PlaylistData.value.fields[1].offset]#
+    elseif property == 3 then return #[PlaylistData.value.fields[1].type.size]#
+    elseif property == 4 then return #[PlaylistData.value.fields[2].offset]#
+    elseif property == 5 then return #[PlaylistData.value.fields[2].type.size]#
+    elseif property == 6 then return #[PlaylistData.value.fields[3].offset]#
+    elseif property == 7 then return #[PlaylistData.value.fields[3].type.size]#
+    end
+  elseif type_id == 16 then
+    if property == 0 then return #@RateData
+    elseif property == 1 then return #[RateData.value.align]#
+    elseif property == 2 then return #[RateData.value.fields[1].offset]#
+    elseif property == 3 then return #[RateData.value.fields[1].type.size]#
+    elseif property == 4 then return #[RateData.value.fields[2].offset]#
+    elseif property == 5 then return #[RateData.value.fields[2].type.size]#
+    end
+  elseif type_id == 17 then
+    if property == 0 then return #@FeedbackData
+    elseif property == 1 then return #[FeedbackData.value.align]#
+    elseif property == 2 then return #[FeedbackData.value.fields[1].offset]#
+    elseif property == 3 then return #[FeedbackData.value.fields[1].type.size]#
+    elseif property == 4 then return #[FeedbackData.value.fields[2].offset]#
+    elseif property == 5 then return #[FeedbackData.value.fields[2].type.size]#
+    elseif property == 6 then return #[FeedbackData.value.fields[3].offset]#
+    elseif property == 7 then return #[FeedbackData.value.fields[3].type.size]#
+    end
+  elseif type_id == 18 then
+    if property == 0 then return #@RenameData
+    elseif property == 1 then return #[RenameData.value.align]#
+    elseif property == 2 then return #[RenameData.value.fields[1].offset]#
+    elseif property == 3 then return #[RenameData.value.fields[1].type.size]#
+    elseif property == 4 then return #[RenameData.value.fields[2].offset]#
+    elseif property == 5 then return #[RenameData.value.fields[2].type.size]#
+    end
+  elseif type_id == 19 then
+    if property == 0 then return #@SearchData
+    elseif property == 1 then return #[SearchData.value.align]#
+    elseif property == 2 then return #[SearchData.value.fields[1].offset]#
+    elseif property == 3 then return #[SearchData.value.fields[1].type.size]#
+    elseif property == 4 then return #[SearchData.value.fields[2].offset]#
+    elseif property == 5 then return #[SearchData.value.fields[2].type.size]#
+    end
+  elseif type_id == 20 then
+    if property == 0 then return #@CreateData
+    elseif property == 1 then return #[CreateData.value.align]#
+    elseif property == 2 then return #[CreateData.value.fields[1].offset]#
+    elseif property == 3 then return #[CreateData.value.fields[1].type.size]#
+    elseif property == 4 then return #[CreateData.value.fields[2].offset]#
+    elseif property == 5 then return #[CreateData.value.fields[2].type.size]#
+    end
+  elseif type_id == 21 then
+    if property == 0 then return #@AddSeedData
+    elseif property == 1 then return #[AddSeedData.value.align]#
+    elseif property == 2 then return #[AddSeedData.value.fields[1].offset]#
+    elseif property == 3 then return #[AddSeedData.value.fields[1].type.size]#
+    elseif property == 4 then return #[AddSeedData.value.fields[2].offset]#
+    elseif property == 5 then return #[AddSeedData.value.fields[2].type.size]#
+    end
+  elseif type_id == 22 then
+    if property == 0 then return #@ExplainData
+    elseif property == 1 then return #[ExplainData.value.align]#
+    elseif property == 2 then return #[ExplainData.value.fields[1].offset]#
+    elseif property == 3 then return #[ExplainData.value.fields[1].type.size]#
+    elseif property == 4 then return #[ExplainData.value.fields[2].offset]#
+    elseif property == 5 then return #[ExplainData.value.fields[2].type.size]#
+    end
+  elseif type_id == 23 then
+    if property == 0 then return #@InfoData
+    elseif property == 1 then return #[InfoData.value.align]#
+    elseif property == 2 then return #[InfoData.value.fields[1].offset]#
+    elseif property == 3 then return #[InfoData.value.fields[1].type.size]#
+    elseif property == 4 then return #[InfoData.value.fields[2].offset]#
+    elseif property == 5 then return #[InfoData.value.fields[2].type.size]#
+    end
+  elseif type_id == 24 then
+    if property == 0 then return #@DeleteSeedData
+    elseif property == 1 then return #[DeleteSeedData.value.align]#
+    elseif property == 2 then return #[DeleteSeedData.value.fields[1].offset]#
+    elseif property == 3 then return #[DeleteSeedData.value.fields[1].type.size]#
+    elseif property == 4 then return #[DeleteSeedData.value.fields[2].offset]#
+    elseif property == 5 then return #[DeleteSeedData.value.fields[2].type.size]#
+    elseif property == 6 then return #[DeleteSeedData.value.fields[3].offset]#
+    elseif property == 7 then return #[DeleteSeedData.value.fields[3].type.size]#
+    end
+  elseif type_id == 25 then
+    if property == 0 then return #@ChangeData
+    elseif property == 1 then return #[ChangeData.value.align]#
+    elseif property == 2 then return #[ChangeData.value.fields[1].offset]#
+    elseif property == 3 then return #[ChangeData.value.fields[1].type.size]#
+    elseif property == 4 then return #[ChangeData.value.fields[2].offset]#
+    elseif property == 5 then return #[ChangeData.value.fields[2].type.size]#
+    elseif property == 6 then return #[ChangeData.value.fields[3].offset]#
+    elseif property == 7 then return #[ChangeData.value.fields[3].type.size]#
+    elseif property == 8 then return #[ChangeData.value.fields[4].offset]#
+    elseif property == 9 then return #[ChangeData.value.fields[4].type.size]#
+    elseif property == 10 then return #[ChangeData.value.fields[5].offset]#
+    elseif property == 11 then return #[ChangeData.value.fields[5].type.size]#
+    end
+  elseif type_id == 26 then
+    if property == 0 then return #@GetModeData
+    elseif property == 1 then return #[GetModeData.value.align]#
+    elseif property == 2 then return #[GetModeData.value.fields[1].offset]#
+    elseif property == 3 then return #[GetModeData.value.fields[1].type.size]#
+    elseif property == 4 then return #[GetModeData.value.fields[2].offset]#
+    elseif property == 5 then return #[GetModeData.value.fields[2].type.size]#
+    end
+  elseif type_id == 27 then
+    if property == 0 then return #@SetModeData
+    elseif property == 1 then return #[SetModeData.value.align]#
+    elseif property == 2 then return #[SetModeData.value.fields[1].offset]#
+    elseif property == 3 then return #[SetModeData.value.fields[1].type.size]#
+    elseif property == 4 then return #[SetModeData.value.fields[2].offset]#
+    elseif property == 5 then return #[SetModeData.value.fields[2].type.size]#
+    end
+  elseif type_id == 28 then
+    if property == 0 then return #@cint
+    elseif property == 1 then return #[cint.value.align]#
+    end
+  elseif type_id == 29 then
+    if property == 0 then return #@cint
+    elseif property == 1 then return #[cint.value.align]#
+    end
+  elseif type_id == 30 then
+    if property == 0 then return #@cint
+    elseif property == 1 then return #[cint.value.align]#
+    end
+  elseif type_id == 31 then
+    if property == 0 then return #@cint
+    elseif property == 1 then return #[cint.value.align]#
+    end
+  elseif type_id == 32 then
+    if property == 0 then return #@cint
+    elseif property == 1 then return #[cint.value.align]#
+    end
+  elseif type_id == 33 then
+    if property == 0 then return #@cint
+    elseif property == 1 then return #[cint.value.align]#
+    end
+  end
+  return ~0_usize
+end

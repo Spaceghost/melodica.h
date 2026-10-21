@@ -135,7 +135,7 @@ static PianoReturn_t piano_mutation_station_from_json(const MelodicaJsonDoc *doc
 
     const size_t name_token = melodica_json_object_get(doc, object, "stationName");
     if (name_token != MELODICA_JSON_NONE) {
-        if (name_token >= doc->count || doc->tokens[name_token].type != MELODICA_JSON_STRING) {
+        if (name_token >= doc->count || melodica_json_is_null(doc, name_token)) {
             free(station);
             return PIANO_RET_INVALID_RESPONSE;
         }
@@ -144,7 +144,7 @@ static PianoReturn_t piano_mutation_station_from_json(const MelodicaJsonDoc *doc
     }
     const size_t id_token = melodica_json_object_get(doc, object, "stationToken");
     if (id_token != MELODICA_JSON_NONE) {
-        if (id_token >= doc->count || doc->tokens[id_token].type != MELODICA_JSON_STRING) {
+        if (id_token >= doc->count || melodica_json_is_null(doc, id_token)) {
             destroy_station(station); free(station); return PIANO_RET_INVALID_RESPONSE;
         }
         station->id = melodica_json_string_dup(doc, id_token);
@@ -209,7 +209,7 @@ static PianoReturn_t piano_response_station_mutation(PianoHandle_t *ph, PianoReq
     const size_t root = 0u;
     const size_t stat = melodica_json_object_get(&doc, root, "stat");
     if (stat == MELODICA_JSON_NONE || stat >= doc.count ||
-            doc.tokens[stat].type != MELODICA_JSON_STRING) goto cleanup;
+            melodica_json_is_null(&doc, stat)) goto cleanup;
     if (!melodica_json_string_is(&doc, stat, "ok")) {
         ret = piano_response_error(&doc, root, req);
         goto cleanup;

@@ -47,7 +47,7 @@ static PianoReturn_t piano_search_string(const MelodicaJsonDoc *doc,
     const size_t token = melodica_json_object_get(doc, object, key);
     *out = NULL;
     if (token == MELODICA_JSON_NONE) return PIANO_RET_OK;
-    if (token >= doc->count || doc->tokens[token].type != MELODICA_JSON_STRING) {
+    if (token >= doc->count || melodica_json_is_null(doc, token)) {
         return PIANO_RET_INVALID_RESPONSE;
     }
     *out = melodica_json_string_dup(doc, token);
@@ -80,7 +80,7 @@ static PianoReturn_t piano_response_search(PianoRequest_t *req,
         for (size_t item = artists + 1u; item < doc->count &&
                 doc->tokens[item].start < doc->tokens[artists].end; ++item) {
             if (doc->tokens[item].parent != artists) continue;
-            if (doc->tokens[item].type != MELODICA_JSON_OBJECT) {
+            if (melodica_json_is_null(doc, item)) {
                 ret = PIANO_RET_INVALID_RESPONSE;
                 goto fail;
             }
@@ -106,7 +106,7 @@ static PianoReturn_t piano_response_search(PianoRequest_t *req,
         for (size_t item = songs + 1u; item < doc->count &&
                 doc->tokens[item].start < doc->tokens[songs].end; ++item) {
             if (doc->tokens[item].parent != songs) continue;
-            if (doc->tokens[item].type != MELODICA_JSON_OBJECT) {
+            if (melodica_json_is_null(doc, item)) {
                 ret = PIANO_RET_INVALID_RESPONSE;
                 goto fail;
             }
@@ -128,6 +128,7 @@ static PianoReturn_t piano_response_search(PianoRequest_t *req,
 
 fail:
     PianoDestroySearchResult(search);
+    memset(search, 0, sizeof(*search));
     return ret;
 }
 

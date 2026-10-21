@@ -1,14 +1,20 @@
+#include "piano.h"
+
 #if defined(__GNUC__) || defined(__clang__)
-#define MELODICA_INTERNAL_VIS __attribute__((visibility("hidden")))
+#define PIANO_INTERNAL __attribute__((visibility("hidden")))
 #else
-#define MELODICA_INTERNAL_VIS
+#define PIANO_INTERNAL
 #endif
-#define PianoRequest MELODICA_INTERNAL_VIS melodica_piano_request_base
-#define PianoResponse MELODICA_INTERNAL_VIS melodica_piano_response_base
+PIANO_INTERNAL PianoReturn_t melodica_piano_request_base(PianoHandle_t *,
+        PianoRequest_t *, PianoRequestType_t);
+PIANO_INTERNAL PianoReturn_t melodica_piano_response_base(PianoHandle_t *, PianoRequest_t *);
+#undef PIANO_INTERNAL
+
+#define PianoRequest melodica_piano_request_base
+#define PianoResponse melodica_piano_response_base
 #include "piano_base.inc"
 #undef PianoRequest
 #undef PianoResponse
-#undef MELODICA_INTERNAL_VIS
 
 #include "station_mutations.h"
 #include "feedback.h"
@@ -66,45 +72,9 @@ PianoReturn_t PianoRequest(PianoHandle_t *ph, PianoRequest_t *req,
     }
 }
 
-/*
- * Pinned upstream calls json_object_object_get_ex(result, "stations", ...)
- * without first requiring result to be an object. json-c returns false for a
- * missing or non-object result, so stat:ok is an empty successful response and
- * the existing station list is left untouched. The base parser historically
- * rejected those shapes before the lookup. Keep this narrow compatibility shim
- * outside the base so ordinary response/error handling remains unchanged.
- */
-static int piano_stations_nonobject_result_is_empty_success(
-        const PianoRequest_t *req) {
-    if (req == NULL || req->responseData == NULL) return 0;
-
-    MelodicaJsonDoc doc;
-    if (!melodica_json_parse(&doc, req->responseData)) return 0;
-
-    int empty_success = 0;
-    if (doc.count != 0u && doc.tokens[0u].type == MELODICA_JSON_OBJECT) {
-        const size_t stat = melodica_json_object_get(&doc, 0u, "stat");
-        if (stat != MELODICA_JSON_NONE && stat < doc.count &&
-                doc.tokens[stat].type == MELODICA_JSON_STRING &&
-                melodica_json_string_is(&doc, stat, "ok")) {
-            const size_t result = melodica_json_object_get(&doc, 0u, "result");
-            empty_success = result == MELODICA_JSON_NONE || result >= doc.count ||
-                doc.tokens[result].type != MELODICA_JSON_OBJECT;
-        }
-    }
-
-    melodica_json_destroy(&doc);
-    return empty_success;
-}
-
 PianoReturn_t PianoResponse(PianoHandle_t *ph, PianoRequest_t *req) {
     if (req != NULL) {
         switch (req->type) {
-            case PIANO_REQUEST_GET_STATIONS:
-                if (piano_stations_nonobject_result_is_empty_success(req)) {
-                    return PIANO_RET_OK;
-                }
-                break;
             case PIANO_REQUEST_RATE_SONG:
             case PIANO_REQUEST_ADD_FEEDBACK:
             case PIANO_REQUEST_ADD_TIRED_SONG:

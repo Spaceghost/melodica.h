@@ -4,13 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int hex_value(const char c) {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return 10 + c - 'a';
-    if (c >= 'A' && c <= 'F') return 10 + c - 'A';
-    return -1;
-}
-
 char *melodica_piano_encrypt_string(const MelodicaBlowfish *ctx, const char *input) {
     static const char hex[] = "0123456789abcdef";
     if (ctx == NULL || input == NULL) return NULL;
@@ -52,13 +45,10 @@ char *melodica_piano_decrypt_string(const MelodicaBlowfish *ctx, const char *inp
     if (output == NULL) return NULL;
 
     for (size_t i = 0u; i < decoded_len; ++i) {
-        const int hi = hex_value(input[i * 2u]);
-        const int lo = hex_value(input[i * 2u + 1u]);
-        if (hi < 0 || lo < 0) {
-            free(output);
-            return NULL;
-        }
-        output[i] = (uint8_t)((unsigned)hi << 4u) | (uint8_t)lo;
+        /* Pinned libpiano uses strtol on each byte pair, accepting prefixes
+         * and producing zero when neither character is hexadecimal. */
+        char hex[] = {input[i * 2u], input[i * 2u + 1u], '\0'};
+        output[i] = (uint8_t)strtol(hex, NULL, 16);
     }
 
     for (size_t i = 0u; i < decoded_len; i += 8u) {

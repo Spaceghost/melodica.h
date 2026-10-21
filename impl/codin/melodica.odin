@@ -66,10 +66,30 @@ write_url :: proc "contextless" (dst: [^]u8, src: [^]u8, src_len: uintptr) -> ui
 	return out
 }
 
+json_plain4 :: proc "contextless" (src: []u8) -> bool {
+	word := u32(src[0]) | (u32(src[1]) << 8) |
+	        (u32(src[2]) << 16) | (u32(src[3]) << 24)
+	quotes := word ~ u32(0x22222222)
+	slashes := word ~ u32(0x5c5c5c5c)
+	exceptional := (word - u32(0x20202020)) |
+	               (quotes - u32(0x01010101)) | (slashes - u32(0x01010101))
+	return (exceptional & (word ~ u32(0xffffffff)) & u32(0x80808080)) == 0
+}
+
 json_escape_size_impl :: proc "contextless" (src: [^]u8, src_len: uintptr) -> uintptr {
 	required := src_len
-	for i in 0..<src_len {
-		required += json_escape_extra(src[i])
+	plain: uintptr = 0
+	for group in 0..<src_len/4 {
+		if !json_plain4(src[plain:plain + 4]) { break }
+		plain += 4
+	}
+	for i in plain..<src_len {
+		c := src[i]
+		if c == '"' || c == '\\' {
+			required += 1
+		} else if c < 0x20 {
+			required += json_escape_extra(c)
+		}
 	}
 	return required
 }
@@ -83,15 +103,17 @@ write_json :: proc "contextless" (
 	out := out_in
 	for i in 0..<src_len {
 		c := src[i]
-		if c >= 0x20 && c != '"' && c != '\\' {
-			dst[out] = c
-			out += 1
+		if c >= 0x20 {
+			if c == '"' || c == '\\' {
+				dst[out] = '\\'
+				dst[out + 1] = c
+				out += 2
+			} else {
+				dst[out] = c
+				out += 1
+			}
 		} else {
 			switch c {
-			case '"':
-				dst[out + 0] = '\\'; dst[out + 1] = '"'; out += 2
-			case '\\':
-				dst[out + 0] = '\\'; dst[out + 1] = '\\'; out += 2
 			case '\b':
 				dst[out + 0] = '\\'; dst[out + 1] = 'b'; out += 2
 			case '\f':
@@ -113,20 +135,44 @@ write_json :: proc "contextless" (
 	return out
 }
 
-decimal_size :: proc "contextless" (value: uintptr) -> uintptr {
-	if value < 10 {
-		return 1
+decimal_size :: proc "contextless" (value_in: uintptr) -> uintptr {
+	value := value_in
+	// A uintptr has at most 20 decimal digits on the supported C ABI targets.
+	for group in 0..<6 {
+		if value < 10000 {
+			if value < 10 { return uintptr(group)*4 + 1 }
+			if value < 100 { return uintptr(group)*4 + 2 }
+			if value < 1000 { return uintptr(group)*4 + 3 }
+			return uintptr(group)*4 + 4
+		}
+		value /= 10000
 	}
-	return 1 + decimal_size(value / 10)
+	return 20
 }
 
-write_decimal :: proc "contextless" (dst: [^]u8, out_in: uintptr, value: uintptr) -> uintptr {
-	out := out_in
-	if value >= 10 {
-		out = write_decimal(dst, out, value / 10)
+write_decimal :: proc "contextless" (dst: [^]u8, out_in: uintptr, value_in: uintptr) -> uintptr {
+	digits := [32]u8{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+	                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+	count: uintptr = 0
+	value := value_in
+	for pair_index in 0..<10 {
+		if value < 100 { break }
+		pair := value % 100
+		value /= 100
+		digits[count] = '0' + u8(pair % 10)
+		digits[count + 1] = '0' + u8(pair / 10)
+		count += 2
 	}
-	dst[out] = '0' + u8(value % 10)
-	return out + 1
+	if value >= 10 {
+		digits[count] = '0' + u8(value % 10)
+		digits[count + 1] = '0' + u8(value / 10)
+		count += 2
+	} else {
+		digits[count] = '0' + u8(value)
+		count += 1
+	}
+	for i in 0..<count { dst[out_in + i] = digits[count - i - 1] }
+	return out_in + count
 }
 
 station_list_request_size_impl :: proc "contextless" (
@@ -248,7 +294,9 @@ melodica_station_list_request :: proc "c" (
 		out += 1
 	}
 	if auth_required == user_auth_token_len {
-		copy_bytes(dst + out, user_auth_token, user_auth_token_len)
+		for i in 0..<user_auth_token_len {
+			dst[out + i] = user_auth_token[i]
+		}
 		out += user_auth_token_len
 	} else {
 		out = write_json(dst, out, user_auth_token, user_auth_token_len)

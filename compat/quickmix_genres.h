@@ -132,7 +132,7 @@ static PianoReturn_t piano_response_genres_data(PianoHandle_t *ph,
     for (size_t item = categories_token + 1u; item < doc->count &&
             doc->tokens[item].start < doc->tokens[categories_token].end; ++item) {
         if (doc->tokens[item].parent != categories_token) continue;
-        if (doc->tokens[item].type != MELODICA_JSON_OBJECT) {
+        if (melodica_json_is_null(doc, item)) {
             ret = PIANO_RET_INVALID_RESPONSE;
             goto fail;
         }
@@ -155,7 +155,7 @@ static PianoReturn_t piano_response_genres_data(PianoHandle_t *ph,
         for (size_t station_token = stations + 1u; station_token < doc->count &&
                 doc->tokens[station_token].start < doc->tokens[stations].end; ++station_token) {
             if (doc->tokens[station_token].parent != stations) continue;
-            if (doc->tokens[station_token].type != MELODICA_JSON_OBJECT) {
+            if (melodica_json_is_null(doc, station_token)) {
                 ret = PIANO_RET_INVALID_RESPONSE;
                 goto fail;
             }
@@ -197,7 +197,7 @@ static PianoReturn_t piano_response_quickmix_genres(PianoHandle_t *ph,
     const size_t root = 0u;
     const size_t stat = melodica_json_object_get(&doc, root, "stat");
     if (stat == MELODICA_JSON_NONE || stat >= doc.count ||
-            doc.tokens[stat].type != MELODICA_JSON_STRING) goto cleanup;
+            melodica_json_is_null(&doc, stat)) goto cleanup;
     if (!melodica_json_string_is(&doc, stat, "ok")) {
         ret = piano_response_error(&doc, root, req);
         goto cleanup;

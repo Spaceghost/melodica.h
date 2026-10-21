@@ -79,9 +79,7 @@ static PianoReturn_t piano_station_modes_active(const MelodicaJsonDoc *doc,
         const size_t result, int *active) {
     *active = -1;
     if (result == MELODICA_JSON_NONE) return PIANO_RET_OK;
-    if (result >= doc->count || doc->tokens[result].type != MELODICA_JSON_OBJECT) {
-        return PIANO_RET_INVALID_RESPONSE;
-    }
+    if (result >= doc->count) return PIANO_RET_INVALID_RESPONSE;
     const size_t token = melodica_json_object_get(doc, result, "currentModeId");
     if (token != MELODICA_JSON_NONE) {
         long value = 0;
@@ -96,7 +94,7 @@ static PianoReturn_t piano_station_mode_string(const MelodicaJsonDoc *doc,
     *out = NULL;
     const size_t token = melodica_json_object_get(doc, object, key);
     if (token == MELODICA_JSON_NONE) return PIANO_RET_OK;
-    if (token >= doc->count || doc->tokens[token].type != MELODICA_JSON_STRING) {
+    if (token >= doc->count || melodica_json_is_null(doc, token)) {
         return PIANO_RET_INVALID_RESPONSE;
     }
     *out = melodica_json_string_dup(doc, token);
@@ -120,21 +118,24 @@ static PianoReturn_t piano_response_get_station_modes(PianoRequest_t *req,
     }
 
     const size_t count = melodica_json_array_count(doc, modes);
+    PianoStationMode_t *parsed = NULL, *tail = NULL;
     for (size_t i = 0u; i < count; ++i) {
         const size_t item = melodica_json_array_get(doc, modes, i);
         if (item == MELODICA_JSON_NONE || item >= doc->count ||
                 doc->tokens[item].type != MELODICA_JSON_OBJECT) {
-            return PIANO_RET_INVALID_RESPONSE;
+            ret = PIANO_RET_INVALID_RESPONSE;
+            goto fail;
         }
 
         PianoStationMode_t *mode = (PianoStationMode_t *)calloc(1u, sizeof(*mode));
-        if (mode == NULL) return PIANO_RET_OUT_OF_MEMORY;
+        if (mode == NULL) { ret = PIANO_RET_OUT_OF_MEMORY; goto fail; }
         const size_t mode_id = melodica_json_object_get(doc, item, "modeId");
         if (mode_id != MELODICA_JSON_NONE) {
             long value = 0;
             if (!melodica_json_long(doc, mode_id, &value)) {
                 free(mode);
-                return PIANO_RET_INVALID_RESPONSE;
+                ret = PIANO_RET_INVALID_RESPONSE;
+                goto fail;
             }
             mode->id = (int)value;
             ret = piano_station_mode_string(doc, item, "modeName", &mode->name);
@@ -146,7 +147,7 @@ static PianoReturn_t piano_response_get_station_modes(PianoRequest_t *req,
                 free(mode->name);
                 free(mode->description);
                 free(mode);
-                return ret;
+                goto fail;
             }
             mode->isAlgorithmic = piano_json_bool_default(
                 doc, item, "isAlgorithmicMode", 0) != 0;
@@ -154,10 +155,20 @@ static PianoReturn_t piano_response_get_station_modes(PianoRequest_t *req,
                 doc, item, "isTakeoverMode", 0) != 0;
             mode->active = active == mode->id;
         }
-        data->retModes = (PianoStationMode_t *)PianoListAppend(
-            data->retModes == NULL ? NULL : &data->retModes->head, &mode->head);
+        if (tail == NULL) parsed = mode;
+        else tail->head.next = &mode->head;
+        tail = mode;
+    }
+    if (data->retModes == NULL) data->retModes = parsed;
+    else {
+        tail = data->retModes;
+        while (tail->head.next != NULL) tail = (PianoStationMode_t *)tail->head.next;
+        tail->head.next = parsed == NULL ? NULL : &parsed->head;
     }
     return PIANO_RET_OK;
+fail:
+    PianoDestroyStationMode(parsed);
+    return ret;
 }
 
 static PianoReturn_t piano_response_set_station_mode(PianoRequest_t *req,
@@ -182,7 +193,7 @@ static PianoReturn_t piano_response_station_modes(PianoHandle_t *ph,
     const size_t root = 0u;
     const size_t stat = melodica_json_object_get(&doc, root, "stat");
     if (stat == MELODICA_JSON_NONE || stat >= doc.count ||
-            doc.tokens[stat].type != MELODICA_JSON_STRING) goto cleanup;
+            melodica_json_is_null(&doc, stat)) goto cleanup;
     if (!melodica_json_string_is(&doc, stat, "ok")) {
         ret = piano_response_error(&doc, root, req);
         goto cleanup;

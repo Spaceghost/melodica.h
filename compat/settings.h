@@ -122,7 +122,7 @@ static PianoReturn_t piano_response_get_settings(PianoRequest_t *req,
         const MelodicaJsonDoc *doc, const size_t result) {
     PianoSettings_t *settings = req == NULL ? NULL : (PianoSettings_t *)req->data;
     if (settings == NULL || result == MELODICA_JSON_NONE || result >= doc->count ||
-            doc->tokens[result].type != MELODICA_JSON_OBJECT) {
+            melodica_json_is_null(doc, result)) {
         return PIANO_RET_INVALID_RESPONSE;
     }
 
@@ -130,7 +130,7 @@ static PianoReturn_t piano_response_get_settings(PianoRequest_t *req,
     const size_t username_token = melodica_json_object_get(doc, result, "username");
     if (username_token != MELODICA_JSON_NONE) {
         if (username_token >= doc->count ||
-                doc->tokens[username_token].type != MELODICA_JSON_STRING) {
+                melodica_json_is_null(doc, username_token)) {
             return PIANO_RET_INVALID_RESPONSE;
         }
         username = melodica_json_string_dup(doc, username_token);
@@ -154,7 +154,7 @@ static PianoReturn_t piano_response_settings(PianoHandle_t *ph, PianoRequest_t *
     const size_t root = 0u;
     const size_t stat = melodica_json_object_get(&doc, root, "stat");
     if (stat == MELODICA_JSON_NONE || stat >= doc.count ||
-            doc.tokens[stat].type != MELODICA_JSON_STRING) goto cleanup;
+            melodica_json_is_null(&doc, stat)) goto cleanup;
     if (!melodica_json_string_is(&doc, stat, "ok")) {
         ret = piano_response_error(&doc, root, req);
         goto cleanup;
