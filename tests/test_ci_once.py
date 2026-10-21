@@ -1,8 +1,10 @@
 """One-job controller scope checks; no real GitHub or Incus changes occur."""
 import importlib.util
+import io
 import json
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -19,6 +21,23 @@ def definition():
 
 
 class OneJobControllerTests(unittest.TestCase):
+    def test_registration_identity_accepts_official_utf8_bom(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            identity = Path(temporary) / '.runner'
+            identity.write_bytes(b'\xef\xbb\xbf' + json.dumps(
+                {'agentId': 9, 'agentName': 'fixture-owned-runner'}).encode())
+            original_read = Path.read_text
+            def read_fixture(path, *args, **kwargs):
+                return original_read(identity, *args, **kwargs)
+            payload = json.dumps({'token': 'fixture-token', 'url': 'https://github.com/' + controller.REPO,
+                                  'name': 'fixture-owned-runner', 'labels': ','.join(controller.LABELS)})
+            result = subprocess.CompletedProcess([], 0, '')
+            with patch.object(Path, 'read_text', autospec=True, side_effect=read_fixture), \
+                 patch.object(controller.subprocess, 'run', return_value=result), \
+                 patch('sys.stdin', io.StringIO(payload)), patch('sys.stdout', new_callable=io.StringIO) as output:
+                exec(controller.CONFIGURE, {})
+            self.assertEqual(json.loads(output.getvalue()), {'id': 9, 'name': 'fixture-owned-runner'})
+
     def test_source_rejects_privilege_host_mounts_and_credential_environment(self):
         controller.audit_definition(definition())
         for config in ({'security.privileged': 'true'}, {'security.nesting': '1'},
