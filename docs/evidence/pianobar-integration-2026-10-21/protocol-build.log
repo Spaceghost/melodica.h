@@ -1,0 +1,11 @@
+make: Entering directory '/work/melodica-integration'
+mkdir -p /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat
+gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude -Icompat -c compat/piano.c -o /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/piano.o
+mkdir -p /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat
+gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Icompat -c compat/json.c -o /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/json.o
+mkdir -p /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat
+gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Icompat -c compat/crypt.c -o /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/crypt.o
+mkdir -p /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat
+gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Icompat -c compat/blowfish.c -o /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/blowfish.o
+ar rcs /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/piano.o /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/json.o /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/crypt.o /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/blowfish.o
+make: Leaving directory '/work/melodica-integration'

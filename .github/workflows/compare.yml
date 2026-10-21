@@ -96,9 +96,11 @@ jobs:
         run: sh scripts/ci-deps.sh reference
       - name: Compile real pinned pianobar sources against melodica piano.h
         run: sh scripts/pianobar-source-compat.sh
+      - name: Link the full application and verify isolated startup and decoded audio
+        run: make test-pianobar-integration
       - name: Preserve readable consumer evidence in job logs
         if: always()
-        run: python3 scripts/ci-evidence.py build/pianobar-source-evidence
+        run: python3 scripts/ci-evidence.py build/pianobar-source-evidence build/pianobar-integration-evidence.*
       - name: Retain unchanged consumer compatibility evidence
         id: consumer-evidence
         if: always()
@@ -106,7 +108,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: pianobar-source-evidence-${{ github.run_id }}-${{ github.run_attempt }}
-          path: build/pianobar-source-evidence/
+          path: |
+            build/pianobar-source-evidence/
+            build/pianobar-integration-evidence.*/
           if-no-files-found: warn
           retention-days: 7
           compression-level: 9

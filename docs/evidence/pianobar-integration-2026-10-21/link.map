@@ -1,0 +1,1073 @@
+Archive member included to satisfy reference by file (symbol)
+
+/work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(piano.o)
+                              src/ui.o (PianoListCount)
+/work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(json.o)
+                              /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(piano.o) (melodica_json_parse)
+/work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(crypt.o)
+                              /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(piano.o) (melodica_piano_encrypt_string)
+/work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(blowfish.o)
+                              /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(piano.o) (melodica_blowfish_init)
+
+Merging object attributes
+
+
+Merging program properties
+
+Removed property 0xc0000002 to merge /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o (0x3) and src/main.o (not found)
+Updated property 0xc0010001 (0x9) to merge /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o (0x1) and src/main.o (0x9)
+Updated property 0xc0010001 (0x9) to merge /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o (0x9) and src/debug.o (0x1)
+Updated property 0xc0010002 (0x1) to merge /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o (0x1) and src/debug.o (0x0)
+Updated property 0xc0010001 (0x9) to merge /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o (0x9) and src/ui_dispatch.o (0x1)
+Updated property 0xc0010001 (0x9) to merge /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o (0x9) and /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(crypt.o) (0x1)
+Updated property 0xc0010001 (0x9) to merge /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o (0x9) and /usr/lib/gcc/x86_64-redhat-linux/16/crtend.o (0x1)
+Updated property 0xc0010002 (0x1) to merge /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o (0x1) and /usr/lib/gcc/x86_64-redhat-linux/16/crtend.o (0x0)
+Removed property 0xc0000002 to merge /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o (not found) and /usr/lib/gcc/x86_64-redhat-linux/16/crtend.o (0x3)
+Updated property 0xc0010001 (0x9) to merge /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o (0x9) and /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crtn.o (0x1)
+Removed property 0xc0000002 to merge /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o (not found) and /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crtn.o (0x3)
+
+Discarded input sections
+
+ .note.gnu.property
+                0x0000000000000000       0x50 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crti.o
+ .note.gnu.property
+                0x0000000000000000       0x50 /usr/lib/gcc/x86_64-redhat-linux/16/crtbegin.o
+ .note.gnu.property
+                0x0000000000000000       0x30 src/main.o
+ .note.gnu.property
+                0x0000000000000000       0x30 src/debug.o
+ .note.gnu.property
+                0x0000000000000000       0x30 src/player.o
+ .note.gnu.property
+                0x0000000000000000       0x30 src/settings.o
+ .note.gnu.property
+                0x0000000000000000       0x30 src/terminal.o
+ .note.gnu.property
+                0x0000000000000000       0x30 src/ui_act.o
+ .note.gnu.property
+                0x0000000000000000       0x30 src/ui.o
+ .note.gnu.property
+                0x0000000000000000       0x30 src/ui_readline.o
+ .note.gnu.property
+                0x0000000000000000       0x30 src/ui_dispatch.o
+ .note.gnu.property
+                0x0000000000000000       0x30 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(piano.o)
+ .note.gnu.property
+                0x0000000000000000       0x30 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(json.o)
+ .note.gnu.property
+                0x0000000000000000       0x30 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(crypt.o)
+ .note.gnu.property
+                0x0000000000000000       0x30 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(blowfish.o)
+ .note.gnu.property
+                0x0000000000000000       0x50 /usr/lib/gcc/x86_64-redhat-linux/16/crtend.o
+ .note.gnu.property
+                0x0000000000000000       0x50 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crtn.o
+
+Memory Configuration
+
+Name             Origin             Length             Attributes
+*default*        0x0000000000000000 0xffffffffffffffff
+
+Linker script and memory map
+
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crti.o
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/crtbegin.o
+LOAD src/main.o
+LOAD src/debug.o
+LOAD src/player.o
+LOAD src/settings.o
+LOAD src/terminal.o
+LOAD src/ui_act.o
+LOAD src/ui.o
+LOAD src/ui_readline.o
+LOAD src/ui_dispatch.o
+LOAD /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/libpthread.a
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/libm.so
+START GROUP
+LOAD /lib64/libm.so.6
+LOAD /lib64/libmvec.so.1
+END GROUP
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/libavfilter.so
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/libavformat.so
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/libavcodec.so
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/libavutil.so
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/libcurl.so
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/libgcrypt.so
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/libjson-c.so
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/libao.so
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/libgcc.a
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/libgcc_s_asneeded.so
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/libgcc_s.so
+START GROUP
+LOAD /lib64/libgcc_s.so.1
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/libgcc.a
+END GROUP
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/libatomic_asneeded.so
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/libatomic.so
+LOAD /usr/lib64/libatomic.so.1.2.0
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/libc.so
+START GROUP
+LOAD /lib64/libc.so.6
+LOAD /usr/lib64/libc_nonshared.a
+LOAD /lib64/ld-linux-x86-64.so.2
+END GROUP
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/libgcc.a
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/libgcc_s_asneeded.so
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/libgcc_s.so
+START GROUP
+LOAD /lib64/libgcc_s.so.1
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/libgcc.a
+END GROUP
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/crtend.o
+LOAD /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crtn.o
+                [!provide]                        PROVIDE (__executable_start = SEGMENT_START ("text-segment", 0x400000))
+                0x0000000000400318                . = (SEGMENT_START ("text-segment", 0x400000) + SIZEOF_HEADERS)
+
+.note.gnu.build-id
+                0x0000000000400318       0x24
+ *(.note.gnu.build-id)
+ .note.gnu.build-id
+                0x0000000000400318       0x24 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+
+.init           0x000000000040033c       0x1b
+ *(SORT_NONE(.init))
+ .init          0x000000000040033c       0x16 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crti.o
+                0x000000000040033c                _init
+ .init          0x0000000000400352        0x5 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crtn.o
+
+.plt            0x0000000000400360      0x850
+ *(.plt)
+ .plt           0x0000000000400360      0x850 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+                0x0000000000400370                execl@@GLIBC_2.2.5
+                0x0000000000400380                ao_driver_id@@LIBAO4_1.1.0
+                0x0000000000400390                av_buffersrc_write_frame@@LIBAVFILTER_11
+                0x00000000004003a0                curl_easy_strerror
+                0x00000000004003b0                strdup@@GLIBC_2.2.5
+                0x00000000004003c0                fdopen@@GLIBC_2.2.5
+                0x00000000004003d0                feof@@GLIBC_2.2.5
+                0x00000000004003e0                stat@@GLIBC_2.33
+                0x00000000004003f0                ao_initialize@@LIBAO4_1.1.0
+                0x0000000000400400                realloc@@GLIBC_2.2.5
+                0x0000000000400410                curl_easy_reset
+                0x0000000000400420                avcodec_alloc_context3@@LIBAVCODEC_62
+                0x0000000000400430                memmove@@GLIBC_2.2.5
+                0x0000000000400440                __ctype_b_loc@@GLIBC_2.3
+                0x0000000000400450                __assert_fail@@GLIBC_2.2.5
+                0x0000000000400460                pthread_mutex_destroy@@GLIBC_2.2.5
+                0x0000000000400470                av_channel_layout_describe@@LIBAVUTIL_60
+                0x0000000000400480                avformat_open_input@@LIBAVFORMAT_62
+                0x0000000000400490                av_seek_frame@@LIBAVFORMAT_62
+                0x00000000004004a0                avfilter_link@@LIBAVFILTER_11
+                0x00000000004004b0                avcodec_free_context@@LIBAVCODEC_62
+                0x00000000004004c0                memset@@GLIBC_2.2.5
+                0x00000000004004d0                pthread_join@@GLIBC_2.34
+                0x00000000004004e0                getuid@@GLIBC_2.2.5
+                0x00000000004004f0                fputs@@GLIBC_2.2.5
+                0x0000000000400500                pthread_cond_destroy@@GLIBC_2.3.2
+                0x0000000000400510                curl_slist_append
+                0x0000000000400520                strlen@@GLIBC_2.2.5
+                0x0000000000400530                pthread_mutex_init@@GLIBC_2.2.5
+                0x0000000000400540                fclose@@GLIBC_2.2.5
+                0x0000000000400550                __ctype_tolower_loc@@GLIBC_2.3
+                0x0000000000400560                strstr@@GLIBC_2.2.5
+                0x0000000000400570                fflush@@GLIBC_2.2.5
+                0x0000000000400580                tcsetattr@@GLIBC_2.2.5
+                0x0000000000400590                setenv@@GLIBC_2.2.5
+                0x00000000004005a0                ao_open_file@@LIBAO4_1.1.0
+                0x00000000004005b0                avcodec_receive_frame@@LIBAVCODEC_62
+                0x00000000004005c0                tcgetattr@@GLIBC_2.2.5
+                0x00000000004005d0                av_log_set_level@@LIBAVUTIL_60
+                0x00000000004005e0                avfilter_graph_send_command@@LIBAVFILTER_11
+                0x00000000004005f0                avcodec_send_packet@@LIBAVCODEC_62
+                0x0000000000400600                av_buffersink_get_time_base@@LIBAVFILTER_11
+                0x0000000000400610                avcodec_parameters_to_context@@LIBAVCODEC_62
+                0x0000000000400620                strtoll@@GLIBC_2.2.5
+                0x0000000000400630                sigaction@@GLIBC_2.2.5
+                0x0000000000400640                ao_open_live@@LIBAO4_1.1.0
+                0x0000000000400650                avfilter_graph_create_filter@@LIBAVFILTER_11
+                0x0000000000400660                curl_global_init
+                0x0000000000400670                pipe@@GLIBC_2.2.5
+                0x0000000000400680                strtoul@@GLIBC_2.2.5
+                0x0000000000400690                sigemptyset@@GLIBC_2.2.5
+                0x00000000004006a0                strtol@@GLIBC_2.2.5
+                0x00000000004006b0                curl_easy_cleanup
+                0x00000000004006c0                fstat@@GLIBC_2.33
+                0x00000000004006d0                curl_global_cleanup
+                0x00000000004006e0                pthread_cond_broadcast@@GLIBC_2.3.2
+                0x00000000004006f0                waitpid@@GLIBC_2.2.5
+                0x0000000000400700                av_frame_unref@@LIBAVUTIL_60
+                0x0000000000400710                curl_easy_setopt
+                0x0000000000400720                sprintf@@GLIBC_2.2.5
+                0x0000000000400730                memcmp@@GLIBC_2.2.5
+                0x0000000000400740                fwrite@@GLIBC_2.2.5
+                0x0000000000400750                avfilter_graph_free@@LIBAVFILTER_11
+                0x0000000000400760                pthread_create@@GLIBC_2.34
+                0x0000000000400770                av_packet_alloc@@LIBAVCODEC_62
+                0x0000000000400780                av_buffersrc_add_frame@@LIBAVFILTER_11
+                0x0000000000400790                curl_slist_free_all
+                0x00000000004007a0                fileno@@GLIBC_2.2.5
+                0x00000000004007b0                fopen@@GLIBC_2.2.5
+                0x00000000004007c0                avfilter_graph_alloc@@LIBAVFILTER_11
+                0x00000000004007d0                ao_close@@LIBAO4_1.1.0
+                0x00000000004007e0                select@@GLIBC_2.2.5
+                0x00000000004007f0                memcpy@@GLIBC_2.14
+                0x0000000000400800                free@@GLIBC_2.2.5
+                0x0000000000400810                fprintf@@GLIBC_2.2.5
+                0x0000000000400820                avformat_find_stream_info@@LIBAVFORMAT_62
+                0x0000000000400830                getpwuid@@GLIBC_2.2.5
+                0x0000000000400840                close@@GLIBC_2.2.5
+                0x0000000000400850                avcodec_find_decoder@@LIBAVCODEC_62
+                0x0000000000400860                av_buffersink_get_frame@@LIBAVFILTER_11
+                0x0000000000400870                strncmp@@GLIBC_2.2.5
+                0x0000000000400880                pthread_mutex_unlock@@GLIBC_2.2.5
+                0x0000000000400890                putc@@GLIBC_2.2.5
+                0x00000000004008a0                av_find_best_stream@@LIBAVFORMAT_62
+                0x00000000004008b0                pthread_mutex_lock@@GLIBC_2.2.5
+                0x00000000004008c0                av_packet_unref@@LIBAVCODEC_62
+                0x00000000004008d0                signal@@GLIBC_2.2.5
+                0x00000000004008e0                gcry_check_version@@GCRYPT_1.6
+                0x00000000004008f0                ao_play@@LIBAO4_1.1.0
+                0x0000000000400900                av_read_frame@@LIBAVFORMAT_62
+                0x0000000000400910                avcodec_open2@@LIBAVCODEC_62
+                0x0000000000400920                pthread_cond_init@@GLIBC_2.3.2
+                0x0000000000400930                memchr@@GLIBC_2.2.5
+                0x0000000000400940                open@@GLIBC_2.2.5
+                0x0000000000400950                ao_default_driver_id@@LIBAO4_1.1.0
+                0x0000000000400960                strchr@@GLIBC_2.2.5
+                0x0000000000400970                snprintf@@GLIBC_2.2.5
+                0x0000000000400980                av_packet_free@@LIBAVCODEC_62
+                0x0000000000400990                pthread_cond_wait@@GLIBC_2.3.2
+                0x00000000004009a0                av_get_bytes_per_sample@@LIBAVUTIL_60
+                0x00000000004009b0                dup2@@GLIBC_2.2.5
+                0x00000000004009c0                ao_shutdown@@LIBAO4_1.1.0
+                0x00000000004009d0                curl_easy_perform
+                0x00000000004009e0                fgets@@GLIBC_2.2.5
+                0x00000000004009f0                exit@@GLIBC_2.2.5
+                0x0000000000400a00                time@@GLIBC_2.2.5
+                0x0000000000400a10                qsort@@GLIBC_2.2.5
+                0x0000000000400a20                avfilter_get_by_name@@LIBAVFILTER_11
+                0x0000000000400a30                getenv@@GLIBC_2.2.5
+                0x0000000000400a40                curl_easy_init
+                0x0000000000400a50                read@@GLIBC_2.2.5
+                0x0000000000400a60                av_frame_free@@LIBAVUTIL_60
+                0x0000000000400a70                strerror@@GLIBC_2.2.5
+                0x0000000000400a80                strtoull@@GLIBC_2.2.5
+                0x0000000000400a90                strcasecmp@@GLIBC_2.2.5
+                0x0000000000400aa0                strcmp@@GLIBC_2.2.5
+                0x0000000000400ab0                avfilter_graph_config@@LIBAVFILTER_11
+                0x0000000000400ac0                av_frame_alloc@@LIBAVUTIL_60
+                0x0000000000400ad0                calloc@@GLIBC_2.2.5
+                0x0000000000400ae0                fputc@@GLIBC_2.2.5
+                0x0000000000400af0                malloc@@GLIBC_2.2.5
+                0x0000000000400b00                fork@@GLIBC_2.2.5
+                0x0000000000400b10                puts@@GLIBC_2.2.5
+                0x0000000000400b20                __errno_location@@GLIBC_2.2.5
+                0x0000000000400b30                av_get_sample_fmt_name@@LIBAVUTIL_60
+                0x0000000000400b40                av_dict_set@@LIBAVUTIL_60
+                0x0000000000400b50                vfprintf@@GLIBC_2.2.5
+                0x0000000000400b60                avformat_close_input@@LIBAVFORMAT_62
+                0x0000000000400b70                av_strerror@@LIBAVUTIL_60
+                0x0000000000400b80                avformat_alloc_context@@LIBAVFORMAT_62
+                0x0000000000400b90                gcry_control@@GCRYPT_1.6
+                0x0000000000400ba0                strtod@@GLIBC_2.2.5
+ *(.iplt)
+ .iplt          0x0000000000400bb0        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+
+.plt.got        0x0000000000400bb0        0x0
+ *(.plt.got)
+ .plt.got       0x0000000000400bb0        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+
+.plt.sec
+ *(.plt.sec)
+
+.text           0x0000000000400bc0    0x137f1
+ *(.text.unlikely .text.*_unlikely .text.unlikely.*)
+ .text.unlikely
+                0x0000000000400bc0       0x63 src/main.o
+ .text.unlikely
+                0x0000000000400c23      0x1ce src/player.o
+ .text.unlikely
+                0x0000000000400df1       0xe6 src/settings.o
+ .text.unlikely
+                0x0000000000400ed7      0x332 src/ui_act.o
+ .text.unlikely
+                0x0000000000401209      0x2cb src/ui.o
+ .text.unlikely
+                0x00000000004014d4      0x115 src/ui_readline.o
+ .text.unlikely
+                0x00000000004015e9       0x4b src/ui_dispatch.o
+ .text.unlikely
+                0x0000000000401634      0x271 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(piano.o)
+ *(.text.exit .text.exit.*)
+ *(.text.startup .text.startup.*)
+ *fill*         0x00000000004018a5       0x1b 
+ .text.startup  0x00000000004018c0      0xbb2 src/main.o
+                0x00000000004018c0                main
+ *(.text.hot .text.hot.*)
+ *(SORT_BY_NAME(.text.sorted.*))
+ *(.text .stub .text.* .gnu.linkonce.t.*)
+ *fill*         0x0000000000402472        0xe 
+ .text          0x0000000000402480       0x35 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+                0x0000000000402480                _start
+                0x00000000004024b0                _dl_relocate_static_pie
+ .text          0x00000000004024b5        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crti.o
+ *fill*         0x00000000004024b5        0xb 
+ .text          0x00000000004024c0       0xa6 /usr/lib/gcc/x86_64-redhat-linux/16/crtbegin.o
+ *fill*         0x0000000000402566        0xa 
+ .text          0x0000000000402570      0x1f1 src/main.o
+ .text          0x0000000000402761        0x0 src/debug.o
+ *fill*         0x0000000000402761       0x1f 
+ .text          0x0000000000402780     0x14b6 src/player.o
+                0x0000000000402890                BarAoPlayThread
+                0x0000000000402fa0                BarPlayerInit
+                0x0000000000403070                BarPlayerDestroy
+                0x00000000004030a0                BarPlayerReset
+                0x0000000000403110                BarPlayerSetVolume
+                0x00000000004031f0                BarPlayerGetMode
+                0x0000000000403220                BarPlayerThread
+ *fill*         0x0000000000403c36        0xa 
+ .text          0x0000000000403c40     0x11a1 src/settings.o
+                0x0000000000403cd0                BarSettingsExpandTilde
+                0x0000000000403d70                BarSettingsInit
+                0x0000000000403d80                BarSettingsDestroy
+                0x0000000000403ed0                BarSettingsRead
+                0x0000000000404d40                BarSettingsWrite
+ *fill*         0x0000000000404de1        0xf 
+ .text          0x0000000000404df0       0x8e src/terminal.o
+                0x0000000000404df0                BarTermInit
+                0x0000000000404e70                BarTermRestore
+ *fill*         0x0000000000404e7e        0x2 
+ .text          0x0000000000404e80     0x22ff src/ui_act.o
+                0x0000000000404ef0                BarUiActHelp
+                0x0000000000404fa0                BarUiActDebug
+                0x0000000000405000                BarUiActCreateStation
+                0x00000000004050b0                BarUiActExplain
+                0x00000000004051a0                BarUiActPlay
+                0x00000000004051e0                BarUiActPause
+                0x0000000000405220                BarUiActTogglePause
+                0x0000000000405260                BarUiActCreateStationFromSong
+                0x0000000000405370                BarUiActAddSharedStation
+                0x0000000000405480                BarUiActBookmark
+                0x00000000004055c0                BarUiActStationFromGenre
+                0x0000000000405840                BarUiActSongInfo
+                0x00000000004058c0                BarUiActHistory
+                0x0000000000405a00                BarUiActVolDown
+                0x0000000000405a10                BarUiActVolUp
+                0x0000000000405a20                BarUiActVolReset
+                0x0000000000405a40                BarUiActSettings
+                0x0000000000405dc0                BarUiActSelectQuickMix
+                0x0000000000405ec0                BarUiActPrintUpcoming
+                0x0000000000405ef0                BarUiActSkipSong
+                0x0000000000405f50                BarUiActRenameStation
+                0x00000000004060e0                BarUiActQuit
+                0x00000000004061e0                BarUiActDeleteStation
+                0x00000000004062e0                BarUiActManageStation
+                0x0000000000406b80                BarUiActSelectStation
+                0x0000000000406c40                BarUiActLoveSong
+                0x0000000000406d90                BarUiActBanSong
+                0x0000000000406f40                BarUiActAddMusic
+                0x0000000000407070                BarUiActTempBanSong
+ *fill*         0x000000000040717f        0x1 
+ .text          0x0000000000407180     0x1dd1 src/ui.o
+                0x0000000000407190                progressCb
+                0x0000000000407570                BarUiMsg
+                0x00000000004076b0                BarUiPianoCall
+                0x0000000000407d00                BarUiSelectStation
+                0x0000000000408010                BarUiSelectArtist
+                0x0000000000408160                BarUiCustomFormat
+                0x0000000000408280                BarUiPrintStation
+                0x0000000000408300                BarUiPrintSong
+                0x0000000000408420                BarUiListSongs
+                0x00000000004087d0                BarUiSelectSong
+                0x0000000000408900                BarUiSelectMusicId
+                0x0000000000408af0                BarUiStartEventCmd
+                0x0000000000408ea0                BarUiHistoryPrepend
+ *fill*         0x0000000000408f51        0xf 
+ .text          0x0000000000408f60      0x56c src/ui_readline.o
+                0x0000000000408f60                BarReadline
+                0x0000000000409410                BarReadlineStr
+                0x0000000000409430                BarReadlineInt
+                0x0000000000409480                BarReadlineYesNo
+ *fill*         0x00000000004094cc       0x14 
+ .text          0x00000000004094e0       0xed src/ui_dispatch.o
+                0x00000000004094e0                BarUiDispatch
+ *fill*         0x00000000004095cd       0x13 
+ .text          0x00000000004095e0     0x821d /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(piano.o)
+                0x000000000040a740                PianoListCount
+                0x000000000040a760                PianoListAppend
+                0x000000000040a7b0                PianoListPrepend
+                0x000000000040a7e0                PianoListDelete
+                0x000000000040a830                PianoListGet
+                0x000000000040a860                PianoDestroyPlaylist
+                0x000000000040a910                PianoDestroySearchResult
+                0x000000000040a9a0                PianoDestroyStationInfo
+                0x000000000040aa50                PianoDestroyStationMode
+                0x000000000040aaa0                PianoInit
+                0x000000000040adc0                PianoDestroy
+                0x000000000040ade0                PianoDestroyRequest
+                0x000000000040ae10                melodica_piano_request_base
+                0x000000000040bc90                melodica_piano_response_base
+                0x000000000040d0d0                PianoFindStationById
+                0x000000000040d130                PianoErrorToStr
+                0x000000000040d2b0                PianoRequest
+                0x000000000040f4b0                PianoResponse
+ *fill*         0x00000000004117fd        0x3 
+ .text          0x0000000000411800     0x249c /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(json.o)
+                0x0000000000412e00                melodica_json_parse
+                0x0000000000412ee0                melodica_json_destroy
+                0x0000000000412f20                melodica_json_array_count
+                0x0000000000412f90                melodica_json_array_get
+                0x0000000000413000                melodica_json_string_is
+                0x00000000004132c0                melodica_json_object_get
+                0x00000000004139d0                melodica_json_is_null
+                0x0000000000413a10                melodica_json_double
+                0x0000000000413a30                melodica_json_long
+                0x0000000000413b40                melodica_json_bool
+                0x0000000000413be0                melodica_json_string_dup
+ *fill*         0x0000000000413c9c       0x24 
+ .text          0x0000000000413cc0      0x31b /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(crypt.o)
+                0x0000000000413cc0                melodica_piano_encrypt_string
+                0x0000000000413e70                melodica_piano_decrypt_string
+ *fill*         0x0000000000413fdb       0x25 
+ .text          0x0000000000414000      0x3b1 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(blowfish.o)
+                0x0000000000414110                melodica_blowfish_init
+                0x00000000004142b0                melodica_blowfish_encrypt_block
+                0x00000000004142f0                melodica_blowfish_decrypt_block
+                0x0000000000414390                melodica_blowfish_clear
+ .text          0x00000000004143b1        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/crtend.o
+ .text          0x00000000004143b1        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crtn.o
+ *(.gnu.warning)
+
+.fini           0x00000000004143b4        0xd
+ *(SORT_NONE(.fini))
+ .fini          0x00000000004143b4        0x8 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crti.o
+                0x00000000004143b4                _fini
+ .fini          0x00000000004143bc        0x5 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crtn.o
+                [!provide]                        PROVIDE (__etext = .)
+                [!provide]                        PROVIDE (_etext = .)
+                [!provide]                        PROVIDE (etext = .)
+                0x0000000000415000                . = ALIGN (CONSTANT (MAXPAGESIZE))
+                0x0000000000415000                . = SEGMENT_START ("rodata-segment", (ALIGN (CONSTANT (MAXPAGESIZE)) + (. & (CONSTANT (MAXPAGESIZE) - 0x1))))
+
+.interp         0x0000000000415000       0x1c
+ *(.interp)
+ .interp        0x0000000000415000       0x1c /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+
+.hash
+ *(.hash)
+
+.gnu.hash       0x0000000000415020       0x38
+ *(.gnu.hash)
+ .gnu.hash      0x0000000000415020       0x38 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+
+.dynsym         0x0000000000415058      0xd20
+ *(.dynsym)
+ .dynsym        0x0000000000415058      0xd20 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+
+.dynstr         0x0000000000415d78      0x80d
+ *(.dynstr)
+ .dynstr        0x0000000000415d78      0x80d /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+
+.gnu.version    0x0000000000416586      0x118
+ *(.gnu.version)
+ .gnu.version   0x0000000000416586      0x118 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+
+.gnu.version_d  0x00000000004166a0        0x0
+ *(.gnu.version_d)
+ .gnu.version_d
+                0x00000000004166a0        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+
+.gnu.version_r  0x00000000004166a0      0x130
+ *(.gnu.version_r)
+ .gnu.version_r
+                0x00000000004166a0      0x130 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+
+.rela.dyn       0x00000000004167d0       0x78
+ *(.rela.init)
+ *(.rela.text .rela.text.* .rela.gnu.linkonce.t.*)
+ .rela.text     0x00000000004167d0        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+ .rela.text.startup
+                0x00000000004167d0        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+ *(.rela.fini)
+ *(.rela.rodata .rela.rodata.* .rela.gnu.linkonce.r.*)
+ *(.rela.data .rela.data.* .rela.gnu.linkonce.d.*)
+ .rela.data.rel.ro
+                0x00000000004167d0        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+ *(.rela.tdata .rela.tdata.* .rela.gnu.linkonce.td.*)
+ *(.rela.tbss .rela.tbss.* .rela.gnu.linkonce.tb.*)
+ *(.rela.ctors)
+ *(.rela.dtors)
+ *(.rela.got)
+ .rela.got      0x00000000004167d0       0x30 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+ *(.rela.tls)
+ .rela.tls      0x0000000000416800        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+ *(.rela.bss .rela.bss.* .rela.gnu.linkonce.b.*)
+ .rela.bss      0x0000000000416800       0x48 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+ *(.rela.ldata .rela.ldata.* .rela.gnu.linkonce.l.*)
+ *(.rela.lbss .rela.lbss.* .rela.gnu.linkonce.lb.*)
+ *(.rela.lrodata .rela.lrodata.* .rela.gnu.linkonce.lr.*)
+ *(.rela.ifunc)
+
+.rela.plt       0x0000000000416848      0xc60
+ *(.rela.plt)
+ .rela.plt      0x0000000000416848      0xc60 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+                [!provide]                        PROVIDE (__rela_iplt_start = .)
+ *(.rela.iplt)
+ .rela.iplt     0x00000000004174a8        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+                [!provide]                        PROVIDE (__rela_iplt_end = .)
+
+.relr.dyn
+ *(.relr.dyn)
+
+.rodata         0x00000000004174c0     0x6363
+ *(.rodata .rodata.* .gnu.linkonce.r.*)
+ .rodata.cst4   0x00000000004174c0        0x4 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+                0x00000000004174c0                _IO_stdin_used
+ *fill*         0x00000000004174c4        0x4 
+ .rodata        0x00000000004174c8        0x8 /usr/lib/gcc/x86_64-redhat-linux/16/crtbegin.o
+                0x00000000004174c8                __dso_handle
+ .rodata.str1.1
+                0x00000000004174d0     0x1a8e src/main.o
+                                        0x1ba (size before relaxing)
+ *fill*         0x0000000000418f5e        0x2 
+ .rodata.str1.8
+                0x0000000000418f60      0xa37 src/main.o
+                                         0xd0 (size before relaxing)
+ *fill*         0x0000000000419997        0x9 
+ .rodata        0x00000000004199a0       0x4a src/main.o
+ .rodata.str1.1
+                0x00000000004199ea        0x0 src/player.o
+                                        0x2f9 (size before relaxing)
+ .rodata.str1.8
+                0x00000000004199ea        0x0 src/player.o
+                                        0x1d8 (size before relaxing)
+ *fill*         0x00000000004199ea        0x6 
+ .rodata        0x00000000004199f0       0x68 src/player.o
+                0x0000000000419a54                avformat
+ *fill*         0x0000000000419a58        0x8 
+ .rodata.cst16  0x0000000000419a60      0x290 src/player.o
+                                         0x10 (size before relaxing)
+ .rodata.str1.1
+                0x0000000000419cf0        0x0 src/settings.o
+                                        0x77e (size before relaxing)
+ .rodata.str1.8
+                0x0000000000419cf0        0x0 src/settings.o
+                                         0xff (size before relaxing)
+ *fill*         0x0000000000419cf0       0x10 
+ .rodata        0x0000000000419d00      0x4a0 src/settings.o
+ .rodata.cst16  0x000000000041a1a0        0x0 src/settings.o
+                                         0x10 (size before relaxing)
+ .rodata.str1.1
+                0x000000000041a1a0        0x0 src/ui_act.o
+                                        0x928 (size before relaxing)
+ .rodata.str1.8
+                0x000000000041a1a0        0x0 src/ui_act.o
+                                        0x25f (size before relaxing)
+ .rodata        0x000000000041a1a0      0x5a0 src/ui_act.o
+ .rodata.cst16  0x000000000041a740        0x0 src/ui_act.o
+                                         0x10 (size before relaxing)
+ .rodata.str1.1
+                0x000000000041a740        0x0 src/ui.o
+                                        0x2fa (size before relaxing)
+ .rodata.str1.8
+                0x000000000041a740        0x0 src/ui.o
+                                        0x187 (size before relaxing)
+ .rodata        0x000000000041a740       0xd1 src/ui.o
+ *fill*         0x000000000041a811        0x7 
+ .rodata.cst8   0x000000000041a818        0x8 src/ui.o
+ .rodata.str1.1
+                0x000000000041a820        0x0 src/ui_readline.o
+                                         0x62 (size before relaxing)
+ .rodata        0x000000000041a820       0xcc src/ui_readline.o
+ .rodata.str1.1
+                0x000000000041a8ec        0x0 src/ui_dispatch.o
+                                        0x38a (size before relaxing)
+ .rodata.str1.8
+                0x000000000041a8ec        0x0 src/ui_dispatch.o
+                                         0xbf (size before relaxing)
+ *fill*         0x000000000041a8ec       0x14 
+ .rodata        0x000000000041a900      0x3e0 src/ui_dispatch.o
+ .rodata        0x000000000041ace0      0x70f /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(piano.o)
+ .rodata.str1.1
+                0x000000000041b3ef        0x0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(piano.o)
+                                        0x621 (size before relaxing)
+ .rodata.str1.8
+                0x000000000041b3ef        0x0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(piano.o)
+                                        0x30f (size before relaxing)
+ .rodata.cst16  0x000000000041b3ef        0x0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(piano.o)
+                                        0x250 (size before relaxing)
+ *fill*         0x000000000041b3ef        0x1 
+ .rodata.cst8   0x000000000041b3f0       0x38 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(piano.o)
+                                          0x8 (size before relaxing)
+ .rodata.str1.1
+                0x000000000041b428        0x0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(json.o)
+                                         0x85 (size before relaxing)
+ *fill*         0x000000000041b428       0x18 
+ .rodata        0x000000000041b440      0x310 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(json.o)
+ .rodata.cst16  0x000000000041b750        0x0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(json.o)
+                                         0x10 (size before relaxing)
+ .rodata.cst8   0x000000000041b750        0x0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(json.o)
+                                         0x38 (size before relaxing)
+ .rodata        0x000000000041b750       0x11 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(crypt.o)
+ *fill*         0x000000000041b761       0x1f 
+ .rodata        0x000000000041b780     0x20a3 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(blowfish.o)
+
+.rodata1
+ *(.rodata1)
+
+.eh_frame_hdr   0x000000000041d824      0x5dc
+ *(.eh_frame_hdr)
+ .eh_frame_hdr  0x000000000041d824      0x5dc /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+                0x000000000041d824                __GNU_EH_FRAME_HDR
+ *(.eh_frame_entry .eh_frame_entry.*)
+
+.eh_frame       0x000000000041de00     0x274c
+ *(.eh_frame)
+ .eh_frame      0x000000000041de00       0x40 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+                                         0x5c (size before relaxing)
+ *fill*         0x000000000041de40        0x0 
+ .eh_frame      0x000000000041de40       0x28 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+                                         0x40 (size before relaxing)
+ .eh_frame      0x000000000041de68        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+ .eh_frame      0x000000000041de68      0x148 src/main.o
+                                        0x160 (size before relaxing)
+ .eh_frame      0x000000000041dfb0      0x270 src/player.o
+                                        0x288 (size before relaxing)
+ .eh_frame      0x000000000041e220      0x190 src/settings.o
+                                        0x1a8 (size before relaxing)
+ .eh_frame      0x000000000041e3b0       0x40 src/terminal.o
+                                         0x58 (size before relaxing)
+ .eh_frame      0x000000000041e3f0      0x8b8 src/ui_act.o
+                                        0x8d0 (size before relaxing)
+ .eh_frame      0x000000000041eca8      0x538 src/ui.o
+                                        0x550 (size before relaxing)
+ .eh_frame      0x000000000041f1e0       0xf8 src/ui_readline.o
+                                        0x110 (size before relaxing)
+ .eh_frame      0x000000000041f2d8       0x48 src/ui_dispatch.o
+                                         0x60 (size before relaxing)
+ .eh_frame      0x000000000041f320      0xbe8 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(piano.o)
+                                        0xc00 (size before relaxing)
+ .eh_frame      0x000000000041ff08      0x4e0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(json.o)
+                                        0x4f8 (size before relaxing)
+ .eh_frame      0x00000000004203e8       0xb0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(crypt.o)
+                                         0xc8 (size before relaxing)
+ .eh_frame      0x0000000000420498       0xb0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(blowfish.o)
+                                         0xc8 (size before relaxing)
+ .eh_frame      0x0000000000420548        0x4 /usr/lib/gcc/x86_64-redhat-linux/16/crtend.o
+ *(.eh_frame.*)
+
+.sframe
+ *(.sframe)
+ *(.sframe.*)
+
+.gcc_except_table
+ *(.gcc_except_table .gcc_except_table.*)
+
+.gnu_extab
+ *(.gnu_extab*)
+
+.exception_ranges
+ *(.exception_ranges*)
+
+.note.build-id
+ *(.note.build-id)
+
+.note.GNU-stack
+                0x000000000042054c        0x0
+ *(.note.GNU-stack)
+ .note.GNU-stack
+                0x000000000042054c        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+ .note.GNU-stack
+                0x000000000042054c        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crti.o
+ .note.GNU-stack
+                0x000000000042054c        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/crtbegin.o
+ .note.GNU-stack
+                0x000000000042054c        0x0 src/main.o
+ .note.GNU-stack
+                0x000000000042054c        0x0 src/debug.o
+ .note.GNU-stack
+                0x000000000042054c        0x0 src/player.o
+ .note.GNU-stack
+                0x000000000042054c        0x0 src/settings.o
+ .note.GNU-stack
+                0x000000000042054c        0x0 src/terminal.o
+ .note.GNU-stack
+                0x000000000042054c        0x0 src/ui_act.o
+ .note.GNU-stack
+                0x000000000042054c        0x0 src/ui.o
+ .note.GNU-stack
+                0x000000000042054c        0x0 src/ui_readline.o
+ .note.GNU-stack
+                0x000000000042054c        0x0 src/ui_dispatch.o
+ .note.GNU-stack
+                0x000000000042054c        0x0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(piano.o)
+ .note.GNU-stack
+                0x000000000042054c        0x0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(json.o)
+ .note.GNU-stack
+                0x000000000042054c        0x0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(crypt.o)
+ .note.GNU-stack
+                0x000000000042054c        0x0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(blowfish.o)
+ .note.GNU-stack
+                0x000000000042054c        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/crtend.o
+ .note.GNU-stack
+                0x000000000042054c        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crtn.o
+
+.note.gnu.property
+                0x0000000000420550       0x40
+ *(.note.gnu.property)
+ .note.gnu.property
+                0x0000000000420550       0x40 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+
+.note.ABI-tag   0x0000000000420590       0x20
+ *(.note.ABI-tag)
+ .note.ABI-tag  0x0000000000420590       0x20 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+
+.note.package
+ *(.note.package)
+
+.note.dlopen
+ *(.note.dlopen)
+
+.note.netbsd.ident
+ *(.note.netbsd.ident)
+
+.note.openbsd.ident
+ *(.note.openbsd.ident)
+                0x0000000000421d68                . = DATA_SEGMENT_ALIGN (CONSTANT (MAXPAGESIZE), CONSTANT (COMMONPAGESIZE))
+
+.eh_frame
+ *(.eh_frame)
+ *(.eh_frame.*)
+
+.sframe
+ *(.sframe)
+ *(.sframe.*)
+
+.gnu_extab
+ *(.gnu_extab)
+
+.gcc_except_table
+ *(.gcc_except_table .gcc_except_table.*)
+
+.exception_ranges
+ *(.exception_ranges*)
+
+.tdata          0x0000000000421d68        0x0
+                [!provide]                        PROVIDE (__tdata_start = .)
+ *(.tdata .tdata.* .gnu.linkonce.td.*)
+
+.tbss
+ *(.tbss .tbss.* .gnu.linkonce.tb.*)
+ *(.tcommon)
+
+.preinit_array  0x0000000000421d68        0x0
+                [!provide]                        PROVIDE (__preinit_array_start = .)
+ *(.preinit_array)
+                [!provide]                        PROVIDE (__preinit_array_end = .)
+
+.init_array     0x0000000000421d68        0x8
+                [!provide]                        PROVIDE (__init_array_start = .)
+ *(SORT_BY_INIT_PRIORITY(.init_array.*) SORT_BY_INIT_PRIORITY(.ctors.*))
+ *(.init_array EXCLUDE_FILE(*crtend?.o *crtend.o *crtbegin?.o *crtbegin.o) .ctors)
+ .init_array    0x0000000000421d68        0x8 /usr/lib/gcc/x86_64-redhat-linux/16/crtbegin.o
+                [!provide]                        PROVIDE (__init_array_end = .)
+
+.fini_array     0x0000000000421d70        0x8
+                [!provide]                        PROVIDE (__fini_array_start = .)
+ *(SORT_BY_INIT_PRIORITY(.fini_array.*) SORT_BY_INIT_PRIORITY(.dtors.*))
+ *(.fini_array EXCLUDE_FILE(*crtend?.o *crtend.o *crtbegin?.o *crtbegin.o) .dtors)
+ .fini_array    0x0000000000421d70        0x8 /usr/lib/gcc/x86_64-redhat-linux/16/crtbegin.o
+                [!provide]                        PROVIDE (__fini_array_end = .)
+
+.ctors
+ *crtbegin.o(.ctors)
+ *crtbegin?.o(.ctors)
+ *(EXCLUDE_FILE(*crtend?.o *crtend.o) .ctors)
+ *(SORT_BY_NAME(.ctors.*))
+ *(.ctors)
+
+.dtors
+ *crtbegin.o(.dtors)
+ *crtbegin?.o(.dtors)
+ *(EXCLUDE_FILE(*crtend?.o *crtend.o) .dtors)
+ *(SORT_BY_NAME(.dtors.*))
+ *(.dtors)
+
+.jcr
+ *(.jcr)
+
+.data.rel.ro    0x0000000000421d78        0x0
+ *(.data.rel.ro.local* .gnu.linkonce.d.rel.ro.local.*)
+ *(.data.rel.ro .data.rel.ro.* .gnu.linkonce.d.rel.ro.*)
+ .data.rel.ro   0x0000000000421d78        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+
+.dynamic        0x0000000000421d78      0x260
+ *(.dynamic)
+ .dynamic       0x0000000000421d78      0x260 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+                0x0000000000421d78                _DYNAMIC
+
+.got            0x0000000000421fd8       0x10
+ *(.got)
+ .got           0x0000000000421fd8       0x10 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+ *(.igot)
+                0x0000000000421fe8                . = DATA_SEGMENT_RELRO_END (., (SIZEOF (.got.plt) >= 0x18)?0x18:0x0)
+
+.got.plt        0x0000000000421fe8      0x438
+ *(.got.plt)
+ .got.plt       0x0000000000421fe8      0x438 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+                0x0000000000421fe8                _GLOBAL_OFFSET_TABLE_
+ *(.igot.plt)
+ .igot.plt      0x0000000000422420        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+
+.data           0x0000000000422420        0x4
+ *(.data .data.* .gnu.linkonce.d.*)
+ .data          0x0000000000422420        0x4 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+                0x0000000000422420                data_start
+                0x0000000000422420                __data_start
+ .data          0x0000000000422424        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crti.o
+ .data          0x0000000000422424        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/crtbegin.o
+ .data          0x0000000000422424        0x0 src/main.o
+ .data          0x0000000000422424        0x0 src/debug.o
+ .data          0x0000000000422424        0x0 src/player.o
+ .data          0x0000000000422424        0x0 src/settings.o
+ .data          0x0000000000422424        0x0 src/terminal.o
+ .data          0x0000000000422424        0x0 src/ui_act.o
+ .data          0x0000000000422424        0x0 src/ui.o
+ .data          0x0000000000422424        0x0 src/ui_readline.o
+ .data          0x0000000000422424        0x0 src/ui_dispatch.o
+ .data          0x0000000000422424        0x0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(piano.o)
+ .data          0x0000000000422424        0x0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(json.o)
+ .data          0x0000000000422424        0x0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(crypt.o)
+ .data          0x0000000000422424        0x0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(blowfish.o)
+ .data          0x0000000000422424        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/crtend.o
+ .data          0x0000000000422424        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crtn.o
+
+.tm_clone_table
+                0x0000000000422428        0x0
+ .tm_clone_table
+                0x0000000000422428        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/crtbegin.o
+ .tm_clone_table
+                0x0000000000422428        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/crtend.o
+
+.data1
+ *(.data1)
+                0x0000000000422424                _edata = .
+                [!provide]                        PROVIDE (edata = .)
+                0x0000000000422428                . = ALIGN (ALIGNOF (NEXT_SECTION))
+                0x0000000000422440                __bss_start = .
+
+.bss            0x0000000000422440      0x4a0
+ *(.dynbss)
+ .dynbss        0x0000000000422440       0x38 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+                0x0000000000422440                stdout@@GLIBC_2.2.5
+                0x0000000000422460                stderr@@GLIBC_2.2.5
+                0x0000000000422470                stdin@@GLIBC_2.2.5
+ *(.bss .bss.* .gnu.linkonce.b.*)
+ .bss           0x0000000000422478        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+ .bss           0x0000000000422478        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crti.o
+ .bss           0x0000000000422478        0x1 /usr/lib/gcc/x86_64-redhat-linux/16/crtbegin.o
+ *fill*         0x0000000000422479        0x7 
+ .bss           0x0000000000422480      0x408 src/main.o
+                0x0000000000422480                interrupted
+ .bss           0x0000000000422888        0x4 src/debug.o
+                0x0000000000422888                debug
+ .bss           0x000000000042288c        0x0 src/player.o
+ .bss           0x000000000042288c        0x0 src/settings.o
+ *fill*         0x000000000042288c       0x14 
+ .bss           0x00000000004228a0       0x3c src/terminal.o
+ .bss           0x00000000004228dc        0x0 src/ui_act.o
+ .bss           0x00000000004228dc        0x0 src/ui.o
+ .bss           0x00000000004228dc        0x0 src/ui_readline.o
+ .bss           0x00000000004228dc        0x0 src/ui_dispatch.o
+ .bss           0x00000000004228dc        0x0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(piano.o)
+ .bss           0x00000000004228dc        0x0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(json.o)
+ .bss           0x00000000004228dc        0x0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(crypt.o)
+ .bss           0x00000000004228dc        0x0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(blowfish.o)
+ .bss           0x00000000004228dc        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/crtend.o
+ .bss           0x00000000004228dc        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crtn.o
+ *(COMMON)
+                0x00000000004228e0                . = ALIGN ((. != 0x0)?0x8:0x1)
+ *fill*         0x00000000004228dc        0x4 
+
+.lbss
+ *(.dynlbss)
+ *(.lbss .lbss.* .gnu.linkonce.lb.*)
+ *(LARGE_COMMON)
+                0x00000000004228e0                . = ALIGN (0x8)
+                0x00000000004228e0                . = SEGMENT_START ("ldata-segment", .)
+
+.lrodata
+ *(.lrodata .lrodata.* .gnu.linkonce.lr.*)
+
+.ldata          0x00000000004248e0        0x0
+ *(.ldata .ldata.* .gnu.linkonce.l.*)
+                0x00000000004248e0                . = ALIGN ((. != 0x0)?0x8:0x1)
+                0x00000000004248e0                . = ALIGN (0x8)
+                0x00000000004228e0                _end = .
+                [!provide]                        PROVIDE (end = .)
+                0x00000000004248e0                . = DATA_SEGMENT_END (.)
+
+.stab
+ *(.stab)
+
+.stabstr
+ *(.stabstr)
+
+.stab.excl
+ *(.stab.excl)
+
+.stab.exclstr
+ *(.stab.exclstr)
+
+.stab.index
+ *(.stab.index)
+
+.stab.indexstr
+ *(.stab.indexstr)
+
+.comment        0x0000000000000000       0x2e
+ *(.comment)
+ .comment       0x0000000000000000       0x2e /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+                                         0x8d (size before relaxing)
+ .comment       0x000000000000002e        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/crtbegin.o
+                                         0x2f (size before relaxing)
+ .comment       0x000000000000002e        0x0 src/main.o
+                                         0x2f (size before relaxing)
+ .comment       0x000000000000002e        0x0 src/debug.o
+                                         0x2f (size before relaxing)
+ .comment       0x000000000000002e        0x0 src/player.o
+                                         0x2f (size before relaxing)
+ .comment       0x000000000000002e        0x0 src/settings.o
+                                         0x2f (size before relaxing)
+ .comment       0x000000000000002e        0x0 src/terminal.o
+                                         0x2f (size before relaxing)
+ .comment       0x000000000000002e        0x0 src/ui_act.o
+                                         0x2f (size before relaxing)
+ .comment       0x000000000000002e        0x0 src/ui.o
+                                         0x2f (size before relaxing)
+ .comment       0x000000000000002e        0x0 src/ui_readline.o
+                                         0x2f (size before relaxing)
+ .comment       0x000000000000002e        0x0 src/ui_dispatch.o
+                                         0x2f (size before relaxing)
+ .comment       0x000000000000002e        0x0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(piano.o)
+                                         0x2f (size before relaxing)
+ .comment       0x000000000000002e        0x0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(json.o)
+                                         0x2f (size before relaxing)
+ .comment       0x000000000000002e        0x0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(crypt.o)
+                                         0x2f (size before relaxing)
+ .comment       0x000000000000002e        0x0 /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a(blowfish.o)
+                                         0x2f (size before relaxing)
+ .comment       0x000000000000002e        0x0 /usr/lib/gcc/x86_64-redhat-linux/16/crtend.o
+                                         0x2f (size before relaxing)
+
+.annobin.notes  0x0000000000000000      0x14f
+ .annobin.notes
+                0x0000000000000000      0x14f /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+                                        0x216 (size before relaxing)
+
+.gnu.build.attributes
+                0x00000000004248e0      0x144
+ *(.gnu.build.attributes .gnu.build.attributes.*)
+ .gnu.build.attributes
+                0x00000000004248e0       0x24 /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crt1.o
+ .gnu.build.attributes
+                0x0000000000424904       0x6c /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crti.o
+ .gnu.build.attributes
+                0x0000000000424970       0x24 /usr/lib/gcc/x86_64-redhat-linux/16/crtbegin.o
+ .gnu.build.attributes
+                0x0000000000424994       0x24 /usr/lib/gcc/x86_64-redhat-linux/16/crtend.o
+ .gnu.build.attributes
+                0x00000000004249b8       0x6c /usr/lib/gcc/x86_64-redhat-linux/16/../../../../lib64/crtn.o
+
+.debug
+ *(.debug)
+
+.line
+ *(.line)
+
+.debug_srcinfo
+ *(.debug_srcinfo)
+
+.debug_sfnames
+ *(.debug_sfnames)
+
+.debug_aranges
+ *(.debug_aranges)
+
+.debug_pubnames
+ *(.debug_pubnames)
+
+.debug_info
+ *(.debug_info .gnu.linkonce.wi.*)
+
+.debug_abbrev
+ *(.debug_abbrev)
+
+.debug_line
+ *(.debug_line .debug_line.* .debug_line_end)
+
+.debug_frame
+ *(.debug_frame)
+
+.debug_str
+ *(.debug_str)
+
+.debug_loc
+ *(.debug_loc)
+
+.debug_macinfo
+ *(.debug_macinfo)
+
+.debug_weaknames
+ *(.debug_weaknames)
+
+.debug_funcnames
+ *(.debug_funcnames)
+
+.debug_typenames
+ *(.debug_typenames)
+
+.debug_varnames
+ *(.debug_varnames)
+
+.debug_pubtypes
+ *(.debug_pubtypes)
+
+.debug_ranges
+ *(.debug_ranges)
+
+.debug_addr
+ *(.debug_addr)
+
+.debug_line_str
+ *(.debug_line_str)
+
+.debug_loclists
+ *(.debug_loclists)
+
+.debug_macro
+ *(.debug_macro)
+
+.debug_names
+ *(.debug_names)
+
+.debug_rnglists
+ *(.debug_rnglists)
+
+.debug_str_offsets
+ *(.debug_str_offsets)
+
+.debug_sup
+ *(.debug_sup)
+
+.gnu.attributes
+ *(.gnu.attributes)
+
+/DISCARD/
+ *(.note.GNU-stack)
+ *(.gnu_debuglink)
+ *(.gnu.lto_*)
+ *(.gnu_object_only)
+OUTPUT(pianobar elf64-x86-64)

@@ -1,0 +1,12 @@
+50c9051336d5f283ba37d1b3944d2ca9fe4df92a8204cef23a5d8137f39f4742  /work/pianobar-melodica/full/run.orDKMZ5h/pianobar/pianobar
+726a96100296048bb163e2fb30cf8b1a2348906a36770f4e04dd1fe7cd1fb0d7  /work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a
+0e59d10c801e97bf436c739d22b0855921951659da65e9a4cd531a283d80f07a  /work/melodica-integration/include/piano.h
+779354559249dabdb011b2edb7bb310956540d535560a16317e403819dc5a250  /work/pianobar-melodica/full/run.orDKMZ5h/pianobar/src/main.o
+6558997540bee33964720815b7c7bf5325448c3154f2b5ebb1438a6b7e5e774b  /work/pianobar-melodica/full/run.orDKMZ5h/pianobar/src/debug.o
+d5fe6b77901938116c4e8a20df9ea2ada1fdcac894a1bd4b2cf89363bf468284  /work/pianobar-melodica/full/run.orDKMZ5h/pianobar/src/player.o
+7448bf3d03a51da6c7c90257ed7decade828125259963f4973782f4f3319e251  /work/pianobar-melodica/full/run.orDKMZ5h/pianobar/src/settings.o
+4febc6e0b140dbad6633774e00842ae6da674d02ab95110e06bc354f0889df90  /work/pianobar-melodica/full/run.orDKMZ5h/pianobar/src/terminal.o
+23d4271cf8fbdb231aaa4f4b19125a511dbbcdc3dd8c077241d3a8587a15289d  /work/pianobar-melodica/full/run.orDKMZ5h/pianobar/src/ui_act.o
+4384a24d29447bc16dcd613004c8be597bc302a419f6af84b27e016ec9982b74  /work/pianobar-melodica/full/run.orDKMZ5h/pianobar/src/ui.o
+6017787f54167306c4af4d7bec402836584d865aee167e7ea5e83d992516be1e  /work/pianobar-melodica/full/run.orDKMZ5h/pianobar/src/ui_readline.o
+0a96e1fd188596f8be6cf0b28a55d6cd6a8cee1a7fffadf99d730910712a3572  /work/pianobar-melodica/full/run.orDKMZ5h/pianobar/src/ui_dispatch.o
