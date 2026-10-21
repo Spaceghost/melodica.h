@@ -21,6 +21,34 @@ def definition():
 
 
 class OneJobControllerTests(unittest.TestCase):
+    def test_runner_upload_creates_persistent_directory_and_resolves_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            state = Path(temporary)
+            package = state / 'runner.tar.gz'
+            package.write_bytes(b'fixture archive, never executed\n')
+            alias = state / 'runner-alias.tar.gz'
+            alias.symlink_to(package)
+            calls = []
+            def command(args, **kwargs):
+                calls.append(args)
+                if args[:3] == ['incus', 'file', 'push']:
+                    raise RuntimeError('fixture stopped after upload')
+                return ''
+            with patch.object(controller, 'command', side_effect=command), \
+                 patch.object(controller, 'instance', return_value=definition()), \
+                 patch.object(controller, 'cleanup') as cleanup, patch.object(controller, 'api') as api:
+                with self.assertRaisesRegex(RuntimeError, 'fixture stopped after upload'):
+                    controller.one_job('bak:melodica-complete-fixture', 'b' * 32,
+                                       1, alias, state, 60, [])
+                cleanup.assert_called_once()
+                api.assert_not_called()
+            upload_index = next(i for i, args in enumerate(calls) if args[:3] == ['incus', 'file', 'push'])
+            mkdir_index = next(i for i, args in enumerate(calls)
+                               if args[-3:] == ['mkdir', '-p', '/opt/melodica-runner'])
+            self.assertLess(mkdir_index, upload_index)
+            self.assertEqual(calls[upload_index][3], str(package.resolve()))
+            self.assertTrue(calls[upload_index][4].endswith('/opt/melodica-runner/actions-runner.tar.gz'))
+
     def test_registration_identity_accepts_official_utf8_bom(self):
         with tempfile.TemporaryDirectory() as temporary:
             identity = Path(temporary) / '.runner'
