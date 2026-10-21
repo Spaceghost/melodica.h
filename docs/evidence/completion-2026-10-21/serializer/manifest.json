@@ -27,7 +27,7 @@
     },
     "odin": {
       "path": "/work/melodica/build/odin/bench",
-      "sha256": "a4efa6f65bfe6225558f1567126480fa43670e49a6535af40a72412ba514ec3e",
+      "sha256": "df0f64553d01cf4290da306412377624b71db75e7f486d740221d915b4f9665e",
       "bytes": 22400
     },
     "zig": {

@@ -60,9 +60,9 @@ gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/utility.o 
 gcc .build/release/objs//work/melodica/.cache/codin/.c99-work/src/allocator.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/allocator_arena.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/allocator_null.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/allocator_std.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/array.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/build.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/c99.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/context.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/dump.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/ir.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/lexer.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/main.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/parser.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/path.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/profiler.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/profiler_null.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/profiler_spall.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/project.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/report.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/sched.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/sched_async.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/sched_null.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/sched_sync.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/sema.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/strbuf.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/string.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/thread.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/threadpool.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/tree.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/utility.o -lm -lpthread -Wl,--gc-sections -o codin
 make[2]: Leaving directory '/work/melodica/.cache/codin'
 codin experimental strict C99 backend built
-codin: diagnostic: decimal_size stage=parsed result=0x7f39b0016f70 kind=16 ctype=5
-codin: diagnostic: decimal_size stage=after-sema result=0x7f39b0016f70 kind=16 ctype=5
-codin: diagnostic: decimal_size stage=after-generic-discovery result=0x7f39b0016f70 kind=16 ctype=5
+codin: diagnostic: decimal_size stage=parsed result=0x7f1d74016f70 kind=16 ctype=5
+codin: diagnostic: decimal_size stage=after-sema result=0x7f1d74016f70 kind=16 ctype=5
+codin: diagnostic: decimal_size stage=after-generic-discovery result=0x7f1d74016f70 kind=16 ctype=5
 melodica smoke: ok
 === codin C99: structs fixture ===
 codin struct smoke: ok
@@ -115,6 +115,6 @@ $ nm -u /work/melodica/build/codin/libmelodica.a
 
 melodica.gcc.o:
 $ ldd /work/melodica/build/codin/conformance
-	linux-vdso.so.1 (0x00007f5e8b065000)
-	libc.so.6 => /lib64/libc.so.6 (0x00007f5e8ae5d000)
-	/lib64/ld-linux-x86-64.so.2 (0x00007f5e8b067000)
+	linux-vdso.so.1 (0x00007f54f9306000)
+	libc.so.6 => /lib64/libc.so.6 (0x00007f54f90fe000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007f54f9308000)

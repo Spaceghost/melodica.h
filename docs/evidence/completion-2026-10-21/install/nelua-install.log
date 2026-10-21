@@ -1,4 +1,6 @@
 make[2]: Entering directory '/work/melodica'
+mkdir -p build/nelua
+/opt/melodica-tools/nelua/nelua --release --object --cc="gcc" --cflags="-O2" -o build/nelua/piano.o impl/nelua/piano.nelua
 install -d /work/melodica/build/install-smoke/nelua/usr/include /work/melodica/build/install-smoke/nelua/usr/lib/pkgconfig /work/melodica/build/install-smoke/nelua/usr/share/licenses/melodica
 install -m 0644 include/melodica.h include/piano.h /work/melodica/build/install-smoke/nelua/usr/include/
 install -m 0644 build/c/libmelodica.a /work/melodica/build/install-smoke/nelua/usr/lib/libmelodica.a

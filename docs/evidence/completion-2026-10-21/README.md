@@ -3,12 +3,14 @@
 Canonical command: `make check`, exit **0**, on Fedora 44 x86_64 in
 `bak:melodica-complete-20261020`, workspace `/work/melodica`.
 The compiled source commit is
-[`d9d22ed2670f70bc35130528c9281bebae1670c1`](https://github.com/Spaceghost/melodica.h/commit/d9d22ed2670f70bc35130528c9281bebae1670c1).
-The following commit adds documentation and these retained outputs.
+[`6e06745d0fc31a34103abd69e333dd5e81bacda4`](https://github.com/Spaceghost/melodica.h/commit/6e06745d0fc31a34103abd69e333dd5e81bacda4).
+The following commit adds these retained outputs and a CI controller queue fix;
+library sources are unchanged. The SDK records its build and release commits
+separately, with the changes between them.
 
 | Record | Result / contents |
 |---|---|
-| [Canonical log](canonical-check.log) | Full command sequence: safety, portability, consumer, 50 harness tests, three comparison leagues and installation |
+| [Canonical log](canonical-check.log) | Full command sequence: safety, portability, consumer, 51 harness tests, three comparison leagues and installation |
 | [Serializer standings](serializer/standings.txt), [correctness](serializer-correctness/status.json) | All five lanes pass 1,591 cases / 125,022 checks and the unchanged 90% mean / 80% worst gate |
 | [C/reference status](api-c/status.txt), [native status](api-native/status.json), [native standings](api-native/standings.txt) | All 14 differential suites match; native layouts pass 313 checks per implementation; six-way API and playlist measurements |
 | [Consumer status](consumer/status.txt), [installation output](install/c.txt) | Eight unchanged historical application objects compile; all five installed public clients agree |

@@ -3,19 +3,19 @@
     "status": "passed",
     "artifact": "build/c/libmelodica.a",
     "bytes": 12690,
-    "sha256": "998b0231fde6e9f271159c80dc599bee9c2b002510fc2ca907784e9b22530d30"
+    "sha256": "d2f303c982ed7cc3cb41ac04b91f09553cb7c4117422fdd9728b2aec6273cb30"
   },
   "odin": {
     "status": "passed",
     "artifact": "build/odin/libmelodica.a",
     "bytes": 9986,
-    "sha256": "ec6f72579619bc73822bd3d00082a9e45fa6902a5a379084e9e49fe3f6499f79"
+    "sha256": "7b76d338896c4805352dfb89b8bb0265df9ff3af2a2bacce796801fcbdca06b9"
   },
   "zig": {
     "status": "passed",
     "artifact": "build/zig/libmelodica.a",
     "bytes": 38152,
-    "sha256": "df6611e952fa8559d55bb81880ea79983736c90fa2dc6b083e088509a220d94e"
+    "sha256": "c71c2e1f01a1031f2fe5738f5e4a794d2be2b70e8528a700710b87085a11b220"
   },
   "nelua": {
     "status": "passed",
@@ -27,7 +27,7 @@
     "status": "passed",
     "artifact": "build/codin/libmelodica.a",
     "bytes": 10802,
-    "sha256": "86350c5e02463d43584997b45a4b6cbd078ddbdc8fceff47960b26b936473a4f"
+    "sha256": "3ce97be1eb565f93f1aad5a45ff0525354bf5506147a2ed543b7dde134aecb32"
   },
   "codin-native-control": {
     "status": "passed"

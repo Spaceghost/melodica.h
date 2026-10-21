@@ -94,19 +94,27 @@ print('Source credential-path audit passed')
 
 def queued_jobs(sha):
     selected = []
-    for status in ('queued', 'in_progress'):
+    seen = set()
+    # Concurrency groups keep work pending; requested runs may not be queued yet.
+    for status in ('queued', 'in_progress', 'pending', 'requested', 'waiting'):
         payload = api(f'repos/{REPO}/actions/runs?status={status}&per_page=100')
         if payload.get('total_count', 0) > 100:
             raise RuntimeError('CI queue inventory is truncated; inspect it before creating workers')
         for run in payload.get('workflow_runs', []):
+            if run['id'] in seen:
+                continue
+            seen.add(run['id'])
             jobs = api(f'repos/{REPO}/actions/runs/{run["id"]}/jobs?per_page=100')
             if jobs.get('total_count', 0) > 100:
                 raise RuntimeError('CI job inventory is truncated')
             for job in jobs.get('jobs', []):
-                if job.get('status') != 'queued' or not set(LABELS).issubset(job.get('labels', [])):
+                state = job.get('status')
+                if state not in ('queued', 'pending', 'requested', 'waiting') or not set(LABELS).issubset(job.get('labels', [])):
                     continue
                 if run.get('head_sha') != sha:
                     raise RuntimeError('Another commit has a matching queued job; inspect run ' + str(run['id']))
+                if state == 'waiting':
+                    raise RuntimeError('Matching CI job waits for deployment protection: ' + str(job['id']))
                 selected.append({'run_id': run['id'], 'job_id': job['id'], 'name': job['name']})
     return selected
 

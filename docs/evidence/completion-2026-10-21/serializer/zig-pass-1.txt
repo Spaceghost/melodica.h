@@ -1,7 +1,7 @@
 melodica language shootout (higher is better)
-json_ascii                3106.41 MiB/s  (405900 iterations, median of 5)
-json_payload               728.63 MiB/s  (437666 iterations, median of 5)
-url_ascii                 1266.45 MiB/s  (381300 iterations, median of 5)
-url_mixed                  943.29 MiB/s  (774333 iterations, median of 5)
-station_request             33.23 Mreq/s (750000 iterations, median of 5)
+json_ascii                3326.43 MiB/s  (405900 iterations, median of 5)
+json_payload               760.62 MiB/s  (437666 iterations, median of 5)
+url_ascii                 1329.10 MiB/s  (381300 iterations, median of 5)
+url_mixed                 1001.03 MiB/s  (774333 iterations, median of 5)
+station_request             34.27 Mreq/s (750000 iterations, median of 5)
 sink=1568335385

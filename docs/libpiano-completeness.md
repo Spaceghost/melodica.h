@@ -117,17 +117,17 @@ five serializers and passed the unchanged 90% / 80% gate:
 
 | Implementation | Geometric mean | Worst workload |
 |---|---:|---:|
-| C | 95.5% | 91.8% |
-| Odin | 93.4% | 86.8% |
-| Zig | 96.1% | 94.0% |
-| Nelua | 97.3% | 92.8% |
-| Codin | 95.6% | 90.4% |
+| C | 96.5% | 93.4% |
+| Odin | 93.5% | 85.5% |
+| Zig | 98.6% | 97.8% |
+| Nelua | 97.3% | 93.4% |
+| Codin | 97.2% | 91.6% |
 
 The [serializer report](evidence/completion-2026-10-21/serializer/standings.txt)
 retains the full workload ratios. The
 [six-way API and playlist report](evidence/completion-2026-10-21/api-native/standings.txt)
 contains all 14 timed workloads. Native variants lead most API fixture suites;
-C leads scaled playlist parsing at 79,141, 4,836 and 1,220 requests/s for 4, 64
+C leads scaled playlist parsing at 77,275, 4,785 and 1,187 requests/s for 4, 64
 and 256 songs, respectively. These are measurements of the specified fixtures on
 this worker. API and playlist leagues do not inherit the serializer speed gate.
 

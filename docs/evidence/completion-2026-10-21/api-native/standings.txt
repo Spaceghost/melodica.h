@@ -4,24 +4,24 @@ C has no json-c/gcrypt runtime dependencies; native lanes use both.
 API rates count complete fixture suites, not individual calls.
 
 workload                     reference             c          odin           zig         nelua         codin unit
-piano                         6266.237      8051.051     11498.959     11606.243     11844.534     11710.021 suites/s
-playlist                      4709.595      5663.730      5164.620      5270.802      5319.722      5118.891 suites/s
-search                       13553.676      9311.784     14507.355     14418.770     15023.073     14691.490 suites/s
-station_mutations            10650.962      9000.256     13930.256     13937.855     14249.173     14042.495 suites/s
-feedback                     10481.823      9302.979     14869.711     14901.293     14862.904     14988.985 suites/s
-seed                         10154.012      9203.675     14430.067     14411.108     14678.272     14452.617 suites/s
-station_info                 12970.162      9269.567     14586.241     14497.198     14594.364     14374.043 suites/s
-quickmix_genre               12221.903      9378.275     14744.339     14953.491     14627.906     14757.397 suites/s
-explain_bookmarks            12231.720      9329.129     14411.883     14699.601     14134.457     14522.488 suites/s
-settings                     11206.520      9294.026     14911.294     14959.385     14971.472     14920.859 suites/s
-station_modes                12829.281      9089.092     14923.620     15176.373     14885.087     14511.273 suites/s
-playlist_parse_4             41194.742     79141.110     41689.247     41319.173     40484.033     40102.365 requests/s
-playlist_parse_64             2822.341      4835.687      2846.993      2827.365      2776.570      2801.659 requests/s
-playlist_parse_256             583.257      1219.957       594.814       593.894       571.097       583.092 requests/s
+piano                         6245.340      8074.084     11743.154     11716.801     11477.430     11706.526 suites/s
+playlist                      4749.460      5609.320      5342.142      5277.438      5328.505      5210.541 suites/s
+search                       13907.948      9295.042     14530.248     14741.863     14741.491     14695.066 suites/s
+station_mutations            11012.759      8937.033     14177.467     14070.691     14474.208     13912.197 suites/s
+feedback                     11475.257      9318.075     15006.016     14964.897     15235.673     14758.548 suites/s
+seed                         10537.492      9327.239     14696.490     14544.235     14677.889     14588.337 suites/s
+station_info                 13473.709      9104.702     14833.894     14506.015     14567.632     14303.788 suites/s
+quickmix_genre               12719.482      8765.599     14919.621     15105.886     14151.547     14692.216 suites/s
+explain_bookmarks            12547.510      8413.415     14998.816     14830.927     14376.743     14383.927 suites/s
+settings                     11631.499      8201.521     14964.992     14393.881     14647.211     14685.193 suites/s
+station_modes                12877.021      9098.328     14773.778     14588.692     11675.788     14655.010 suites/s
+playlist_parse_4             42287.391     77275.320     42018.652     40997.421     41238.238     41617.419 requests/s
+playlist_parse_64             2836.446      4784.515      2850.236      2802.390      2793.210      2849.619 requests/s
+playlist_parse_256             583.176      1186.909       589.723       569.265       578.477       599.511 requests/s
 
 Normalized against the fastest independent implementation per workload:
-c        geometric mean   71.8%  worst   59.9%
-odin     geometric mean   85.8%  worst   48.8%
-zig      geometric mean   86.1%  worst   48.7%
-nelua    geometric mean   85.9%  worst   46.8%
-codin    geometric mean   85.4%  worst   47.8%
+c        geometric mean   70.2%  worst   54.8%
+odin     geometric mean   87.1%  worst   49.7%
+zig      geometric mean   86.0%  worst   48.0%
+nelua    geometric mean   84.6%  worst   48.7%
+codin    geometric mean   86.0%  worst   50.5%

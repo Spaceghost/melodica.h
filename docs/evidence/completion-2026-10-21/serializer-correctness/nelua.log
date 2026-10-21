@@ -44,6 +44,6 @@ $ nm -u /work/melodica/build/nelua/libmelodica.a
 libmelodica.o:
                  U memcpy
 $ ldd /work/melodica/build/nelua/conformance
-	linux-vdso.so.1 (0x00007f7f96ded000)
-	libc.so.6 => /lib64/libc.so.6 (0x00007f7f96be5000)
-	/lib64/ld-linux-x86-64.so.2 (0x00007f7f96def000)
+	linux-vdso.so.1 (0x00007efec6358000)
+	libc.so.6 => /lib64/libc.so.6 (0x00007efec6150000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007efec635a000)
