@@ -1,0 +1,38 @@
+reference=ad5ec908de10479ecee7d7c0e1030d12146f8f16
+gcc (GCC) 16.2.1 20260819 (Red Hat 16.2.1-2)
+Copyright (C) 2026 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+Linux melodica-complete-20261020 6.18.54-0-lts #1-Alpine SMP PREEMPT_DYNAMIC 2026-09-28 07:13:34 x86_64 GNU/Linux
+NAME="Fedora Linux"
+VERSION="44 (Container Image)"
+RELEASE_TYPE=stable
+ID=fedora
+VERSION_ID=44
+VERSION_CODENAME=""
+PRETTY_NAME="Fedora Linux 44 (Container Image)"
+ANSI_COLOR="0;38;2;60;110;180"
+LOGO=fedora-logo-icon
+CPE_NAME="cpe:/o:fedoraproject:fedora:44"
+DEFAULT_HOSTNAME="fedora"
+HOME_URL="https://fedoraproject.org/"
+DOCUMENTATION_URL="https://docs.fedoraproject.org/en-US/fedora/f44/"
+SUPPORT_URL="https://ask.fedoraproject.org/"
+BUG_REPORT_URL="https://bugzilla.redhat.com/"
+REDHAT_BUGZILLA_PRODUCT="Fedora"
+REDHAT_BUGZILLA_PRODUCT_VERSION=44
+REDHAT_SUPPORT_PRODUCT="Fedora"
+REDHAT_SUPPORT_PRODUCT_VERSION=44
+SUPPORT_END=2027-05-19
+VARIANT="Container Image"
+VARIANT_ID=container
+1.2.0
+62.28.103
+62.12.103
+60.26.103
+11.14.103
+8.18.0
+0.18
+1.12.2-unknown
+0e59d10c801e97bf436c739d22b0855921951659da65e9a4cd531a283d80f07a  /work/melodica/include/piano.h

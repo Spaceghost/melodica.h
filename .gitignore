@@ -13,3 +13,6 @@ build/
 *.profraw
 *.profdata
 .DS_Store
+__pycache__/
+*.py[cod]
+*.spall

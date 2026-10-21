@@ -1,0 +1,2 @@
+# Preserve raw comparison output, including protocol-significant trailing spaces.
+docs/evidence/completion-2026-10-21/** -whitespace

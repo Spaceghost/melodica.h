@@ -1,0 +1,26 @@
+explain.ret=1
+explain.type=16
+explain.secure=0
+explain.url=/services/json/?method=track.explainTrack&auth_token=auth%20token%2F%3F&partner_id=42&user_id=listener-7
+explain.post=ce6caa110b803ccbea06671439f98e41e69d4c3f7cd29754b99189b23c23c11b4068dc546da566e0189f2bf0e6ac7afb3a6b0ae21cb19034b31877b50f87093bde3106bdf5417302edb8805d5c688efa2d9d42e4b4561887f04678c4a3285793
+explain.response=1
+explain.text=We're playing this track because it features acoustic instrumentation, vocal harmony and minor key tonality.
+explain.single.response=1
+explain.single.text=We're playing this track because it features single trait, 
+explain.sparse.response=1
+explain.sparse.text=We're playing this track because it features late trait.
+explain.missing.response=1
+explain.missing.text=preserved
+explain.error=2025
+bookmark.song.ret=1
+bookmark.song.type=18
+bookmark.song.secure=0
+bookmark.song.url=/services/json/?method=bookmark.addSongBookmark&auth_token=auth%20token%2F%3F&partner_id=42&user_id=listener-7
+bookmark.song.post=ce6caa110b803ccbea06671439f98e41e69d4c3f7cd29754b99189b23c23c11b4068dc546da566e0189f2bf0e6ac7afb3a6b0ae21cb19034b31877b50f87093bde3106bdf5417302edb8805d5c688efa2d9d42e4b4561887f04678c4a3285793
+bookmark.song.response=1
+bookmark.artist.ret=1
+bookmark.artist.type=19
+bookmark.artist.secure=0
+bookmark.artist.url=/services/json/?method=bookmark.addArtistBookmark&auth_token=auth%20token%2F%3F&partner_id=42&user_id=listener-7
+bookmark.artist.post=ce6caa110b803ccbea06671439f98e41e69d4c3f7cd29754b99189b23c23c11b4068dc546da566e0189f2bf0e6ac7afb3a6b0ae21cb19034b31877b50f87093bde3106bdf5417302edb8805d5c688efa2d9d42e4b4561887f04678c4a3285793
+bookmark.artist.response=1

@@ -1,0 +1,209 @@
+{
+  "schema": 1,
+  "lanes": [
+    "reference",
+    "c",
+    "odin",
+    "zig",
+    "nelua",
+    "codin"
+  ],
+  "rows": [
+    {
+      "league": "api",
+      "workload": "piano",
+      "unit": "suites/s",
+      "rates": {
+        "reference": 6266.237,
+        "c": 8051.0505,
+        "odin": 11498.959,
+        "zig": 11606.2425,
+        "nelua": 11844.534,
+        "codin": 11710.0205
+      },
+      "iterations": 100
+    },
+    {
+      "league": "api",
+      "workload": "playlist",
+      "unit": "suites/s",
+      "rates": {
+        "reference": 4709.595499999999,
+        "c": 5663.7305,
+        "odin": 5164.619500000001,
+        "zig": 5270.802,
+        "nelua": 5319.7225,
+        "codin": 5118.891
+      },
+      "iterations": 100
+    },
+    {
+      "league": "api",
+      "workload": "search",
+      "unit": "suites/s",
+      "rates": {
+        "reference": 13553.675500000001,
+        "c": 9311.7845,
+        "odin": 14507.355,
+        "zig": 14418.770499999999,
+        "nelua": 15023.073,
+        "codin": 14691.4905
+      },
+      "iterations": 100
+    },
+    {
+      "league": "api",
+      "workload": "station_mutations",
+      "unit": "suites/s",
+      "rates": {
+        "reference": 10650.962,
+        "c": 9000.256000000001,
+        "odin": 13930.256,
+        "zig": 13937.855,
+        "nelua": 14249.1725,
+        "codin": 14042.4945
+      },
+      "iterations": 100
+    },
+    {
+      "league": "api",
+      "workload": "feedback",
+      "unit": "suites/s",
+      "rates": {
+        "reference": 10481.823499999999,
+        "c": 9302.978500000001,
+        "odin": 14869.710500000001,
+        "zig": 14901.293000000001,
+        "nelua": 14862.903999999999,
+        "codin": 14988.985
+      },
+      "iterations": 100
+    },
+    {
+      "league": "api",
+      "workload": "seed",
+      "unit": "suites/s",
+      "rates": {
+        "reference": 10154.0115,
+        "c": 9203.675,
+        "odin": 14430.0665,
+        "zig": 14411.108,
+        "nelua": 14678.2725,
+        "codin": 14452.6165
+      },
+      "iterations": 100
+    },
+    {
+      "league": "api",
+      "workload": "station_info",
+      "unit": "suites/s",
+      "rates": {
+        "reference": 12970.162499999999,
+        "c": 9269.567,
+        "odin": 14586.241,
+        "zig": 14497.1975,
+        "nelua": 14594.3645,
+        "codin": 14374.0435
+      },
+      "iterations": 100
+    },
+    {
+      "league": "api",
+      "workload": "quickmix_genre",
+      "unit": "suites/s",
+      "rates": {
+        "reference": 12221.9025,
+        "c": 9378.275000000001,
+        "odin": 14744.339,
+        "zig": 14953.491,
+        "nelua": 14627.905999999999,
+        "codin": 14757.3965
+      },
+      "iterations": 100
+    },
+    {
+      "league": "api",
+      "workload": "explain_bookmarks",
+      "unit": "suites/s",
+      "rates": {
+        "reference": 12231.720000000001,
+        "c": 9329.1285,
+        "odin": 14411.883,
+        "zig": 14699.600999999999,
+        "nelua": 14134.4565,
+        "codin": 14522.488000000001
+      },
+      "iterations": 100
+    },
+    {
+      "league": "api",
+      "workload": "settings",
+      "unit": "suites/s",
+      "rates": {
+        "reference": 11206.52,
+        "c": 9294.026000000002,
+        "odin": 14911.294,
+        "zig": 14959.3845,
+        "nelua": 14971.472,
+        "codin": 14920.8585
+      },
+      "iterations": 100
+    },
+    {
+      "league": "api",
+      "workload": "station_modes",
+      "unit": "suites/s",
+      "rates": {
+        "reference": 12829.2805,
+        "c": 9089.092499999999,
+        "odin": 14923.6195,
+        "zig": 15176.372500000001,
+        "nelua": 14885.086500000001,
+        "codin": 14511.273000000001
+      },
+      "iterations": 100
+    },
+    {
+      "league": "playlist",
+      "workload": "playlist_parse_4",
+      "unit": "requests/s",
+      "rates": {
+        "reference": 41194.741500000004,
+        "c": 79141.11,
+        "odin": 41689.2465,
+        "zig": 41319.1725,
+        "nelua": 40484.032999999996,
+        "codin": 40102.365
+      },
+      "iterations": 10000
+    },
+    {
+      "league": "playlist",
+      "workload": "playlist_parse_64",
+      "unit": "requests/s",
+      "rates": {
+        "reference": 2822.3410000000003,
+        "c": 4835.687,
+        "odin": 2846.9930000000004,
+        "zig": 2827.365,
+        "nelua": 2776.5699999999997,
+        "codin": 2801.6594999999998
+      },
+      "iterations": 750
+    },
+    {
+      "league": "playlist",
+      "workload": "playlist_parse_256",
+      "unit": "requests/s",
+      "rates": {
+        "reference": 583.2574999999999,
+        "c": 1219.9565,
+        "odin": 594.8145,
+        "zig": 593.8935,
+        "nelua": 571.097,
+        "codin": 583.092
+      },
+      "iterations": 150
+    }
+  ]
+}

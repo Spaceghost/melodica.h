@@ -1,0 +1,3 @@
+playlist_parse_4 40481.650 requests/s median_of=5 iterations=10000
+playlist_parse_64 2780.037 requests/s median_of=5 iterations=750
+playlist_parse_256 556.245 requests/s median_of=5 iterations=150

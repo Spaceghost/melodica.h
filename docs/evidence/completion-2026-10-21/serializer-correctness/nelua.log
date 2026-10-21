@@ -1,0 +1,49 @@
+$ make -B test-nelua build/nelua/bench
+make[1]: Entering directory '/work/melodica'
+mkdir -p build/nelua
+/opt/melodica-tools/nelua/nelua --release -P nogc --cflags=-O3 --cc="gcc" -A -o build/nelua/libmelodica.a impl/nelua/melodica.nelua
+gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude tests/smoke.c \
+	build/nelua/libmelodica.a -o build/nelua/smoke
+./build/nelua/smoke
+melodica smoke: ok
+gcc -O3 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude bench/bench.c \
+	build/nelua/libmelodica.a -o build/nelua/bench
+make[1]: Leaving directory '/work/melodica'
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude tests/conformance.c /work/melodica/build/nelua/libmelodica.a -o /work/melodica/build/nelua/conformance
+$ /work/melodica/build/nelua/conformance
+conformance: 1591 cases, 125022 checks; all bytes, guards, short buffers, decimal boundaries: ok
+$ size -A /work/melodica/build/nelua/libmelodica.a
+libmelodica.o   (ex /work/melodica/build/nelua/libmelodica.a):
+section              size   addr
+.text                7155      0
+.data                   0      0
+.bss                    0      0
+.rodata               144      0
+.rodata.str1.8         44      0
+.rodata.str1.1         14      0
+.rodata.cst16          32      0
+.comment               47      0
+.note.GNU-stack         0      0
+.note.gnu.property     48      0
+.eh_frame             344      0
+Total                7828
+
+
+$ nm -g --defined-only /work/melodica/build/nelua/libmelodica.a
+
+libmelodica.o:
+0000000000000000 T melodica_abi_version
+0000000000000c30 T melodica_json_escape
+0000000000000b20 T melodica_json_escape_size
+0000000000001290 T melodica_station_list_request
+0000000000001120 T melodica_station_list_request_size
+00000000000003e0 T melodica_url_encode
+0000000000000010 T melodica_url_encode_size
+$ nm -u /work/melodica/build/nelua/libmelodica.a
+
+libmelodica.o:
+                 U memcpy
+$ ldd /work/melodica/build/nelua/conformance
+	linux-vdso.so.1 (0x00007f7f96ded000)
+	libc.so.6 => /lib64/libc.so.6 (0x00007f7f96be5000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007f7f96def000)

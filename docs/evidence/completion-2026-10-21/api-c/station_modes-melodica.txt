@@ -1,0 +1,35 @@
+modes.get.ret=1
+modes.get.type=25
+modes.get.secure=1
+modes.get.url=/services/json/?method=interactiveradio.v1.getAvailableModesSimple&auth_token=auth%20token%2F%3F&partner_id=42&user_id=listener-7
+modes.get.post=644530e9fa32d7baa57910519448e55cb3af1f4f8d5cd7b8d9fd51a7d8547dd191be75d91161c24a03e2d3ba87d29b4543d7b9631a8d1b2e6706bad65709adce51aa94d1f303ece8fc3b5d8e7a895e4368adbfb66744050ec29ff0baab82a078
+modes.get.response=1
+mode.0.id=1
+mode.0.name=Crowd Faves
+mode.0.description=Popular
+mode.0.algorithmic=1
+mode.0.takeover=0
+mode.0.active=0
+mode.1.id=7
+mode.1.name=Discovery ☃
+mode.1.description=Deep/cuts
+mode.1.algorithmic=0
+mode.1.takeover=1
+mode.1.active=1
+mode.2.id=0
+mode.2.name=<null>
+mode.2.description=<null>
+mode.2.algorithmic=0
+mode.2.takeover=0
+mode.2.active=0
+modes.count=3
+modes.get.empty.response=1
+modes.get.empty.count=0
+modes.set.ret=1
+modes.set.type=26
+modes.set.secure=1
+modes.set.url=/services/json/?method=interactiveradio.v1.setAndGetAvailableModes&auth_token=auth%20token%2F%3F&partner_id=42&user_id=listener-7
+modes.set.post=644530e9fa32d7baa57910519448e55cb3af1f4f8d5cd7b8d9fd51a7d8547dd164bca73342ba40d0601bdca32338684acbf5b0e51641d0fa61efbd955664c7d3421c1103ceaff1a9fbc92da6f1b3b2fec2a33f4a4fc5d9bb93c85d4ce5dee77f4f7fe35c72689997
+modes.set.response=1
+modes.set.mismatch=0
+modes.set.error=2025

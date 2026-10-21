@@ -1,0 +1,7 @@
+melodica language shootout (higher is better)
+json_ascii                3305.94 MiB/s  (405900 iterations, median of 5)
+json_payload               736.56 MiB/s  (437666 iterations, median of 5)
+url_ascii                 1214.35 MiB/s  (381300 iterations, median of 5)
+url_mixed                  938.80 MiB/s  (774333 iterations, median of 5)
+station_request             34.94 Mreq/s (750000 iterations, median of 5)
+sink=1568335385

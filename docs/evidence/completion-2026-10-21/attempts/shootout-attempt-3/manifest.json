@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "host": "melodica-complete-20261020",
+  "platform": "Linux-6.18.54-0-lts-x86_64-with-glibc2.43",
+  "orders": [
+    [
+      "c",
+      "odin",
+      "zig",
+      "nelua",
+      "codin"
+    ],
+    [
+      "codin",
+      "nelua",
+      "zig",
+      "odin",
+      "c"
+    ]
+  ],
+  "aggregation": "median of two opposite-order process passes",
+  "artifacts": {
+    "c": {
+      "path": "/work/melodica/build/c/bench",
+      "sha256": "023240ee7ffc381d0a4c45488040be74ed0c335ca68d08814b6b003669e2e703",
+      "bytes": 29896
+    },
+    "odin": {
+      "path": "/work/melodica/build/odin/bench",
+      "sha256": "087e93b20fb42a7270e29d8df6b70a5fe0bd9ac6dabaf2739c552554492b8ec3",
+      "bytes": 18304
+    },
+    "zig": {
+      "path": "/work/melodica/build/zig/bench",
+      "sha256": "a5f3119b509fc2984bab55ecf104e5ceea8049ef7fcebb984b4baba657315fa2",
+      "bytes": 33560
+    },
+    "nelua": {
+      "path": "/work/melodica/build/nelua/bench",
+      "sha256": "7fd334cc5915cb1d72b1c36a791b2eda6a5b7a566bae4dfc4eeb0e09ed0ddcb7",
+      "bytes": 29896
+    },
+    "codin": {
+      "path": "/work/melodica/build/codin/bench",
+      "sha256": "008ba2db47803aacc752dfa4f16fa8919dfa3f0bc30810ae9b308ca6f4ed4a89",
+      "bytes": 34064
+    }
+  }
+}

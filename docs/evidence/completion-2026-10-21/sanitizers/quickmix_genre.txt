@@ -1,0 +1,31 @@
+quickmix.ret=1
+quickmix.type=13
+quickmix.secure=0
+quickmix.url=/services/json/?method=user.setQuickMix&auth_token=auth%20token%2F%3F&partner_id=42&user_id=listener-7
+quickmix.post=b0cfc2130734e9aa5d9e8139060944433efb0cc01d02b2a28f2a07cad669c8215c4aa5d0257291477cb8b19e6054d3f2362c88e0be420cceb80e6cf7005c8851cbf5b0e51641d0fa61efbd955664c7d3421c1103ceaff1a9fbc92da6f1b3b2fec2a33f4a4fc5d9bb93c85d4ce5dee77f4f7fe35c72689997
+quickmix.response=1
+genres.ret=1
+genres.type=14
+genres.secure=0
+genres.url=/services/json/?method=station.getGenreStations&auth_token=auth%20token%2F%3F&partner_id=42&user_id=listener-7
+genres.post=52bdd77cc03d363a837215eb8d5878e6e74e0172bc156d97c830f840d2877736a7ad31f964b75f0076c74ac639b113846fd2f4443ccc8313b7e5e8a70d747164
+genres.response=1
+genres.categories=2
+genres.category0.name=Alt ☃
+genres.category0.count=2
+genres.category0.genre0.name=Indie / "
+genres.category0.genre0.id=genre/1
+genres.category0.genre1.name=Noise
+genres.category0.genre1.id=genre-2
+genres.category1.name=Empty
+genres.category1.count=0
+genres.missing-result.response=1
+genres.error=2025
+transform.ret=1
+transform.type=15
+transform.secure=0
+transform.url=/services/json/?method=station.transformSharedStation&auth_token=auth%20token%2F%3F&partner_id=42&user_id=listener-7
+transform.post=644530e9fa32d7ba5ed86e243f910e4a71e8ee51e796c92c5c4aa5d0257291474c6ac890a56087d8189f2bf0e6ac7afb3a6b0ae21cb19034b31877b50f87093bde3106bdf5417302edb8805d5c688efa2d9d42e4b4561887f04678c4a3285793
+transform.creator.before=0
+transform.response=1
+transform.creator.after=1
