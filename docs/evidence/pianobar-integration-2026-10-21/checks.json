@@ -1,0 +1,20 @@
+{
+  "startup": "passed",
+  "startup_exit": 0,
+  "configuration": "empty XDG_CONFIG_HOME; blank email; no credentials",
+  "network_namespace": [
+    "unshare",
+    "-n"
+  ],
+  "synthetic_player": "passed",
+  "player_object": "same src/player.o linked into the full application",
+  "audio_output": "libao null driver; linker wrappers reject other devices",
+  "sample_rate": 44100,
+  "channels": 1,
+  "sample_bits": 16,
+  "samples": 44100,
+  "decoded_bytes": 88200,
+  "decoded_sha256": "d3491d4cae8086f29f3f8c821c3804a4fd62c657aae35d9473b70054b3baab11",
+  "decoded_matches_input": true,
+  "live_pandora_tested": false
+}

@@ -14,7 +14,7 @@ ODIN_FLAGS ?= -o:speed -microarch:generic -reloc-mode:pic -no-entry-point
 NELUA_FLAGS ?= --release -P nogc --cflags=-O3
 
 .PHONY: all c odin zig nelua codin-native codin-check libpiano test test-c test-odin test-zig test-nelua test-codin-native test-libpiano test-blowfish test-crypt test-json bench bench-c bench-odin bench-zig bench-nelua bench-codin shootout shootout-gate portable install clean
-.PHONY: check test-install test-pianobar-source
+.PHONY: check test-install test-pianobar-source test-pianobar-integration
 
 all: test
 
@@ -33,6 +33,12 @@ test-install: libpiano-native $(BUILD)/c/libmelodica.a $(BUILD)/compat/libpiano.
 
 test-pianobar-source:
 	CC="$(CC)" BUILD_DIR="$(abspath $(BUILD))" sh scripts/pianobar-source-compat.sh
+
+test-pianobar-integration:
+	mkdir -p "$(abspath $(BUILD))"
+	CC="$(CC)" WORK_DIR="$(abspath $(BUILD))/pianobar-integration" \
+		EVIDENCE_DIR="$$(mktemp -d '$(abspath $(BUILD))/pianobar-integration-evidence.XXXXXXXX')" \
+		sh scripts/pianobar-integration.sh
 
 $(BUILD)/c/melodica.o: impl/c/melodica.c include/melodica.h
 	mkdir -p $(BUILD)/c

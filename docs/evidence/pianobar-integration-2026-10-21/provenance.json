@@ -1,0 +1,20 @@
+{
+  "executable": "/work/pianobar-melodica/full/run.orDKMZ5h/pianobar/pianobar",
+  "protocol_archive": "/work/pianobar-melodica/full/run.orDKMZ5h/melodica-build/compat/libpiano.a",
+  "public_header": "/work/melodica-integration/include/piano.h",
+  "application_objects": [
+    "main",
+    "debug",
+    "player",
+    "settings",
+    "terminal",
+    "ui_act",
+    "ui",
+    "ui_readline",
+    "ui_dispatch"
+  ],
+  "application_sources_unchanged": true,
+  "bundled_protocol_objects": false,
+  "header_dependency_checks": 7,
+  "player_compatibility_patch": null
+}

@@ -59,6 +59,7 @@ make test-native-libpiano     # Native ABI and pinned protocol comparisons
 make check                    # Complete checks, comparisons, timings and installation
 make test-install             # Compile installed clients for all five protocol variants
 sh scripts/pianobar-source-compat.sh # Compile unchanged historical application sources
+make test-pianobar-integration # Link the full application and check startup/audio offline
 ```
 
 C requires a C99 compiler and make. Native protocol variants require their pinned
@@ -86,6 +87,8 @@ cc -std=c99 examples/compat-client.c $(pkg-config --static --cflags --libs piano
 
 `pkg-config --static` includes the selected native variant's link dependencies.
 The [offline example](examples/compat-client.c) uses only the public installed API.
+The [pianobar integration](docs/pianobar-integration.md) builds the complete pinned
+application with this library and verifies its actual player using synthetic audio.
 
 ## Three comparison leagues
 
