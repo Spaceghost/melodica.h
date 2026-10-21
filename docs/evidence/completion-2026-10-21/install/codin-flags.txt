@@ -1,0 +1,1 @@
+-I/work/melodica/build/install-smoke/codin/usr/include -L/work/melodica/build/install-smoke/codin/usr/lib -lpiano -ljson-c -lgcrypt -lm -ldl -lpthread

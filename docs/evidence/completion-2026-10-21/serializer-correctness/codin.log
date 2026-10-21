@@ -1,0 +1,120 @@
+$ make -B codin-check
+make[1]: Entering directory '/work/melodica'
+./scripts/codin-check.sh
+From https://github.com/Spaceghost/codin
+ * branch            555b5d6127e2f843ed4e015b40ece667052f1838 -> FETCH_HEAD
+HEAD is now at 555b5d6 Allow diagnostics across all result-emission sites
+M	src/array.h
+M	src/c99.c
+M	tools/c99-experimental/augment_multi_return.py
+HEAD is now at 555b5d6 Allow diagnostics across all result-emission sites
+Removing .build/
+Removing .c99-work/
+Removing codin
+patching file src/array.h
+patching file src/c99.c
+patching file tools/c99-experimental/augment_multi_return.py
+patching file src/parser.c
+Hunk #1 succeeded at 1926 (offset 22 lines).
+augment_c99: fixed arrays + explicit-width enums applied
+augment_slice_string: []u8 + string value lowering applied
+augment_multi_return: struct-return ABI + destructuring applied
+augment_defer: lexical LIFO defers + return capture + case blocks applied
+augment_union: primitive tagged unions + checked assertions applied
+augment_import: explicit import aliases + package-qualified symbols applied
+augment_generic: single-parameter scalar monomorphization applied
+augment_generic_asttruth: TYPE_POLY is authoritative for generic detection
+augment_diagnostics: named result error: instrumented 1 sites
+augment_diagnostics: tracing decimal_size result through the C99 pipeline
+make[2]: Entering directory '/work/melodica/.cache/codin'
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/allocator.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/allocator.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/allocator.o /work/melodica/.cache/codin/.c99-work/src/allocator.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/allocator_arena.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/allocator_arena.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/allocator_arena.o /work/melodica/.cache/codin/.c99-work/src/allocator_arena.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/allocator_null.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/allocator_null.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/allocator_null.o /work/melodica/.cache/codin/.c99-work/src/allocator_null.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/allocator_std.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/allocator_std.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/allocator_std.o /work/melodica/.cache/codin/.c99-work/src/allocator_std.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/array.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/array.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/array.o /work/melodica/.cache/codin/.c99-work/src/array.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/build.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/build.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/build.o /work/melodica/.cache/codin/.c99-work/src/build.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/c99.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/c99.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/c99.o /work/melodica/.cache/codin/.c99-work/src/c99.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/context.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/context.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/context.o /work/melodica/.cache/codin/.c99-work/src/context.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/dump.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/dump.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/dump.o /work/melodica/.cache/codin/.c99-work/src/dump.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/ir.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/ir.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/ir.o /work/melodica/.cache/codin/.c99-work/src/ir.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/lexer.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/lexer.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/lexer.o /work/melodica/.cache/codin/.c99-work/src/lexer.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/main.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/main.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/main.o /work/melodica/.cache/codin/.c99-work/src/main.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/parser.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/parser.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/parser.o /work/melodica/.cache/codin/.c99-work/src/parser.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/path.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/path.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/path.o /work/melodica/.cache/codin/.c99-work/src/path.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/profiler.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/profiler.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/profiler.o /work/melodica/.cache/codin/.c99-work/src/profiler.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/profiler_null.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/profiler_null.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/profiler_null.o /work/melodica/.cache/codin/.c99-work/src/profiler_null.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/profiler_spall.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/profiler_spall.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/profiler_spall.o /work/melodica/.cache/codin/.c99-work/src/profiler_spall.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/project.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/project.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/project.o /work/melodica/.cache/codin/.c99-work/src/project.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/report.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/report.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/report.o /work/melodica/.cache/codin/.c99-work/src/report.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/sched.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/sched.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/sched.o /work/melodica/.cache/codin/.c99-work/src/sched.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/sched_async.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/sched_async.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/sched_async.o /work/melodica/.cache/codin/.c99-work/src/sched_async.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/sched_null.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/sched_null.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/sched_null.o /work/melodica/.cache/codin/.c99-work/src/sched_null.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/sched_sync.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/sched_sync.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/sched_sync.o /work/melodica/.cache/codin/.c99-work/src/sched_sync.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/sema.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/sema.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/sema.o /work/melodica/.cache/codin/.c99-work/src/sema.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/strbuf.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/strbuf.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/strbuf.o /work/melodica/.cache/codin/.c99-work/src/strbuf.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/string.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/string.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/string.o /work/melodica/.cache/codin/.c99-work/src/string.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/thread.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/thread.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/thread.o /work/melodica/.cache/codin/.c99-work/src/thread.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/threadpool.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/threadpool.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/threadpool.o /work/melodica/.cache/codin/.c99-work/src/threadpool.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/tree.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/tree.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/tree.o /work/melodica/.cache/codin/.c99-work/src/tree.c
+gcc -MT .build/release/objs//work/melodica/.cache/codin/.c99-work/src/utility.o -MMD -MP -MF .build/release/deps//work/melodica/.cache/codin/.c99-work/src/utility.Td -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DNDEBUG -O3 -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-stack-check -fno-stack-clash-protection -fomit-frame-pointer -ffunction-sections -fdata-sections -c -o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/utility.o /work/melodica/.cache/codin/.c99-work/src/utility.c
+gcc .build/release/objs//work/melodica/.cache/codin/.c99-work/src/allocator.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/allocator_arena.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/allocator_null.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/allocator_std.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/array.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/build.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/c99.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/context.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/dump.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/ir.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/lexer.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/main.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/parser.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/path.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/profiler.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/profiler_null.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/profiler_spall.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/project.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/report.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/sched.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/sched_async.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/sched_null.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/sched_sync.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/sema.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/strbuf.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/string.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/thread.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/threadpool.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/tree.o .build/release/objs//work/melodica/.cache/codin/.c99-work/src/utility.o -lm -lpthread -Wl,--gc-sections -o codin
+make[2]: Leaving directory '/work/melodica/.cache/codin'
+codin experimental strict C99 backend built
+codin: diagnostic: decimal_size stage=parsed result=0x7f39b0016f70 kind=16 ctype=5
+codin: diagnostic: decimal_size stage=after-sema result=0x7f39b0016f70 kind=16 ctype=5
+codin: diagnostic: decimal_size stage=after-generic-discovery result=0x7f39b0016f70 kind=16 ctype=5
+melodica smoke: ok
+=== codin C99: structs fixture ===
+codin struct smoke: ok
+=== codin C99: arrays fixture ===
+codin array smoke: ok
+=== codin C99: enums fixture ===
+codin enum smoke: ok
+=== codin C99: slices_strings fixture ===
+codin slice/string smoke: ok
+=== codin C99: multiple_returns fixture ===
+codin multiple-return smoke: ok
+=== codin C99: defers fixture ===
+codin defer smoke: ok
+=== codin C99: unions fixture ===
+codin union smoke: ok
+codin fork strict C99 + ABI/struct/array/enum/slice/string/multiple-return/defer/union smoke: ok (555b5d6127e2f843ed4e015b40ece667052f1838)
+make[1]: Leaving directory '/work/melodica'
+$ ar rcs /work/melodica/build/codin/libmelodica.a build/codin/melodica.gcc.o
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude tests/conformance.c /work/melodica/build/codin/libmelodica.a -o /work/melodica/build/codin/conformance
+$ /work/melodica/build/codin/conformance
+conformance: 1591 cases, 125022 checks; all bytes, guards, short buffers, decimal boundaries: ok
+$ size -A /work/melodica/build/codin/libmelodica.a
+melodica.gcc.o   (ex /work/melodica/build/codin/libmelodica.a):
+section              size   addr
+.text                7103      0
+.data                   0      0
+.bss                    0      0
+.rodata               144      0
+.rodata.str1.8         44      0
+.rodata.str1.1         14      0
+.rodata.cst16          32      0
+.comment               47      0
+.note.GNU-stack         0      0
+.note.gnu.property     48      0
+.eh_frame             304      0
+Total                7736
+
+
+$ nm -g --defined-only /work/melodica/build/codin/libmelodica.a
+
+melodica.gcc.o:
+0000000000000000 T melodica_abi_version
+0000000000000bf0 T melodica_json_escape
+0000000000000ae0 T melodica_json_escape_size
+00000000000012c0 T melodica_station_list_request
+00000000000010f0 T melodica_station_list_request_size
+00000000000003e0 T melodica_url_encode
+0000000000000010 T melodica_url_encode_size
+$ nm -u /work/melodica/build/codin/libmelodica.a
+
+melodica.gcc.o:
+$ ldd /work/melodica/build/codin/conformance
+	linux-vdso.so.1 (0x00007f5e8b065000)
+	libc.so.6 => /lib64/libc.so.6 (0x00007f5e8ae5d000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007f5e8b067000)

@@ -86,15 +86,17 @@ objects against melodica's `piano.h`, using
 `MELODICA_PIANO_LEGACY_GCRYPT`. Its dependency graph proves the replacement header
 was included. Installation stages C, Odin, Zig, Nelua and Codin separately and
 compiles a public client using each installation's static pkg-config flags.
-The Python harness contains 50 regression tests; synthetic score outputs
+The Python harness passes 50 regression tests; synthetic score outputs
 inside those tests are fixtures.
 
 ## Performance and evidence
 
 `native-ci.py` rebuilds and checks all five serializers, then runs the unchanged
 five-workload comparison serially. Acceptance remains a normalized geometric mean
-of at least 90% and a worst-workload ratio of at least 80%. Final competitive
-acceptance is pending the coordinated completion run.
+of at least 90% and a worst-workload ratio of at least 80%. The canonical Bak
+completion run passed for every lane: geometric means 93.4–97.3%, worst workloads
+86.8–94.0%. The [retained standings](evidence/completion-2026-10-21/serializer/standings.txt)
+contain all normalized workload ratios and the unchanged thresholds.
 
 `libpiano-differential.sh` establishes the C/reference baseline and times 11 full
 API fixture suites plus scaled playlists of 4, 64 and 256 songs.
@@ -131,8 +133,9 @@ self-hosted, Linux, X64, ubuntu-tiny, spaceghost-melodica.h
 
 Manual dispatch also supports `runner=github-hosted`. Worker dependencies support
 Fedora and Ubuntu/Debian, while the `ubuntu-tiny` label identifies the broker's
-runner class. CI activation and assigned-runner/job results are recorded with the
-completion evidence; manual build success establishes the validation results above.
+runner class. The retained completion snapshot establishes the manual validation
+results above. GitHub workflow runs provide the CI job results; release evidence
+also retains the one-job controller's assigned job identities and cleanup records.
 
 Workflows print readable evidence even when artifact upload fails. Source and
 behavior failures retain their exit status and logs. The repository-scoped worker

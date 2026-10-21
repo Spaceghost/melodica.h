@@ -1,0 +1,27 @@
+Independent native libpiano protocol shootout
+Each process pass: median of five rounds; two opposite execution orders.
+C has no json-c/gcrypt runtime dependencies; native lanes use both.
+API rates count complete fixture suites, not individual calls.
+
+workload                     reference             c          odin           zig         nelua         codin unit
+piano                         6266.237      8051.051     11498.959     11606.243     11844.534     11710.021 suites/s
+playlist                      4709.595      5663.730      5164.620      5270.802      5319.722      5118.891 suites/s
+search                       13553.676      9311.784     14507.355     14418.770     15023.073     14691.490 suites/s
+station_mutations            10650.962      9000.256     13930.256     13937.855     14249.173     14042.495 suites/s
+feedback                     10481.823      9302.979     14869.711     14901.293     14862.904     14988.985 suites/s
+seed                         10154.012      9203.675     14430.067     14411.108     14678.272     14452.617 suites/s
+station_info                 12970.162      9269.567     14586.241     14497.198     14594.364     14374.043 suites/s
+quickmix_genre               12221.903      9378.275     14744.339     14953.491     14627.906     14757.397 suites/s
+explain_bookmarks            12231.720      9329.129     14411.883     14699.601     14134.457     14522.488 suites/s
+settings                     11206.520      9294.026     14911.294     14959.385     14971.472     14920.859 suites/s
+station_modes                12829.281      9089.092     14923.620     15176.373     14885.087     14511.273 suites/s
+playlist_parse_4             41194.742     79141.110     41689.247     41319.173     40484.033     40102.365 requests/s
+playlist_parse_64             2822.341      4835.687      2846.993      2827.365      2776.570      2801.659 requests/s
+playlist_parse_256             583.257      1219.957       594.814       593.894       571.097       583.092 requests/s
+
+Normalized against the fastest independent implementation per workload:
+c        geometric mean   71.8%  worst   59.9%
+odin     geometric mean   85.8%  worst   48.8%
+zig      geometric mean   86.1%  worst   48.7%
+nelua    geometric mean   85.9%  worst   46.8%
+codin    geometric mean   85.4%  worst   47.8%

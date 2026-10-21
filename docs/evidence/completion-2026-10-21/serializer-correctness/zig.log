@@ -1,0 +1,51 @@
+$ make -B test-zig build/zig/bench
+make[1]: Entering directory '/work/melodica'
+mkdir -p build/zig
+/opt/melodica-tools/zig/zig build-lib impl/zig/melodica.zig -O ReleaseFast -mcpu=baseline -fPIC -femit-bin=build/zig/libmelodica.a
+gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude tests/smoke.c \
+	build/zig/libmelodica.a -o build/zig/smoke
+./build/zig/smoke
+melodica smoke: ok
+gcc -O3 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude bench/bench.c \
+	build/zig/libmelodica.a -o build/zig/bench
+make[1]: Leaving directory '/work/melodica'
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude tests/conformance.c /work/melodica/build/zig/libmelodica.a -o /work/melodica/build/zig/conformance
+$ /work/melodica/build/zig/conformance
+conformance: 1591 cases, 125022 checks; all bytes, guards, short buffers, decimal boundaries: ok
+$ size -A /work/melodica/build/zig/libmelodica.a
+/root/.cache/zig/tmp/5297191310767528/libmelodica_zcu.o   (ex /work/melodica/build/zig/libmelodica.a):
+section            size   addr
+.text              3947      0
+.rodata             120      0
+.rodata.str1.1       75      0
+.debug_loc         7549      0
+.debug_abbrev       445      0
+.debug_info        4838      0
+.debug_ranges      1104      0
+.debug_str         1426      0
+.debug_pubnames     564      0
+.debug_pubtypes     221      0
+.note.GNU-stack       0      0
+.eh_frame           368      0
+.debug_line        2625      0
+Total             23282
+
+
+$ nm -g --defined-only /work/melodica/build/zig/libmelodica.a
+
+/root/.cache/zig/tmp/5297191310767528/libmelodica_zcu.o:
+0000000000000f60 T melodica_abi_version
+0000000000000610 T melodica_json_escape
+00000000000009d0 T melodica_json_escape_size
+0000000000000000 T melodica_station_list_request
+00000000000004b0 T melodica_station_list_request_size
+0000000000000ab0 T melodica_url_encode
+0000000000000e20 T melodica_url_encode_size
+$ nm -u /work/melodica/build/zig/libmelodica.a
+
+/root/.cache/zig/tmp/5297191310767528/libmelodica_zcu.o:
+                 U memcpy
+$ ldd /work/melodica/build/zig/conformance
+	linux-vdso.so.1 (0x00007f58cafba000)
+	libc.so.6 => /lib64/libc.so.6 (0x00007f58cadb2000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007f58cafbc000)

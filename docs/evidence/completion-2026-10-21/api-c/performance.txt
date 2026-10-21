@@ -1,0 +1,20 @@
+Same-host upstream / melodica C API comparison
+Two process passes in opposite order; each rate is a median of five timed rounds.
+API suites include init, fixture requests/responses, validation and owned-result destruction.
+Rates describe fixture suites, not individual API calls. No cross-language API ranking.
+
+workload                    reference     melodica     ratio unit
+piano                        6314.922     7992.412    1.266x suites/s
+playlist                     4713.014     5619.969    1.192x suites/s
+search                      13391.289     9341.617    0.698x suites/s
+station_mutations           10791.192     9012.781    0.835x suites/s
+feedback                    11141.810     9319.817    0.836x suites/s
+seed                        10101.030     9204.748    0.911x suites/s
+station_info                12967.222     9278.035    0.715x suites/s
+quickmix_genre              12061.613     9441.516    0.783x suites/s
+explain_bookmarks           11882.629     9263.988    0.780x suites/s
+settings                    11211.198     9170.197    0.818x suites/s
+station_modes               12916.728     9268.391    0.718x suites/s
+playlist_parse_4            41555.148    79238.787    1.907x requests/s
+playlist_parse_64            2842.224     4786.855    1.684x requests/s
+playlist_parse_256            581.377     1187.764    2.043x requests/s

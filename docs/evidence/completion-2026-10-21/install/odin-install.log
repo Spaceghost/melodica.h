@@ -1,0 +1,9 @@
+make[2]: Entering directory '/work/melodica'
+install -d /work/melodica/build/install-smoke/odin/usr/include /work/melodica/build/install-smoke/odin/usr/lib/pkgconfig /work/melodica/build/install-smoke/odin/usr/share/licenses/melodica
+install -m 0644 include/melodica.h include/piano.h /work/melodica/build/install-smoke/odin/usr/include/
+install -m 0644 build/c/libmelodica.a /work/melodica/build/install-smoke/odin/usr/lib/libmelodica.a
+install -m 0644 build/odin/libpiano.a /work/melodica/build/install-smoke/odin/usr/lib/libpiano.a
+install -m 0644 LICENSE.libpiano /work/melodica/build/install-smoke/odin/usr/share/licenses/melodica/
+sed -e 's|@PREFIX@|/usr|g' -e 's|@PRIVATE_LIBS@|-ljson-c -lgcrypt -lm -ldl -lpthread|g' pkgconfig/piano.pc.in > /work/melodica/build/install-smoke/odin/usr/lib/pkgconfig/piano.pc
+sed -e 's|@PREFIX@|/usr|g' pkgconfig/melodica.pc.in > /work/melodica/build/install-smoke/odin/usr/lib/pkgconfig/melodica.pc
+make[2]: Leaving directory '/work/melodica'

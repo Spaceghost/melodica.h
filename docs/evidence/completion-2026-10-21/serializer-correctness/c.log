@@ -1,0 +1,45 @@
+$ make -B test-c build/c/bench
+make[1]: Entering directory '/work/melodica'
+mkdir -p build/c
+gcc -O3 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude -c impl/c/melodica.c -o build/c/melodica.o
+ar rcs build/c/libmelodica.a build/c/melodica.o
+gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude tests/smoke.c build/c/libmelodica.a -o build/c/smoke
+./build/c/smoke
+melodica smoke: ok
+gcc -O3 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude bench/bench.c build/c/libmelodica.a -o build/c/bench
+make[1]: Leaving directory '/work/melodica'
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude tests/conformance.c /work/melodica/build/c/libmelodica.a -o /work/melodica/build/c/conformance
+$ /work/melodica/build/c/conformance
+conformance: 1591 cases, 125022 checks; all bytes, guards, short buffers, decimal boundaries: ok
+$ size -A /work/melodica/build/c/libmelodica.a
+melodica.o   (ex /work/melodica/build/c/libmelodica.a):
+section               size   addr
+.text                 9605      0
+.data                    0      0
+.bss                     0      0
+.rodata                 48      0
+.rodata.cst16           48      0
+.comment                47      0
+.note.GNU-stack          0      0
+.note.gnu.property      48      0
+.eh_frame              304      0
+Total                10100
+
+
+$ nm -g --defined-only /work/melodica/build/c/libmelodica.a
+
+melodica.o:
+0000000000000130 T melodica_abi_version
+0000000000001950 T melodica_json_escape
+0000000000001870 T melodica_json_escape_size
+0000000000001da0 T melodica_station_list_request
+0000000000001c30 T melodica_station_list_request_size
+0000000000000b20 T melodica_url_encode
+0000000000000140 T melodica_url_encode_size
+$ nm -u /work/melodica/build/c/libmelodica.a
+
+melodica.o:
+$ ldd /work/melodica/build/c/conformance
+	linux-vdso.so.1 (0x00007f049db9a000)
+	libc.so.6 => /lib64/libc.so.6 (0x00007f049d992000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007f049db9c000)

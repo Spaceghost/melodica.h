@@ -1,0 +1,3 @@
+/services/json/?method=auth.partnerLogin
+TLS=1
+{ "username": "demo-partner", "password": "demo-password", "deviceModel": "demo-device", "version": "5", "includeUrls": true }

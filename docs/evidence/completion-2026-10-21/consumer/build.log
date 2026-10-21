@@ -1,0 +1,444 @@
+make[2]: Entering directory '/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16'
+    CC  src/main.c
+src/main.c: In function ‘intHandler’:
+src/main.c:414:29: warning: unused parameter ‘signal’ [-Wunused-parameter]
+  414 | static void intHandler (int signal) {
+      |                         ~~~~^~~~~~
+src/main.c: In function ‘main’:
+src/main.c:430:15: warning: unused parameter ‘argc’ [-Wunused-parameter]
+  430 | int main (int argc, char **argv) {
+      |           ~~~~^~~~
+src/main.c:430:28: warning: unused parameter ‘argv’ [-Wunused-parameter]
+  430 | int main (int argc, char **argv) {
+      |                     ~~~~~~~^~~~
+    CC  src/debug.c
+    CC  src/settings.c
+    CC  src/terminal.c
+src/terminal.c: In function ‘BarTermHandleCont’:
+src/terminal.c:38:36: warning: unused parameter ‘sig’ [-Wunused-parameter]
+   38 | static void BarTermHandleCont (int sig) {
+      |                                ~~~~^~~
+    CC  src/ui_act.c
+In file included from src/ui_dispatch.h:48,
+                 from src/ui_act.c:36:
+src/ui_act.c: In function ‘BarUiActHelp’:
+src/ui_act.h:32:33: warning: unused parameter ‘selStation’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                 ~~~~~~~~~~~~~~~~^~~~~~~~~~
+src/ui_act.c:89:1: note: in expansion of macro ‘BarUiActCallback’
+   89 | BarUiActCallback(BarUiActHelp) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.h:32:58: warning: unused parameter ‘selSong’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                                             ~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:89:1: note: in expansion of macro ‘BarUiActCallback’
+   89 | BarUiActCallback(BarUiActHelp) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActAddMusic’:
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:103:1: note: in expansion of macro ‘BarUiActCallback’
+  103 | BarUiActCallback(BarUiActAddMusic) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActBanSong’:
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:129:1: note: in expansion of macro ‘BarUiActCallback’
+  129 | BarUiActCallback(BarUiActBanSong) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActCreateStation’:
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:161:1: note: in expansion of macro ‘BarUiActCallback’
+  161 | BarUiActCallback(BarUiActCreateStation) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActCreateStationFromSong’:
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:179:1: note: in expansion of macro ‘BarUiActCallback’
+  179 | BarUiActCallback(BarUiActCreateStationFromSong) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActAddSharedStation’:
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:209:1: note: in expansion of macro ‘BarUiActCallback’
+  209 | BarUiActCallback(BarUiActAddSharedStation) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActDeleteStation’:
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:238:1: note: in expansion of macro ‘BarUiActCallback’
+  238 | BarUiActCallback(BarUiActDeleteStation) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActExplain’:
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:263:1: note: in expansion of macro ‘BarUiActCallback’
+  263 | BarUiActCallback(BarUiActExplain) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActStationFromGenre’:
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:286:1: note: in expansion of macro ‘BarUiActCallback’
+  286 | BarUiActCallback(BarUiActStationFromGenre) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActSongInfo’:
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:349:1: note: in expansion of macro ‘BarUiActCallback’
+  349 | BarUiActCallback(BarUiActSongInfo) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActDebug’:
+src/ui_act.h:32:33: warning: unused parameter ‘selStation’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                 ~~~~~~~~~~~~~~~~^~~~~~~~~~
+src/ui_act.c:363:1: note: in expansion of macro ‘BarUiActCallback’
+  363 | BarUiActCallback(BarUiActDebug) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:363:1: note: in expansion of macro ‘BarUiActCallback’
+  363 | BarUiActCallback(BarUiActDebug) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActLoveSong’:
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:396:1: note: in expansion of macro ‘BarUiActCallback’
+  396 | BarUiActCallback(BarUiActLoveSong) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActSkipSong’:
+src/ui_act.h:32:33: warning: unused parameter ‘selStation’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                 ~~~~~~~~~~~~~~~~^~~~~~~~~~
+src/ui_act.c:425:1: note: in expansion of macro ‘BarUiActCallback’
+  425 | BarUiActCallback(BarUiActSkipSong) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.h:32:58: warning: unused parameter ‘selSong’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                                             ~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:425:1: note: in expansion of macro ‘BarUiActCallback’
+  425 | BarUiActCallback(BarUiActSkipSong) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:425:1: note: in expansion of macro ‘BarUiActCallback’
+  425 | BarUiActCallback(BarUiActSkipSong) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActPlay’:
+src/ui_act.h:32:33: warning: unused parameter ‘selStation’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                 ~~~~~~~~~~~~~~~~^~~~~~~~~~
+src/ui_act.c:431:1: note: in expansion of macro ‘BarUiActCallback’
+  431 | BarUiActCallback(BarUiActPlay) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.h:32:58: warning: unused parameter ‘selSong’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                                             ~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:431:1: note: in expansion of macro ‘BarUiActCallback’
+  431 | BarUiActCallback(BarUiActPlay) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:431:1: note: in expansion of macro ‘BarUiActCallback’
+  431 | BarUiActCallback(BarUiActPlay) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActPause’:
+src/ui_act.h:32:33: warning: unused parameter ‘selStation’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                 ~~~~~~~~~~~~~~~~^~~~~~~~~~
+src/ui_act.c:440:1: note: in expansion of macro ‘BarUiActCallback’
+  440 | BarUiActCallback(BarUiActPause) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.h:32:58: warning: unused parameter ‘selSong’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                                             ~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:440:1: note: in expansion of macro ‘BarUiActCallback’
+  440 | BarUiActCallback(BarUiActPause) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:440:1: note: in expansion of macro ‘BarUiActCallback’
+  440 | BarUiActCallback(BarUiActPause) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActTogglePause’:
+src/ui_act.h:32:33: warning: unused parameter ‘selStation’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                 ~~~~~~~~~~~~~~~~^~~~~~~~~~
+src/ui_act.c:449:1: note: in expansion of macro ‘BarUiActCallback’
+  449 | BarUiActCallback(BarUiActTogglePause) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.h:32:58: warning: unused parameter ‘selSong’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                                             ~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:449:1: note: in expansion of macro ‘BarUiActCallback’
+  449 | BarUiActCallback(BarUiActTogglePause) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:449:1: note: in expansion of macro ‘BarUiActCallback’
+  449 | BarUiActCallback(BarUiActTogglePause) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActRenameStation’:
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:458:1: note: in expansion of macro ‘BarUiActCallback’
+  458 | BarUiActCallback(BarUiActRenameStation) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActSelectStation’:
+src/ui_act.h:32:33: warning: unused parameter ‘selStation’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                 ~~~~~~~~~~~~~~~~^~~~~~~~~~
+src/ui_act.c:483:1: note: in expansion of macro ‘BarUiActCallback’
+  483 | BarUiActCallback(BarUiActSelectStation) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.h:32:58: warning: unused parameter ‘selSong’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                                             ~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:483:1: note: in expansion of macro ‘BarUiActCallback’
+  483 | BarUiActCallback(BarUiActSelectStation) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:483:1: note: in expansion of macro ‘BarUiActCallback’
+  483 | BarUiActCallback(BarUiActSelectStation) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActTempBanSong’:
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:494:1: note: in expansion of macro ‘BarUiActCallback’
+  494 | BarUiActCallback(BarUiActTempBanSong) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActPrintUpcoming’:
+src/ui_act.h:32:33: warning: unused parameter ‘selStation’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                 ~~~~~~~~~~~~~~~~^~~~~~~~~~
+src/ui_act.c:510:1: note: in expansion of macro ‘BarUiActCallback’
+  510 | BarUiActCallback(BarUiActPrintUpcoming) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:510:1: note: in expansion of macro ‘BarUiActCallback’
+  510 | BarUiActCallback(BarUiActPrintUpcoming) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActSelectQuickMix’:
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:560:1: note: in expansion of macro ‘BarUiActCallback’
+  560 | BarUiActCallback(BarUiActSelectQuickMix) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActQuit’:
+src/ui_act.h:32:33: warning: unused parameter ‘selStation’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                 ~~~~~~~~~~~~~~~~^~~~~~~~~~
+src/ui_act.c:583:1: note: in expansion of macro ‘BarUiActCallback’
+  583 | BarUiActCallback(BarUiActQuit) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.h:32:58: warning: unused parameter ‘selSong’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                                             ~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:583:1: note: in expansion of macro ‘BarUiActCallback’
+  583 | BarUiActCallback(BarUiActQuit) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:583:1: note: in expansion of macro ‘BarUiActCallback’
+  583 | BarUiActCallback(BarUiActQuit) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActHistory’:
+src/ui_act.h:32:33: warning: unused parameter ‘selStation’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                 ~~~~~~~~~~~~~~~~^~~~~~~~~~
+src/ui_act.c:590:1: note: in expansion of macro ‘BarUiActCallback’
+  590 | BarUiActCallback(BarUiActHistory) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.h:32:58: warning: unused parameter ‘selSong’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                                             ~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:590:1: note: in expansion of macro ‘BarUiActCallback’
+  590 | BarUiActCallback(BarUiActHistory) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:590:1: note: in expansion of macro ‘BarUiActCallback’
+  590 | BarUiActCallback(BarUiActHistory) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActBookmark’:
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:629:1: note: in expansion of macro ‘BarUiActCallback’
+  629 | BarUiActCallback(BarUiActBookmark) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActVolDown’:
+src/ui_act.h:32:33: warning: unused parameter ‘selStation’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                 ~~~~~~~~~~~~~~~~^~~~~~~~~~
+src/ui_act.c:652:1: note: in expansion of macro ‘BarUiActCallback’
+  652 | BarUiActCallback(BarUiActVolDown) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.h:32:58: warning: unused parameter ‘selSong’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                                             ~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:652:1: note: in expansion of macro ‘BarUiActCallback’
+  652 | BarUiActCallback(BarUiActVolDown) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:652:1: note: in expansion of macro ‘BarUiActCallback’
+  652 | BarUiActCallback(BarUiActVolDown) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActVolUp’:
+src/ui_act.h:32:33: warning: unused parameter ‘selStation’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                 ~~~~~~~~~~~~~~~~^~~~~~~~~~
+src/ui_act.c:659:1: note: in expansion of macro ‘BarUiActCallback’
+  659 | BarUiActCallback(BarUiActVolUp) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.h:32:58: warning: unused parameter ‘selSong’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                                             ~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:659:1: note: in expansion of macro ‘BarUiActCallback’
+  659 | BarUiActCallback(BarUiActVolUp) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:659:1: note: in expansion of macro ‘BarUiActCallback’
+  659 | BarUiActCallback(BarUiActVolUp) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActVolReset’:
+src/ui_act.h:32:33: warning: unused parameter ‘selStation’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                 ~~~~~~~~~~~~~~~~^~~~~~~~~~
+src/ui_act.c:666:1: note: in expansion of macro ‘BarUiActCallback’
+  666 | BarUiActCallback(BarUiActVolReset) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.h:32:58: warning: unused parameter ‘selSong’ [-Wunused-parameter]
+   32 |                 PianoStation_t *selStation, PianoSong_t *selSong, \
+      |                                             ~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:666:1: note: in expansion of macro ‘BarUiActCallback’
+  666 | BarUiActCallback(BarUiActVolReset) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:666:1: note: in expansion of macro ‘BarUiActCallback’
+  666 | BarUiActCallback(BarUiActVolReset) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActSettings’:
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:677:1: note: in expansion of macro ‘BarUiActCallback’
+  677 | BarUiActCallback(BarUiActSettings) {
+      | ^~~~~~~~~~~~~~~~
+src/ui_act.c: In function ‘BarUiActManageStation’:
+src/ui_act.h:33:40: warning: unused parameter ‘context’ [-Wunused-parameter]
+   33 |                 BarUiDispatchContext_t context)
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+src/ui_act.c:773:1: note: in expansion of macro ‘BarUiActCallback’
+  773 | BarUiActCallback(BarUiActManageStation) {
+      | ^~~~~~~~~~~~~~~~
+    CC  src/ui.c
+src/ui.c: In function ‘progressCb’:
+src/ui.c:164:47: warning: unused parameter ‘dltotal’ [-Wunused-parameter]
+  164 | int progressCb (void * const data, curl_off_t dltotal, curl_off_t dlnow,
+      |                                    ~~~~~~~~~~~^~~~~~~
+src/ui.c:164:67: warning: unused parameter ‘dlnow’ [-Wunused-parameter]
+  164 | int progressCb (void * const data, curl_off_t dltotal, curl_off_t dlnow,
+      |                                                        ~~~~~~~~~~~^~~~~
+src/ui.c:165:28: warning: unused parameter ‘ultotal’ [-Wunused-parameter]
+  165 |                 curl_off_t ultotal, curl_off_t ulnow) {
+      |                 ~~~~~~~~~~~^~~~~~~
+src/ui.c:165:48: warning: unused parameter ‘ulnow’ [-Wunused-parameter]
+  165 |                 curl_off_t ultotal, curl_off_t ulnow) {
+      |                                     ~~~~~~~~~~~^~~~~
+src/ui.c: In function ‘BarUiSelectMusicId’:
+src/ui.c:604:58: warning: unused parameter ‘station’ [-Wunused-parameter]
+  604 | char *BarUiSelectMusicId (BarApp_t *app, PianoStation_t *station,
+      |                                          ~~~~~~~~~~~~~~~~^~~~~~~
+In file included from src/main.h:26,
+                 from src/ui.h:32,
+                 from src/ui.c:42:
+In function ‘BarPianoHttpRequest’,
+    inlined from ‘BarUiPianoCall’ at src/ui.c:314:15:
+src/ui.c:196:19: warning: call to ‘Wcurl_easy_setopt_err_long’ declared with attribute warning: curl_easy_setopt expects a long argument [-Wattribute-warning]
+  196 |         httpret = curl_easy_setopt (http, k, v); \
+      |                   ^~~~~~~~~~~~~~~~
+src/ui.c:229:9: note: in expansion of macro ‘setAndCheck’
+  229 |         setAndCheck (CURLOPT_NOPROGRESS, 0);
+      |         ^~~~~~~~~~~
+src/ui.c:196:19: warning: call to ‘Wcurl_easy_setopt_err_long’ declared with attribute warning: curl_easy_setopt expects a long argument [-Wattribute-warning]
+  196 |         httpret = curl_easy_setopt (http, k, v); \
+      |                   ^~~~~~~~~~~~~~~~
+src/ui.c:230:9: note: in expansion of macro ‘setAndCheck’
+  230 |         setAndCheck (CURLOPT_POST, 1);
+      |         ^~~~~~~~~~~
+src/ui.c:196:19: warning: call to ‘Wcurl_easy_setopt_err_long’ declared with attribute warning: curl_easy_setopt expects a long argument [-Wattribute-warning]
+  196 |         httpret = curl_easy_setopt (http, k, v); \
+      |                   ^~~~~~~~~~~~~~~~
+src/ui.c:231:9: note: in expansion of macro ‘setAndCheck’
+  231 |         setAndCheck (CURLOPT_TIMEOUT, settings->timeout);
+      |         ^~~~~~~~~~~
+src/ui.c: In function ‘BarUiListSongs’:
+src/ui.c:832:77: warning: ‘:’ directive output may be truncated writing 1 byte into a region of size between 0 and 6 [-Wformat-truncation=]
+  832 |                                 snprintf (duration, sizeof (duration), "%02u:%02u",
+      |                                                                             ^
+src/ui.c:832:72: note: directive argument in the range [0, 59]
+  832 |                                 snprintf (duration, sizeof (duration), "%02u:%02u",
+      |                                                                        ^~~~~~~~~~~
+src/ui.c:832:33: note: ‘snprintf’ output between 6 and 12 bytes into a destination of size 8
+  832 |                                 snprintf (duration, sizeof (duration), "%02u:%02u",
+      |                                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  833 |                                                 length / 60, length % 60);
+      |                                                 ~~~~~~~~~~~~~~~~~~~~~~~~~
+    CC  src/ui_readline.c
+In file included from src/player.h:26,
+                 from src/main.h:30,
+                 from src/ui_readline.c:31:
+src/config.h:9:9: warning: ‘_POSIX_C_SOURCE’ redefined
+    9 | #define _POSIX_C_SOURCE 200809L
+      |         ^~~~~~~~~~~~~~~
+In file included from /usr/include/bits/libc-header-start.h:33,
+                 from /usr/include/stdlib.h:26,
+                 from src/ui_readline.c:24:
+/usr/include/features.h:319:10: note: this is the location of the previous definition
+  319 | # define _POSIX_C_SOURCE        202405L
+      |          ^~~~~~~~~~~~~~~
+    CC  src/ui_dispatch.c
+In file included from src/player.h:26,
+                 from src/main.h:30,
+                 from src/ui_dispatch.h:35,
+                 from src/ui_dispatch.c:26:
+src/config.h:9:9: warning: ‘_POSIX_C_SOURCE’ redefined
+    9 | #define _POSIX_C_SOURCE 200809L
+      |         ^~~~~~~~~~~~~~~
+In file included from /usr/include/assert.h:35,
+                 from src/ui_dispatch.c:24:
+/usr/include/features.h:319:10: note: this is the location of the previous definition
+  319 | # define _POSIX_C_SOURCE        202405L
+      |          ^~~~~~~~~~~~~~~
+make[2]: Leaving directory '/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16'

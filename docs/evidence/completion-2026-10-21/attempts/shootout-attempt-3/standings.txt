@@ -1,0 +1,9 @@
+normalized standings (leader per workload = 100%)
+median of two process passes in opposite lane order; each benchmark keeps its five-round median
+lane          json_ascii    json_payload       url_ascii       url_mixed station_request    geo mean       worst
+c                  80.4%           78.1%           97.6%           98.5%           76.8%       85.8%       76.8%
+odin               94.5%           67.8%           99.2%           82.6%           95.1%       87.0%       67.8%
+zig               100.0%          100.0%          100.0%           85.1%          100.0%       96.8%       85.1%
+nelua              85.6%           81.8%           89.0%          100.0%           78.2%       86.6%       78.2%
+codin              81.9%           70.3%           94.4%           97.0%           76.6%       83.4%       70.3%
+gate: geo mean >= 90.0%, worst >= 80.0%

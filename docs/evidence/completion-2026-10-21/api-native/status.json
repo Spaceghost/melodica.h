@@ -1,0 +1,86 @@
+{
+  "odin": {
+    "status": "passed",
+    "archive_bytes": 47672,
+    "archive_sha256": "6b55850f27a0b9557007232e3453f86cf29680991608765c8d917d9ab6f2547e",
+    "probes": [
+      "piano",
+      "playlist",
+      "search",
+      "station_mutations",
+      "feedback",
+      "seed",
+      "station_info",
+      "quickmix_genre",
+      "explain_bookmarks",
+      "settings",
+      "station_modes",
+      "coercion",
+      "abi",
+      "login"
+    ]
+  },
+  "zig": {
+    "status": "passed",
+    "archive_bytes": 172856,
+    "archive_sha256": "cd8d4b324223649eff7f8865fdcae3b4d59d286df2eb89cf4989002bcc071f4a",
+    "probes": [
+      "piano",
+      "playlist",
+      "search",
+      "station_mutations",
+      "feedback",
+      "seed",
+      "station_info",
+      "quickmix_genre",
+      "explain_bookmarks",
+      "settings",
+      "station_modes",
+      "coercion",
+      "abi",
+      "login"
+    ]
+  },
+  "nelua": {
+    "status": "passed",
+    "archive_bytes": 40872,
+    "archive_sha256": "f1f29c6ae9ebf044fad4c1d551d82bf00100ca9d7cd3b9ce10c56bd96ec81db3",
+    "probes": [
+      "piano",
+      "playlist",
+      "search",
+      "station_mutations",
+      "feedback",
+      "seed",
+      "station_info",
+      "quickmix_genre",
+      "explain_bookmarks",
+      "settings",
+      "station_modes",
+      "coercion",
+      "abi",
+      "login"
+    ]
+  },
+  "codin": {
+    "status": "passed",
+    "archive_bytes": 49240,
+    "archive_sha256": "c9f5171a0daa3f3b8b362b1cf48465bea197adf614423b7419f6f510df3ce18d",
+    "probes": [
+      "piano",
+      "playlist",
+      "search",
+      "station_mutations",
+      "feedback",
+      "seed",
+      "station_info",
+      "quickmix_genre",
+      "explain_bookmarks",
+      "settings",
+      "station_modes",
+      "coercion",
+      "abi",
+      "login"
+    ]
+  }
+}

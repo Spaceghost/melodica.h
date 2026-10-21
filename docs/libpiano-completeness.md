@@ -112,9 +112,24 @@ dependencies accompany the results. Archive bytes exclude external shared librar
 The C implementation's dependency boundary is recorded separately from native
 json-c/libgcrypt dependencies.
 
-**Performance acceptance:** final coordinated serializer gate and six-way API /
-playlist measurements are pending. Correctness results above are complete; no
-final performance ranking is asserted here until the retained reports are complete.
+**Performance acceptance: passed.** The canonical `make check` run rebuilt all
+five serializers and passed the unchanged 90% / 80% gate:
+
+| Implementation | Geometric mean | Worst workload |
+|---|---:|---:|
+| C | 95.5% | 91.8% |
+| Odin | 93.4% | 86.8% |
+| Zig | 96.1% | 94.0% |
+| Nelua | 97.3% | 92.8% |
+| Codin | 95.6% | 90.4% |
+
+The [serializer report](evidence/completion-2026-10-21/serializer/standings.txt)
+retains the full workload ratios. The
+[six-way API and playlist report](evidence/completion-2026-10-21/api-native/standings.txt)
+contains all 14 timed workloads. Native variants lead most API fixture suites;
+C leads scaled playlist parsing at 79,141, 4,836 and 1,220 requests/s for 4, 64
+and 256 songs, respectively. These are measurements of the specified fixtures on
+this worker. API and playlist leagues do not inherit the serializer speed gate.
 
 ## Reproduce and inspect
 
@@ -123,7 +138,7 @@ listed in [CI documentation](ci.md), including native protocol archives, fault
 injection, sanitizers, installed clients and historical consumer compilation.
 
 The completion environment is a Fedora 44 Incus worker on Bak. Current retained
-reports belong in [completion-2026-10-21](evidence/completion-2026-10-21/); source
+reports are in [completion-2026-10-21](evidence/completion-2026-10-21/); source
 hashes and compiler records identify the exact inputs. Earlier
 [playlist](evidence/playlist-local-2026-09-14.txt) and
 [station-mode](evidence/station-modes-local-2026-09-14.txt) logs are historical

@@ -1,0 +1,266 @@
+
+$ make -B -C /work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16 CC=gcc CFLAGS=-O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE src/libpiano/crypt.o src/libpiano/piano.o src/libpiano/request.o src/libpiano/response.o src/libpiano/list.o
+make[1]: Entering directory '/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16'
+    CC  src/libpiano/crypt.c
+    CC  src/libpiano/piano.c
+    CC  src/libpiano/request.c
+    CC  src/libpiano/response.c
+src/libpiano/response.c: In function ‘PianoResponse’:
+src/libpiano/response.c:709:36: warning: comparison of integer expressions of different signedness: ‘int’ and ‘unsigned int’ [-Wsign-compare]
+  709 |                         if (active != reqData->id) {
+      |                                    ^~
+    CC  src/libpiano/list.c
+In file included from src/libpiano/piano.h:26,
+                 from src/libpiano/list.c:26:
+src/libpiano/../config.h:9:9: warning: ‘_POSIX_C_SOURCE’ redefined
+    9 | #define _POSIX_C_SOURCE 200809L
+      |         ^~~~~~~~~~~~~~~
+In file included from /usr/include/assert.h:35,
+                 from src/libpiano/list.c:24:
+/usr/include/features.h:319:10: note: this is the location of the previous definition
+  319 | # define _POSIX_C_SOURCE        202405L
+      |          ^~~~~~~~~~~~~~~
+make[1]: Leaving directory '/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16'
+
+$ make -B -C /work/melodica CC=gcc BUILD=/work/melodica/build libpiano
+make[1]: Entering directory '/work/melodica'
+mkdir -p /work/melodica/build/compat
+gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Iinclude -Icompat -c compat/piano.c -o /work/melodica/build/compat/piano.o
+mkdir -p /work/melodica/build/compat
+gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Icompat -c compat/json.c -o /work/melodica/build/compat/json.o
+mkdir -p /work/melodica/build/compat
+gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Icompat -c compat/crypt.c -o /work/melodica/build/compat/crypt.o
+mkdir -p /work/melodica/build/compat
+gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -Icompat -c compat/blowfish.c -o /work/melodica/build/compat/blowfish.o
+ar rcs /work/melodica/build/compat/libpiano.a /work/melodica/build/compat/piano.o /work/melodica/build/compat/json.o /work/melodica/build/compat/crypt.o /work/melodica/build/compat/blowfish.o
+make[1]: Leaving directory '/work/melodica'
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg /work/melodica/tests/reference/piano_probe.c /work/melodica/build/libpiano-evidence/libpiano-reference.a -lcurl -lgcrypt -ljson-c -lm -lpthread -o /work/melodica/build/libpiano-evidence/piano-reference
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include /work/melodica/tests/reference/piano_probe.c /work/melodica/build/compat/libpiano.a -o /work/melodica/build/libpiano-evidence/piano-melodica
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg /work/melodica/tests/reference/playlist_probe.c /work/melodica/build/libpiano-evidence/libpiano-reference.a -lcurl -lgcrypt -ljson-c -lm -lpthread -o /work/melodica/build/libpiano-evidence/playlist-reference
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include /work/melodica/tests/reference/playlist_probe.c /work/melodica/build/compat/libpiano.a -o /work/melodica/build/libpiano-evidence/playlist-melodica
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg /work/melodica/tests/reference/search_probe.c /work/melodica/build/libpiano-evidence/libpiano-reference.a -lcurl -lgcrypt -ljson-c -lm -lpthread -o /work/melodica/build/libpiano-evidence/search-reference
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include /work/melodica/tests/reference/search_probe.c /work/melodica/build/compat/libpiano.a -o /work/melodica/build/libpiano-evidence/search-melodica
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg /work/melodica/tests/reference/station_mutations_probe.c /work/melodica/build/libpiano-evidence/libpiano-reference.a -lcurl -lgcrypt -ljson-c -lm -lpthread -o /work/melodica/build/libpiano-evidence/station_mutations-reference
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include /work/melodica/tests/reference/station_mutations_probe.c /work/melodica/build/compat/libpiano.a -o /work/melodica/build/libpiano-evidence/station_mutations-melodica
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg /work/melodica/tests/reference/feedback_probe.c /work/melodica/build/libpiano-evidence/libpiano-reference.a -lcurl -lgcrypt -ljson-c -lm -lpthread -o /work/melodica/build/libpiano-evidence/feedback-reference
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include /work/melodica/tests/reference/feedback_probe.c /work/melodica/build/compat/libpiano.a -o /work/melodica/build/libpiano-evidence/feedback-melodica
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg /work/melodica/tests/reference/seed_probe.c /work/melodica/build/libpiano-evidence/libpiano-reference.a -lcurl -lgcrypt -ljson-c -lm -lpthread -o /work/melodica/build/libpiano-evidence/seed-reference
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include /work/melodica/tests/reference/seed_probe.c /work/melodica/build/compat/libpiano.a -o /work/melodica/build/libpiano-evidence/seed-melodica
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg /work/melodica/tests/reference/station_info_probe.c /work/melodica/build/libpiano-evidence/libpiano-reference.a -lcurl -lgcrypt -ljson-c -lm -lpthread -o /work/melodica/build/libpiano-evidence/station_info-reference
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include /work/melodica/tests/reference/station_info_probe.c /work/melodica/build/compat/libpiano.a -o /work/melodica/build/libpiano-evidence/station_info-melodica
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg /work/melodica/tests/reference/quickmix_genre_probe.c /work/melodica/build/libpiano-evidence/libpiano-reference.a -lcurl -lgcrypt -ljson-c -lm -lpthread -o /work/melodica/build/libpiano-evidence/quickmix_genre-reference
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include /work/melodica/tests/reference/quickmix_genre_probe.c /work/melodica/build/compat/libpiano.a -o /work/melodica/build/libpiano-evidence/quickmix_genre-melodica
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg /work/melodica/tests/reference/explain_bookmarks_probe.c /work/melodica/build/libpiano-evidence/libpiano-reference.a -lcurl -lgcrypt -ljson-c -lm -lpthread -o /work/melodica/build/libpiano-evidence/explain_bookmarks-reference
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include /work/melodica/tests/reference/explain_bookmarks_probe.c /work/melodica/build/compat/libpiano.a -o /work/melodica/build/libpiano-evidence/explain_bookmarks-melodica
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg /work/melodica/tests/reference/settings_probe.c /work/melodica/build/libpiano-evidence/libpiano-reference.a -lcurl -lgcrypt -ljson-c -lm -lpthread -o /work/melodica/build/libpiano-evidence/settings-reference
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include /work/melodica/tests/reference/settings_probe.c /work/melodica/build/compat/libpiano.a -o /work/melodica/build/libpiano-evidence/settings-melodica
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg /work/melodica/tests/reference/station_modes_probe.c /work/melodica/build/libpiano-evidence/libpiano-reference.a -lcurl -lgcrypt -ljson-c -lm -lpthread -o /work/melodica/build/libpiano-evidence/station_modes-reference
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include /work/melodica/tests/reference/station_modes_probe.c /work/melodica/build/compat/libpiano.a -o /work/melodica/build/libpiano-evidence/station_modes-melodica
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg /work/melodica/tests/reference/coercion_probe.c /work/melodica/build/libpiano-evidence/libpiano-reference.a -lcurl -lgcrypt -ljson-c -lm -lpthread -o /work/melodica/build/libpiano-evidence/coercion-reference
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include /work/melodica/tests/reference/coercion_probe.c /work/melodica/build/compat/libpiano.a -o /work/melodica/build/libpiano-evidence/coercion-melodica
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg /work/melodica/tests/reference/abi_probe.c /work/melodica/build/libpiano-evidence/libpiano-reference.a -lcurl -lgcrypt -ljson-c -lm -lpthread -o /work/melodica/build/libpiano-evidence/abi-reference
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include /work/melodica/tests/reference/abi_probe.c /work/melodica/build/compat/libpiano.a -o /work/melodica/build/libpiano-evidence/abi-melodica
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg /work/melodica/tests/reference/login_probe.c /work/melodica/build/libpiano-evidence/libpiano-reference.a -lcurl -lgcrypt -ljson-c -lm -lpthread -o /work/melodica/build/libpiano-evidence/login-reference
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include /work/melodica/tests/reference/login_probe.c /work/melodica/build/compat/libpiano.a -o /work/melodica/build/libpiano-evidence/login-melodica
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg -Dmain=api_piano -Dtime=api_time_piano -D_POSIX_C_SOURCE=200809L -include /work/melodica/tests/reference/api_quiet.h -c /work/melodica/tests/reference/piano_probe.c -o /work/melodica/build/libpiano-evidence/api-piano-reference.o
+In file included from /work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano/piano.h:26,
+                 from /work/melodica/tests/reference/piano_probe.c:1:
+/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano/../config.h:9:9: warning: ‘_POSIX_C_SOURCE’ redefined
+    9 | #define _POSIX_C_SOURCE 200809L
+      |         ^~~~~~~~~~~~~~~
+In file included from /usr/include/bits/libc-header-start.h:33,
+                 from /usr/include/stdio.h:28,
+                 from /work/melodica/tests/reference/api_quiet.h:8,
+                 from <command-line>:
+/usr/include/features.h:319:10: note: this is the location of the previous definition
+  319 | # define _POSIX_C_SOURCE        202405L
+      |          ^~~~~~~~~~~~~~~
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg -Dmain=api_playlist -Dtime=api_time_playlist -D_POSIX_C_SOURCE=200809L -include /work/melodica/tests/reference/api_quiet.h -c /work/melodica/tests/reference/playlist_probe.c -o /work/melodica/build/libpiano-evidence/api-playlist-reference.o
+/work/melodica/tests/reference/playlist_probe.c:1:9: warning: ‘_POSIX_C_SOURCE’ redefined
+    1 | #define _POSIX_C_SOURCE 200809L
+      |         ^~~~~~~~~~~~~~~
+In file included from /usr/include/bits/libc-header-start.h:33,
+                 from /usr/include/stdio.h:28,
+                 from /work/melodica/tests/reference/api_quiet.h:8,
+                 from <command-line>:
+/usr/include/features.h:319:10: note: this is the location of the previous definition
+  319 | # define _POSIX_C_SOURCE        202405L
+      |          ^~~~~~~~~~~~~~~
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg -Dmain=api_search -Dtime=api_time_search -D_POSIX_C_SOURCE=200809L -include /work/melodica/tests/reference/api_quiet.h -c /work/melodica/tests/reference/search_probe.c -o /work/melodica/build/libpiano-evidence/api-search-reference.o
+/work/melodica/tests/reference/search_probe.c:1:9: warning: ‘_POSIX_C_SOURCE’ redefined
+    1 | #define _POSIX_C_SOURCE 200809L
+      |         ^~~~~~~~~~~~~~~
+In file included from /usr/include/bits/libc-header-start.h:33,
+                 from /usr/include/stdio.h:28,
+                 from /work/melodica/tests/reference/api_quiet.h:8,
+                 from <command-line>:
+/usr/include/features.h:319:10: note: this is the location of the previous definition
+  319 | # define _POSIX_C_SOURCE        202405L
+      |          ^~~~~~~~~~~~~~~
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg -Dmain=api_station_mutations -Dtime=api_time_station_mutations -D_POSIX_C_SOURCE=200809L -include /work/melodica/tests/reference/api_quiet.h -c /work/melodica/tests/reference/station_mutations_probe.c -o /work/melodica/build/libpiano-evidence/api-station_mutations-reference.o
+/work/melodica/tests/reference/station_mutations_probe.c:1:9: warning: ‘_POSIX_C_SOURCE’ redefined
+    1 | #define _POSIX_C_SOURCE 200809L
+      |         ^~~~~~~~~~~~~~~
+In file included from /usr/include/bits/libc-header-start.h:33,
+                 from /usr/include/stdio.h:28,
+                 from /work/melodica/tests/reference/api_quiet.h:8,
+                 from <command-line>:
+/usr/include/features.h:319:10: note: this is the location of the previous definition
+  319 | # define _POSIX_C_SOURCE        202405L
+      |          ^~~~~~~~~~~~~~~
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg -Dmain=api_feedback -Dtime=api_time_feedback -D_POSIX_C_SOURCE=200809L -include /work/melodica/tests/reference/api_quiet.h -c /work/melodica/tests/reference/feedback_probe.c -o /work/melodica/build/libpiano-evidence/api-feedback-reference.o
+In file included from /work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano/piano.h:26,
+                 from /work/melodica/tests/reference/feedback_probe.c:1:
+/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano/../config.h:9:9: warning: ‘_POSIX_C_SOURCE’ redefined
+    9 | #define _POSIX_C_SOURCE 200809L
+      |         ^~~~~~~~~~~~~~~
+In file included from /usr/include/bits/libc-header-start.h:33,
+                 from /usr/include/stdio.h:28,
+                 from /work/melodica/tests/reference/api_quiet.h:8,
+                 from <command-line>:
+/usr/include/features.h:319:10: note: this is the location of the previous definition
+  319 | # define _POSIX_C_SOURCE        202405L
+      |          ^~~~~~~~~~~~~~~
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg -Dmain=api_seed -Dtime=api_time_seed -D_POSIX_C_SOURCE=200809L -include /work/melodica/tests/reference/api_quiet.h -c /work/melodica/tests/reference/seed_probe.c -o /work/melodica/build/libpiano-evidence/api-seed-reference.o
+In file included from /work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano/piano.h:26,
+                 from /work/melodica/tests/reference/seed_probe.c:1:
+/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano/../config.h:9:9: warning: ‘_POSIX_C_SOURCE’ redefined
+    9 | #define _POSIX_C_SOURCE 200809L
+      |         ^~~~~~~~~~~~~~~
+In file included from /usr/include/bits/libc-header-start.h:33,
+                 from /usr/include/stdio.h:28,
+                 from /work/melodica/tests/reference/api_quiet.h:8,
+                 from <command-line>:
+/usr/include/features.h:319:10: note: this is the location of the previous definition
+  319 | # define _POSIX_C_SOURCE        202405L
+      |          ^~~~~~~~~~~~~~~
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg -Dmain=api_station_info -Dtime=api_time_station_info -D_POSIX_C_SOURCE=200809L -include /work/melodica/tests/reference/api_quiet.h -c /work/melodica/tests/reference/station_info_probe.c -o /work/melodica/build/libpiano-evidence/api-station_info-reference.o
+In file included from /work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano/piano.h:26,
+                 from /work/melodica/tests/reference/station_info_probe.c:1:
+/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano/../config.h:9:9: warning: ‘_POSIX_C_SOURCE’ redefined
+    9 | #define _POSIX_C_SOURCE 200809L
+      |         ^~~~~~~~~~~~~~~
+In file included from /usr/include/bits/libc-header-start.h:33,
+                 from /usr/include/stdio.h:28,
+                 from /work/melodica/tests/reference/api_quiet.h:8,
+                 from <command-line>:
+/usr/include/features.h:319:10: note: this is the location of the previous definition
+  319 | # define _POSIX_C_SOURCE        202405L
+      |          ^~~~~~~~~~~~~~~
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg -Dmain=api_quickmix_genre -Dtime=api_time_quickmix_genre -D_POSIX_C_SOURCE=200809L -include /work/melodica/tests/reference/api_quiet.h -c /work/melodica/tests/reference/quickmix_genre_probe.c -o /work/melodica/build/libpiano-evidence/api-quickmix_genre-reference.o
+In file included from /work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano/piano.h:26,
+                 from /work/melodica/tests/reference/quickmix_genre_probe.c:1:
+/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano/../config.h:9:9: warning: ‘_POSIX_C_SOURCE’ redefined
+    9 | #define _POSIX_C_SOURCE 200809L
+      |         ^~~~~~~~~~~~~~~
+In file included from /usr/include/bits/libc-header-start.h:33,
+                 from /usr/include/stdio.h:28,
+                 from /work/melodica/tests/reference/api_quiet.h:8,
+                 from <command-line>:
+/usr/include/features.h:319:10: note: this is the location of the previous definition
+  319 | # define _POSIX_C_SOURCE        202405L
+      |          ^~~~~~~~~~~~~~~
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg -Dmain=api_explain_bookmarks -Dtime=api_time_explain_bookmarks -D_POSIX_C_SOURCE=200809L -include /work/melodica/tests/reference/api_quiet.h -c /work/melodica/tests/reference/explain_bookmarks_probe.c -o /work/melodica/build/libpiano-evidence/api-explain_bookmarks-reference.o
+In file included from /work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano/piano.h:26,
+                 from /work/melodica/tests/reference/explain_bookmarks_probe.c:1:
+/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano/../config.h:9:9: warning: ‘_POSIX_C_SOURCE’ redefined
+    9 | #define _POSIX_C_SOURCE 200809L
+      |         ^~~~~~~~~~~~~~~
+In file included from /usr/include/bits/libc-header-start.h:33,
+                 from /usr/include/stdio.h:28,
+                 from /work/melodica/tests/reference/api_quiet.h:8,
+                 from <command-line>:
+/usr/include/features.h:319:10: note: this is the location of the previous definition
+  319 | # define _POSIX_C_SOURCE        202405L
+      |          ^~~~~~~~~~~~~~~
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg -Dmain=api_settings -Dtime=api_time_settings -D_POSIX_C_SOURCE=200809L -include /work/melodica/tests/reference/api_quiet.h -c /work/melodica/tests/reference/settings_probe.c -o /work/melodica/build/libpiano-evidence/api-settings-reference.o
+In file included from /work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano/piano.h:26,
+                 from /work/melodica/tests/reference/settings_probe.c:1:
+/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano/../config.h:9:9: warning: ‘_POSIX_C_SOURCE’ redefined
+    9 | #define _POSIX_C_SOURCE 200809L
+      |         ^~~~~~~~~~~~~~~
+In file included from /usr/include/bits/libc-header-start.h:33,
+                 from /usr/include/stdio.h:28,
+                 from /work/melodica/tests/reference/api_quiet.h:8,
+                 from <command-line>:
+/usr/include/features.h:319:10: note: this is the location of the previous definition
+  319 | # define _POSIX_C_SOURCE        202405L
+      |          ^~~~~~~~~~~~~~~
+
+$ gcc -O2 -std=c99 -Wall -Wextra -D_DEFAULT_SOURCE -DMELODICA_REFERENCE_UPSTREAM -I/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano -I/usr/include/ffmpeg -Dmain=api_station_modes -Dtime=api_time_station_modes -D_POSIX_C_SOURCE=200809L -include /work/melodica/tests/reference/api_quiet.h -c /work/melodica/tests/reference/station_modes_probe.c -o /work/melodica/build/libpiano-evidence/api-station_modes-reference.o
+In file included from /work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano/piano.h:26,
+                 from /work/melodica/tests/reference/station_modes_probe.c:1:
+/work/melodica/build/pianobar-reference-ad5ec908de10479ecee7d7c0e1030d12146f8f16/src/libpiano/../config.h:9:9: warning: ‘_POSIX_C_SOURCE’ redefined
+    9 | #define _POSIX_C_SOURCE 200809L
+      |         ^~~~~~~~~~~~~~~
+In file included from /usr/include/bits/libc-header-start.h:33,
+                 from /usr/include/stdio.h:28,
+                 from /work/melodica/tests/reference/api_quiet.h:8,
+                 from <command-line>:
+/usr/include/features.h:319:10: note: this is the location of the previous definition
+  319 | # define _POSIX_C_SOURCE        202405L
+      |          ^~~~~~~~~~~~~~~
+
+$ gcc -O2 -std=c99 -Wall -Wextra /work/melodica/tests/reference/api_bench.c /work/melodica/build/libpiano-evidence/api-piano-reference.o /work/melodica/build/libpiano-evidence/api-playlist-reference.o /work/melodica/build/libpiano-evidence/api-search-reference.o /work/melodica/build/libpiano-evidence/api-station_mutations-reference.o /work/melodica/build/libpiano-evidence/api-feedback-reference.o /work/melodica/build/libpiano-evidence/api-seed-reference.o /work/melodica/build/libpiano-evidence/api-station_info-reference.o /work/melodica/build/libpiano-evidence/api-quickmix_genre-reference.o /work/melodica/build/libpiano-evidence/api-explain_bookmarks-reference.o /work/melodica/build/libpiano-evidence/api-settings-reference.o /work/melodica/build/libpiano-evidence/api-station_modes-reference.o /work/melodica/build/libpiano-evidence/libpiano-reference.a -lcurl -lgcrypt -ljson-c -lm -lpthread -o /work/melodica/build/libpiano-evidence/api-reference
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include -Dmain=api_piano -Dtime=api_time_piano -D_POSIX_C_SOURCE=200809L -include /work/melodica/tests/reference/api_quiet.h -c /work/melodica/tests/reference/piano_probe.c -o /work/melodica/build/libpiano-evidence/api-piano-melodica.o
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include -Dmain=api_playlist -Dtime=api_time_playlist -D_POSIX_C_SOURCE=200809L -include /work/melodica/tests/reference/api_quiet.h -c /work/melodica/tests/reference/playlist_probe.c -o /work/melodica/build/libpiano-evidence/api-playlist-melodica.o
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include -Dmain=api_search -Dtime=api_time_search -D_POSIX_C_SOURCE=200809L -include /work/melodica/tests/reference/api_quiet.h -c /work/melodica/tests/reference/search_probe.c -o /work/melodica/build/libpiano-evidence/api-search-melodica.o
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include -Dmain=api_station_mutations -Dtime=api_time_station_mutations -D_POSIX_C_SOURCE=200809L -include /work/melodica/tests/reference/api_quiet.h -c /work/melodica/tests/reference/station_mutations_probe.c -o /work/melodica/build/libpiano-evidence/api-station_mutations-melodica.o
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include -Dmain=api_feedback -Dtime=api_time_feedback -D_POSIX_C_SOURCE=200809L -include /work/melodica/tests/reference/api_quiet.h -c /work/melodica/tests/reference/feedback_probe.c -o /work/melodica/build/libpiano-evidence/api-feedback-melodica.o
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include -Dmain=api_seed -Dtime=api_time_seed -D_POSIX_C_SOURCE=200809L -include /work/melodica/tests/reference/api_quiet.h -c /work/melodica/tests/reference/seed_probe.c -o /work/melodica/build/libpiano-evidence/api-seed-melodica.o
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include -Dmain=api_station_info -Dtime=api_time_station_info -D_POSIX_C_SOURCE=200809L -include /work/melodica/tests/reference/api_quiet.h -c /work/melodica/tests/reference/station_info_probe.c -o /work/melodica/build/libpiano-evidence/api-station_info-melodica.o
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include -Dmain=api_quickmix_genre -Dtime=api_time_quickmix_genre -D_POSIX_C_SOURCE=200809L -include /work/melodica/tests/reference/api_quiet.h -c /work/melodica/tests/reference/quickmix_genre_probe.c -o /work/melodica/build/libpiano-evidence/api-quickmix_genre-melodica.o
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include -Dmain=api_explain_bookmarks -Dtime=api_time_explain_bookmarks -D_POSIX_C_SOURCE=200809L -include /work/melodica/tests/reference/api_quiet.h -c /work/melodica/tests/reference/explain_bookmarks_probe.c -o /work/melodica/build/libpiano-evidence/api-explain_bookmarks-melodica.o
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include -Dmain=api_settings -Dtime=api_time_settings -D_POSIX_C_SOURCE=200809L -include /work/melodica/tests/reference/api_quiet.h -c /work/melodica/tests/reference/settings_probe.c -o /work/melodica/build/libpiano-evidence/api-settings-melodica.o
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror -I/work/melodica/include -Dmain=api_station_modes -Dtime=api_time_station_modes -D_POSIX_C_SOURCE=200809L -include /work/melodica/tests/reference/api_quiet.h -c /work/melodica/tests/reference/station_modes_probe.c -o /work/melodica/build/libpiano-evidence/api-station_modes-melodica.o
+
+$ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror /work/melodica/tests/reference/api_bench.c /work/melodica/build/libpiano-evidence/api-piano-melodica.o /work/melodica/build/libpiano-evidence/api-playlist-melodica.o /work/melodica/build/libpiano-evidence/api-search-melodica.o /work/melodica/build/libpiano-evidence/api-station_mutations-melodica.o /work/melodica/build/libpiano-evidence/api-feedback-melodica.o /work/melodica/build/libpiano-evidence/api-seed-melodica.o /work/melodica/build/libpiano-evidence/api-station_info-melodica.o /work/melodica/build/libpiano-evidence/api-quickmix_genre-melodica.o /work/melodica/build/libpiano-evidence/api-explain_bookmarks-melodica.o /work/melodica/build/libpiano-evidence/api-settings-melodica.o /work/melodica/build/libpiano-evidence/api-station_modes-melodica.o /work/melodica/build/compat/libpiano.a -o /work/melodica/build/libpiano-evidence/api-melodica

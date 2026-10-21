@@ -1,0 +1,16 @@
+Linux melodica-complete-20261020 6.18.54-0-lts #1-Alpine SMP PREEMPT_DYNAMIC 2026-09-28 07:13:34 x86_64 GNU/Linux
+gcc (GCC) 16.2.1 20260819 (Red Hat 16.2.1-2)
+Copyright (C) 2026 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+0.18
+1.12.2-unknown
+/opt/melodica-tools/odin/odin version dev-2026-09-nightly:a2fb372
+0.16.0
+Nelua 0.2.0-dev
+Build number: 1
+Git date: 2025-06-24 16:22:08 -0300
+Git hash: a58450563e2d2ec49bff499865c8b5cfdf6ff81a
+Semantic version: 0.2.0-dev.1+a5845056
+Copyright (C) 2019-2026 Eduardo Bart (https://nelua.io/)

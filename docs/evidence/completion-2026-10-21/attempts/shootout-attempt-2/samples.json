@@ -1,0 +1,82 @@
+{
+  "c": [
+    {
+      "json_ascii": 985.14,
+      "json_payload": 581.77,
+      "url_ascii": 1325.48,
+      "url_mixed": 1020.21,
+      "station_request": 17.62
+    },
+    {
+      "json_ascii": 974.42,
+      "json_payload": 588.79,
+      "url_ascii": 1294.61,
+      "url_mixed": 1028.55,
+      "station_request": 17.46
+    }
+  ],
+  "odin": [
+    {
+      "json_ascii": 1174.44,
+      "json_payload": 526.78,
+      "url_ascii": 1304.14,
+      "url_mixed": 853.91,
+      "station_request": 20.85
+    },
+    {
+      "json_ascii": 1130.75,
+      "json_payload": 546.33,
+      "url_ascii": 1317.12,
+      "url_mixed": 904.14,
+      "station_request": 21.08
+    }
+  ],
+  "zig": [
+    {
+      "json_ascii": 982.78,
+      "json_payload": 532.84,
+      "url_ascii": 1317.2,
+      "url_mixed": 904.44,
+      "station_request": 19.38
+    },
+    {
+      "json_ascii": 961.61,
+      "json_payload": 517.58,
+      "url_ascii": 1316.72,
+      "url_mixed": 873.34,
+      "station_request": 19.3
+    }
+  ],
+  "nelua": [
+    {
+      "json_ascii": 1043.8,
+      "json_payload": 632.22,
+      "url_ascii": 1248.29,
+      "url_mixed": 1052.22,
+      "station_request": 17.53
+    },
+    {
+      "json_ascii": 999.01,
+      "json_payload": 631.65,
+      "url_ascii": 1241.07,
+      "url_mixed": 1001.72,
+      "station_request": 16.35
+    }
+  ],
+  "codin": [
+    {
+      "json_ascii": 1000.39,
+      "json_payload": 551.57,
+      "url_ascii": 1267.39,
+      "url_mixed": 1016.97,
+      "station_request": 17.64
+    },
+    {
+      "json_ascii": 995.57,
+      "json_payload": 549.79,
+      "url_ascii": 1293.27,
+      "url_mixed": 1050.32,
+      "station_request": 17.95
+    }
+  ]
+}

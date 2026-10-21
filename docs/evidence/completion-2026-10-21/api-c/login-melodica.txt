@@ -1,0 +1,12 @@
+normal ret=3 step=1 id=42 offset=1699987655 token=70 
+coerced ret=3 step=1 id=4294967295 offset=1699987655 token=74727565 
+missing_auth ret=3 step=1 id=0 offset=1699987655 token=<null> 
+missing_id ret=2 step=0 id=0 offset=1699987655 token=70 
+not_numeric ret=3 step=1 id=42 offset=1700000000 token=70 
+bad_hex ret=3 step=1 id=42 offset=1700000000 token=70 
+empty ret=0 step=1 id=42 offset=0 token=70 
+missing_sync ret=2 step=0 id=0 offset=0 token=<null> 
+user.0 ret=1 37 5b2074727565205d 
+user.1 ret=1 <null> <null> 
+user.2 ret=1 <null> <null> 
+unused_step ret=1

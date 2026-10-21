@@ -1,0 +1,9 @@
+$ make -B test-codin-native
+make[1]: Entering directory '/work/melodica'
+mkdir -p build/codin-native
+/opt/melodica-tools/odin/odin build impl/codin -build-mode:static -out:build/codin-native/libmelodica.a -o:speed -microarch:generic -reloc-mode:pic -no-entry-point
+gcc -O2 -std=c11 -Wall -Wextra -Werror -Iinclude tests/smoke.c \
+	build/codin-native/libmelodica.a -lm -ldl -lpthread -o build/codin-native/smoke
+./build/codin-native/smoke
+melodica smoke: ok
+make[1]: Leaving directory '/work/melodica'

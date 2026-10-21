@@ -1,0 +1,11 @@
+piano 11909.970 suites/s median_of=5 iterations=100
+playlist 5370.675 suites/s median_of=5 iterations=100
+search 14687.676 suites/s median_of=5 iterations=100
+station_mutations 14341.544 suites/s median_of=5 iterations=100
+feedback 15052.993 suites/s median_of=5 iterations=100
+seed 14548.826 suites/s median_of=5 iterations=100
+station_info 14524.031 suites/s median_of=5 iterations=100
+quickmix_genre 15143.374 suites/s median_of=5 iterations=100
+explain_bookmarks 14832.398 suites/s median_of=5 iterations=100
+settings 14829.042 suites/s median_of=5 iterations=100
+station_modes 15043.620 suites/s median_of=5 iterations=100
