@@ -23,7 +23,7 @@ jobs:
     concurrency:
       group: melodica-worker-${{ github.repository }}
       queue: max
-    runs-on: ${{ inputs.runner == 'github-hosted' && 'ubuntu-24.04' || fromJSON('["self-hosted","Linux","X64","ubuntu-tiny","spaceghost-melodica.h"]') }}
+    runs-on: ${{ inputs.runner == 'github-hosted' && 'ubuntu-24.04' || fromJSON('["self-hosted","Linux","X64","fedora44","spaceghost-melodica.h"]') }}
     timeout-minutes: 45
     env:
       CC: gcc
