@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -30,7 +31,7 @@ def command(args, *, input=None, timeout=120, secrets=()):
         message = result.stderr.strip() or 'exit ' + str(result.returncode)
         for secret in secrets:
             message = message.replace(secret, '<redacted>')
-        raise RuntimeError(args[0] + ': ' + message)
+        raise RuntimeError(shlex.join(map(str, args[:5])) + ': ' + message)
     return result.stdout
 
 
@@ -168,7 +169,7 @@ result = subprocess.run(['./config.sh', '--unattended', '--ephemeral',
 if result.returncode:
     print(result.stdout.replace(token, '<redacted>'), file=sys.stderr)
     raise SystemExit(result.returncode)
-identity = json.loads(Path('/opt/melodica-runner/.runner').read_text())
+identity = json.loads(Path('/opt/melodica-runner/.runner').read_text(encoding='utf-8-sig'))
 print(json.dumps({'id': identity['agentId'], 'name': identity['agentName']}))
 '''
 
@@ -210,25 +211,36 @@ def one_job(source, owner, number, package, state, timeout, pending):
     created = False
     result = {'worker': worker, 'status': 'incomplete'}
     path = state / f'job-{number}.json'
+    def phase(name):
+        result['phase'] = name
+        path.write_text(json.dumps(result, indent=2) + '\n')
     try:
+        phase('copy')
         command(['incus', 'copy', source, worker, '--stateless', '--instance-only',
                  '--allow-inconsistent', '--config', OWNER_KEY + '=' + owner], timeout=600)
         created = True
+        phase('isolation-audit')
         audit_definition(instance(worker))
+        phase('start')
         command(['incus', 'start', worker])
+        phase('upload-runner')
         command(['incus', 'file', 'push', str(package), worker + '/tmp/actions-runner.tar.gz'], timeout=300)
+        phase('extract-runner')
         command(['incus', 'exec', worker, '--', 'mkdir', '-p', '/opt/melodica-runner'])
         command(['incus', 'exec', worker, '--', 'tar', '-xzf', '/tmp/actions-runner.tar.gz',
                  '-C', '/opt/melodica-runner'], timeout=300)
         # Exercise the bundled .NET runtime before creating a registration. A
         # missing ICU/OpenSSL dependency must not leave a GitHub runner behind.
+        phase('runner-runtime')
         result['runner_runtime'] = command(['incus', 'exec', worker, '--', 'env',
             'RUNNER_ALLOW_RUNASROOT=1', '/opt/melodica-runner/bin/Runner.Listener',
             '--version']).strip()
+        phase('registration-token')
         registration = api(f'repos/{REPO}/actions/runners/registration-token', method='POST')
         token = registration['token']
         payload = {'token': token, 'url': 'https://github.com/' + REPO,
                    'name': worker.split(':', 1)[1], 'labels': ','.join(LABELS)}
+        phase('configure-runner')
         response = command(['incus', 'exec', worker, '--', 'python3', '-c', CONFIGURE],
                            input=json.dumps(payload), timeout=180, secrets=(token,))
         identity = json.loads(response)
@@ -237,6 +249,7 @@ def one_job(source, owner, number, package, state, timeout, pending):
         # Neither registration payload nor account credentials enter state/log files.
         del token, payload, registration
         print('Listening for one job: ' + identity['name'], flush=True)
+        phase('listen')
         with (state / f'job-{number}-listener.log').open('w') as log:
             process = subprocess.Popen(['incus', 'exec', worker, '--', 'env',
                 'RUNNER_ALLOW_RUNASROOT=1', 'sh', '-c', 'cd /opt/melodica-runner && exec ./run.sh'],
@@ -249,6 +262,7 @@ def one_job(source, owner, number, package, state, timeout, pending):
                 time.sleep(10)
             if process.returncode:
                 raise RuntimeError('One-job listener exited ' + str(process.returncode))
+        phase('job-result')
         deadline = time.monotonic() + 60
         while True:
             completed = []
@@ -286,13 +300,14 @@ def one_job(source, owner, number, package, state, timeout, pending):
                 # the secret-free runner identity, never its credential files.
                 try:
                     identity = json.loads(command(['incus', 'exec', worker, '--', 'python3', '-c',
-                        "import json; from pathlib import Path; p=json.loads(Path('/opt/melodica-runner/.runner').read_text()); "
+                        "import json; from pathlib import Path; p=json.loads(Path('/opt/melodica-runner/.runner').read_text(encoding='utf-8-sig')); "
                         "print(json.dumps({'id':p['agentId'],'name':p['agentName']}))"]))
                 except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired):
                     pass
             try:
                 cleanup(worker, owner, identity)
-                result['cleanup'] = 'exact owned runner and worker removed'
+                result['cleanup'] = ('exact owned runner and worker removed' if identity else
+                                     'owned worker removed; no runner identity recovered')
             except (OSError, RuntimeError, ValueError) as error:
                 result['cleanup'] = 'failed: ' + str(error)
                 path.write_text(json.dumps(result, indent=2) + '\n')

@@ -86,7 +86,7 @@ objects against melodica's `piano.h`, using
 `MELODICA_PIANO_LEGACY_GCRYPT`. Its dependency graph proves the replacement header
 was included. Installation stages C, Odin, Zig, Nelua and Codin separately and
 compiles a public client using each installation's static pkg-config flags.
-The Python harness passes 50 regression tests; synthetic score outputs
+The Python harness passes 51 regression tests; synthetic score outputs
 inside those tests are fixtures.
 
 ## Performance and evidence
@@ -109,6 +109,11 @@ identity and artifacts. Correctness-only records are distinct from complete timi
 records. Failed or stale inputs cause an explicit failure or a baseline rebuild;
 rankings are withheld when a required lane fails. Avoid concurrent compilation or
 other benchmark runs during a timed comparison.
+
+All three CI jobs share one repository concurrency group with `queue: max`, so
+their builds and timings run sequentially without replacing pending checks.
+This uses GitHub's [multiple-pending-job queue](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
+The differential job also checks installation of every protocol variant.
 
 | Evidence location | Contents |
 |---|---|

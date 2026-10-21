@@ -20,6 +20,9 @@ concurrency:
 
 jobs:
   differential:
+    concurrency:
+      group: melodica-worker-${{ github.repository }}
+      queue: max
     runs-on: ${{ inputs.runner == 'github-hosted' && 'ubuntu-24.04' || fromJSON('["self-hosted","Linux","X64","ubuntu-tiny","spaceghost-melodica.h"]') }}
     timeout-minutes: 45
     env:
@@ -49,6 +52,9 @@ jobs:
         run: |
           make -B libpiano-native
           python3 scripts/native-piano.py
+      - name: Verify installation of every protocol implementation
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' && steps.reference.outcome == 'success' }}
+        run: make test-install
       - name: Preserve readable evidence in job logs
         if: always()
         run: python3 scripts/ci-evidence.py build/libpiano-evidence build/native-piano-evidence build/toolchain-evidence
