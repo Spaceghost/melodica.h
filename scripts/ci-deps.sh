@@ -26,7 +26,7 @@ fi
 command -v apt-get >/dev/null || { echo 'Use a Fedora or Ubuntu/Debian Incus worker' >&2; exit 69; }
 as_root env DEBIAN_FRONTEND=noninteractive apt-get update -qq
 as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    ca-certificates git curl xz-utils patch build-essential clang llvm lld binutils \
+    ca-certificates git curl xz-utils patch build-essential clang libclang-rt-dev llvm lld binutils \
     pkg-config python3 libreadline-dev tmux libgcrypt20-dev libjson-c-dev
 if [ "$mode" = reference ]; then
     as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \

@@ -20,7 +20,7 @@ import urllib.request
 import uuid
 
 REPO = 'Spaceghost/melodica.h'
-LABELS = ('self-hosted', 'Linux', 'X64', 'ubuntu-tiny', 'spaceghost-melodica.h')
+LABELS = ('self-hosted', 'Linux', 'X64', 'fedora44', 'spaceghost-melodica.h')
 OWNER_KEY = 'user.melodica-ci.once'
 
 

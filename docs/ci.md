@@ -130,15 +130,17 @@ dependencies. Archive sizes exclude separately linked runtime libraries.
 
 ## GitHub runner routing
 
-Both workflows request the existing broker's exact label vector:
+Both workflows default to the Fedora 44 Incus worker label vector:
 
 ```text
-self-hosted, Linux, X64, ubuntu-tiny, spaceghost-melodica.h
+self-hosted, Linux, X64, fedora44, spaceghost-melodica.h
 ```
 
 Manual dispatch also supports `runner=github-hosted`. Worker dependencies support
-Fedora and Ubuntu/Debian, while the `ubuntu-tiny` label identifies the broker's
-runner class. The retained completion snapshot establishes the manual validation
+Fedora and Ubuntu/Debian. The default routes jobs to the task-owned Fedora worker
+on Bak; run the bounded controller below to provide up to three ephemeral runners.
+This label does not match the existing Ubuntu worker broker. The retained
+completion snapshot establishes the manual validation
 results above. GitHub workflow runs provide the CI job results; release evidence
 also retains the one-job controller's assigned job identities and cleanup records.
 
