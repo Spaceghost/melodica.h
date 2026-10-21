@@ -79,12 +79,28 @@ class OneJobControllerTests(unittest.TestCase):
                  self.assertRaises(ValueError):
                 controller.runner_release()
 
-    def test_queue_refuses_jobs_for_another_commit(self):
-        run = {'id': 1, 'head_sha': 'b' * 40}
-        job = {'id': 2, 'name': 'fixture', 'status': 'queued', 'labels': list(controller.LABELS)}
-        with patch.object(controller, 'api', side_effect=[{'workflow_runs': [run]}, {'jobs': [job]}]):
-            with self.assertRaisesRegex(RuntimeError, 'Another commit'):
-                controller.queued_jobs('a' * 40)
+    def test_queue_handles_unfinished_states_and_refuses_another_commit(self):
+        for state in ('queued', 'pending', 'requested', 'waiting'):
+            run = {'id': 1, 'head_sha': 'b' * 40}
+            job = {'id': 2, 'name': 'fixture', 'status': state, 'labels': list(controller.LABELS)}
+            with self.subTest(state=state, commit='other'), patch.object(controller, 'api',
+                    side_effect=[{'workflow_runs': [run]}, {'jobs': [job]}]):
+                with self.assertRaisesRegex(RuntimeError, 'Another commit'):
+                    controller.queued_jobs('a' * 40)
+            run['head_sha'] = 'a' * 40
+            def api(endpoint):
+                if '/jobs?' in endpoint:
+                    return {'jobs': [job]}
+                # Return the same run twice to exercise a status transition.
+                return {'workflow_runs': [run]} if 'status=queued&' in endpoint or \
+                    'status=' + state + '&' in endpoint else {'workflow_runs': []}
+            with self.subTest(state=state, commit='selected'), patch.object(controller, 'api', side_effect=api):
+                if state == 'waiting':
+                    with self.assertRaisesRegex(RuntimeError, 'deployment protection'):
+                        controller.queued_jobs('a' * 40)
+                else:
+                    self.assertEqual(controller.queued_jobs('a' * 40),
+                                     [{'run_id': 1, 'job_id': 2, 'name': 'fixture'}])
 
 
 if __name__ == '__main__':

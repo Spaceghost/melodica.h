@@ -4,17 +4,17 @@ API suites include init, fixture requests/responses, validation and owned-result
 Rates describe fixture suites, not individual API calls. No cross-language API ranking.
 
 workload                    reference     melodica     ratio unit
-piano                        6314.922     7992.412    1.266x suites/s
-playlist                     4713.014     5619.969    1.192x suites/s
-search                      13391.289     9341.617    0.698x suites/s
-station_mutations           10791.192     9012.781    0.835x suites/s
-feedback                    11141.810     9319.817    0.836x suites/s
-seed                        10101.030     9204.748    0.911x suites/s
-station_info                12967.222     9278.035    0.715x suites/s
-quickmix_genre              12061.613     9441.516    0.783x suites/s
-explain_bookmarks           11882.629     9263.988    0.780x suites/s
-settings                    11211.198     9170.197    0.818x suites/s
-station_modes               12916.728     9268.391    0.718x suites/s
-playlist_parse_4            41555.148    79238.787    1.907x requests/s
-playlist_parse_64            2842.224     4786.855    1.684x requests/s
-playlist_parse_256            581.377     1187.764    2.043x requests/s
+piano                        6239.516     8193.231    1.313x suites/s
+playlist                     4651.188     5710.626    1.228x suites/s
+search                      13755.353     9658.612    0.702x suites/s
+station_mutations           10572.895     9388.926    0.888x suites/s
+feedback                    11178.383     9592.143    0.858x suites/s
+seed                        10489.484     9269.605    0.884x suites/s
+station_info                13545.968     9499.399    0.701x suites/s
+quickmix_genre              12656.129     9276.881    0.733x suites/s
+explain_bookmarks           12479.941     9277.811    0.743x suites/s
+settings                    11418.302     9448.209    0.827x suites/s
+station_modes               12672.733     9303.140    0.734x suites/s
+playlist_parse_4            41433.048    79207.406    1.912x requests/s
+playlist_parse_64            2852.131     4856.702    1.703x requests/s
+playlist_parse_256            583.993     1234.084    2.113x requests/s

@@ -79,7 +79,7 @@ libpiano.o:
 0000000000000210 T PianoRequest
 0000000000002910 T PianoResponse
 0000000000000040 T melodica_piano_abi_layout
-0000000000000000 B runtime::default_random_generator_proc-.state-4185
+0000000000000000 B runtime::default_random_generator_proc-.state-4475
 $ size -A /work/melodica/build/odin/libpiano.a
 libpiano.o   (ex /work/melodica/build/odin/libpiano.a):
 section            size   addr
@@ -4574,229 +4574,229 @@ user.2 ret=1 <null> <null>
 unused_step ret=1
 $ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror /work/melodica/tests/reference/api_bench.c /work/melodica/build/libpiano-evidence/api-piano-melodica.o /work/melodica/build/libpiano-evidence/api-playlist-melodica.o /work/melodica/build/libpiano-evidence/api-search-melodica.o /work/melodica/build/libpiano-evidence/api-station_mutations-melodica.o /work/melodica/build/libpiano-evidence/api-feedback-melodica.o /work/melodica/build/libpiano-evidence/api-seed-melodica.o /work/melodica/build/libpiano-evidence/api-station_info-melodica.o /work/melodica/build/libpiano-evidence/api-quickmix_genre-melodica.o /work/melodica/build/libpiano-evidence/api-explain_bookmarks-melodica.o /work/melodica/build/libpiano-evidence/api-settings-melodica.o /work/melodica/build/libpiano-evidence/api-station_modes-melodica.o /work/melodica/build/odin/libpiano.a -ljson-c -lgcrypt -lm -ldl -lpthread -o /work/melodica/build/native-piano-evidence/api-odin
 $ ldd /work/melodica/build/native-piano-evidence/api-odin
-	linux-vdso.so.1 (0x00007f364f533000)
-	libjson-c.so.5 => /lib64/libjson-c.so.5 (0x00007f364f510000)
-	libgcrypt.so.20 => /lib64/libgcrypt.so.20 (0x00007f364f385000)
-	libm.so.6 => /lib64/libm.so.6 (0x00007f364f26e000)
-	libc.so.6 => /lib64/libc.so.6 (0x00007f364f075000)
-	libgpg-error.so.0 => /lib64/libgpg-error.so.0 (0x00007f364f048000)
-	/lib64/ld-linux-x86-64.so.2 (0x00007f364f535000)
+	linux-vdso.so.1 (0x00007fb9310ee000)
+	libjson-c.so.5 => /lib64/libjson-c.so.5 (0x00007fb9310cb000)
+	libgcrypt.so.20 => /lib64/libgcrypt.so.20 (0x00007fb930f40000)
+	libm.so.6 => /lib64/libm.so.6 (0x00007fb930e29000)
+	libc.so.6 => /lib64/libc.so.6 (0x00007fb930c30000)
+	libgpg-error.so.0 => /lib64/libgpg-error.so.0 (0x00007fb930c03000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007fb9310f0000)
 $ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror /work/melodica/tests/reference/api_bench.c /work/melodica/build/libpiano-evidence/api-piano-melodica.o /work/melodica/build/libpiano-evidence/api-playlist-melodica.o /work/melodica/build/libpiano-evidence/api-search-melodica.o /work/melodica/build/libpiano-evidence/api-station_mutations-melodica.o /work/melodica/build/libpiano-evidence/api-feedback-melodica.o /work/melodica/build/libpiano-evidence/api-seed-melodica.o /work/melodica/build/libpiano-evidence/api-station_info-melodica.o /work/melodica/build/libpiano-evidence/api-quickmix_genre-melodica.o /work/melodica/build/libpiano-evidence/api-explain_bookmarks-melodica.o /work/melodica/build/libpiano-evidence/api-settings-melodica.o /work/melodica/build/libpiano-evidence/api-station_modes-melodica.o /work/melodica/build/zig/libpiano.a -ljson-c -lgcrypt -lm -ldl -lpthread -o /work/melodica/build/native-piano-evidence/api-zig
 $ ldd /work/melodica/build/native-piano-evidence/api-zig
-	linux-vdso.so.1 (0x00007f4239126000)
-	libjson-c.so.5 => /lib64/libjson-c.so.5 (0x00007f4239103000)
-	libgcrypt.so.20 => /lib64/libgcrypt.so.20 (0x00007f4238f78000)
-	libm.so.6 => /lib64/libm.so.6 (0x00007f4238e61000)
-	libc.so.6 => /lib64/libc.so.6 (0x00007f4238c68000)
-	libgpg-error.so.0 => /lib64/libgpg-error.so.0 (0x00007f4238c3b000)
-	/lib64/ld-linux-x86-64.so.2 (0x00007f4239128000)
+	linux-vdso.so.1 (0x00007fc70c04b000)
+	libjson-c.so.5 => /lib64/libjson-c.so.5 (0x00007fc70c028000)
+	libgcrypt.so.20 => /lib64/libgcrypt.so.20 (0x00007fc70be9d000)
+	libm.so.6 => /lib64/libm.so.6 (0x00007fc70bd86000)
+	libc.so.6 => /lib64/libc.so.6 (0x00007fc70bb8d000)
+	libgpg-error.so.0 => /lib64/libgpg-error.so.0 (0x00007fc70bb60000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007fc70c04d000)
 $ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror /work/melodica/tests/reference/api_bench.c /work/melodica/build/libpiano-evidence/api-piano-melodica.o /work/melodica/build/libpiano-evidence/api-playlist-melodica.o /work/melodica/build/libpiano-evidence/api-search-melodica.o /work/melodica/build/libpiano-evidence/api-station_mutations-melodica.o /work/melodica/build/libpiano-evidence/api-feedback-melodica.o /work/melodica/build/libpiano-evidence/api-seed-melodica.o /work/melodica/build/libpiano-evidence/api-station_info-melodica.o /work/melodica/build/libpiano-evidence/api-quickmix_genre-melodica.o /work/melodica/build/libpiano-evidence/api-explain_bookmarks-melodica.o /work/melodica/build/libpiano-evidence/api-settings-melodica.o /work/melodica/build/libpiano-evidence/api-station_modes-melodica.o /work/melodica/build/nelua/libpiano.a -ljson-c -lgcrypt -lm -ldl -lpthread -o /work/melodica/build/native-piano-evidence/api-nelua
 $ ldd /work/melodica/build/native-piano-evidence/api-nelua
-	linux-vdso.so.1 (0x00007fe0998b8000)
-	libjson-c.so.5 => /lib64/libjson-c.so.5 (0x00007fe099895000)
-	libgcrypt.so.20 => /lib64/libgcrypt.so.20 (0x00007fe09970a000)
-	libm.so.6 => /lib64/libm.so.6 (0x00007fe0995f3000)
-	libc.so.6 => /lib64/libc.so.6 (0x00007fe0993fa000)
-	libgpg-error.so.0 => /lib64/libgpg-error.so.0 (0x00007fe0993cd000)
-	/lib64/ld-linux-x86-64.so.2 (0x00007fe0998ba000)
+	linux-vdso.so.1 (0x00007f3cf7d89000)
+	libjson-c.so.5 => /lib64/libjson-c.so.5 (0x00007f3cf7d66000)
+	libgcrypt.so.20 => /lib64/libgcrypt.so.20 (0x00007f3cf7bdb000)
+	libm.so.6 => /lib64/libm.so.6 (0x00007f3cf7ac4000)
+	libc.so.6 => /lib64/libc.so.6 (0x00007f3cf78cb000)
+	libgpg-error.so.0 => /lib64/libgpg-error.so.0 (0x00007f3cf789e000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007f3cf7d8b000)
 $ gcc -O2 -std=c99 -pedantic-errors -Wall -Wextra -Werror /work/melodica/tests/reference/api_bench.c /work/melodica/build/libpiano-evidence/api-piano-melodica.o /work/melodica/build/libpiano-evidence/api-playlist-melodica.o /work/melodica/build/libpiano-evidence/api-search-melodica.o /work/melodica/build/libpiano-evidence/api-station_mutations-melodica.o /work/melodica/build/libpiano-evidence/api-feedback-melodica.o /work/melodica/build/libpiano-evidence/api-seed-melodica.o /work/melodica/build/libpiano-evidence/api-station_info-melodica.o /work/melodica/build/libpiano-evidence/api-quickmix_genre-melodica.o /work/melodica/build/libpiano-evidence/api-explain_bookmarks-melodica.o /work/melodica/build/libpiano-evidence/api-settings-melodica.o /work/melodica/build/libpiano-evidence/api-station_modes-melodica.o /work/melodica/build/codin/libpiano.a -ljson-c -lgcrypt -lm -ldl -lpthread -o /work/melodica/build/native-piano-evidence/api-codin
 $ ldd /work/melodica/build/native-piano-evidence/api-codin
-	linux-vdso.so.1 (0x00007f873c066000)
-	libjson-c.so.5 => /lib64/libjson-c.so.5 (0x00007f873c043000)
-	libgcrypt.so.20 => /lib64/libgcrypt.so.20 (0x00007f873beb8000)
-	libm.so.6 => /lib64/libm.so.6 (0x00007f873bda1000)
-	libc.so.6 => /lib64/libc.so.6 (0x00007f873bba8000)
-	libgpg-error.so.0 => /lib64/libgpg-error.so.0 (0x00007f873bb7b000)
-	/lib64/ld-linux-x86-64.so.2 (0x00007f873c068000)
+	linux-vdso.so.1 (0x00007ff811891000)
+	libjson-c.so.5 => /lib64/libjson-c.so.5 (0x00007ff81186e000)
+	libgcrypt.so.20 => /lib64/libgcrypt.so.20 (0x00007ff8116e3000)
+	libm.so.6 => /lib64/libm.so.6 (0x00007ff8115cc000)
+	libc.so.6 => /lib64/libc.so.6 (0x00007ff8113d3000)
+	libgpg-error.so.0 => /lib64/libgpg-error.so.0 (0x00007ff8113a6000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007ff811893000)
 $ /work/melodica/build/libpiano-evidence/api-reference
-piano 6386.008 suites/s median_of=5 iterations=100
-playlist 4777.876 suites/s median_of=5 iterations=100
-search 13882.241 suites/s median_of=5 iterations=100
-station_mutations 10932.318 suites/s median_of=5 iterations=100
-feedback 10130.104 suites/s median_of=5 iterations=100
-seed 9959.041 suites/s median_of=5 iterations=100
-station_info 12871.650 suites/s median_of=5 iterations=100
-quickmix_genre 12059.610 suites/s median_of=5 iterations=100
-explain_bookmarks 12236.397 suites/s median_of=5 iterations=100
-settings 11029.629 suites/s median_of=5 iterations=100
-station_modes 12826.689 suites/s median_of=5 iterations=100
+piano 6284.511 suites/s median_of=5 iterations=100
+playlist 4774.167 suites/s median_of=5 iterations=100
+search 14044.997 suites/s median_of=5 iterations=100
+station_mutations 11246.981 suites/s median_of=5 iterations=100
+feedback 11704.518 suites/s median_of=5 iterations=100
+seed 10754.299 suites/s median_of=5 iterations=100
+station_info 13783.865 suites/s median_of=5 iterations=100
+quickmix_genre 12901.744 suites/s median_of=5 iterations=100
+explain_bookmarks 12784.265 suites/s median_of=5 iterations=100
+settings 11838.741 suites/s median_of=5 iterations=100
+station_modes 12804.647 suites/s median_of=5 iterations=100
 $ /work/melodica/build/libpiano-evidence/playlist-reference --bench
-playlist_parse_4 40414.830 requests/s median_of=5 iterations=10000
-playlist_parse_64 2824.456 requests/s median_of=5 iterations=750
-playlist_parse_256 580.110 requests/s median_of=5 iterations=150
+playlist_parse_4 42875.464 requests/s median_of=5 iterations=10000
+playlist_parse_64 2805.008 requests/s median_of=5 iterations=750
+playlist_parse_256 591.620 requests/s median_of=5 iterations=150
 $ /work/melodica/build/libpiano-evidence/api-melodica
-piano 7983.510 suites/s median_of=5 iterations=100
-playlist 5640.328 suites/s median_of=5 iterations=100
-search 9332.408 suites/s median_of=5 iterations=100
-station_mutations 8963.745 suites/s median_of=5 iterations=100
-feedback 9255.768 suites/s median_of=5 iterations=100
-seed 9178.619 suites/s median_of=5 iterations=100
-station_info 9310.641 suites/s median_of=5 iterations=100
-quickmix_genre 9339.778 suites/s median_of=5 iterations=100
-explain_bookmarks 9291.967 suites/s median_of=5 iterations=100
-settings 9219.387 suites/s median_of=5 iterations=100
-station_modes 9168.527 suites/s median_of=5 iterations=100
+piano 8038.063 suites/s median_of=5 iterations=100
+playlist 5573.934 suites/s median_of=5 iterations=100
+search 9244.583 suites/s median_of=5 iterations=100
+station_mutations 8994.321 suites/s median_of=5 iterations=100
+feedback 9318.628 suites/s median_of=5 iterations=100
+seed 9212.375 suites/s median_of=5 iterations=100
+station_info 9188.610 suites/s median_of=5 iterations=100
+quickmix_genre 8660.906 suites/s median_of=5 iterations=100
+explain_bookmarks 7849.050 suites/s median_of=5 iterations=100
+settings 7134.528 suites/s median_of=5 iterations=100
+station_modes 8935.642 suites/s median_of=5 iterations=100
 $ /work/melodica/build/libpiano-evidence/playlist-melodica --bench
-playlist_parse_4 79309.932 requests/s median_of=5 iterations=10000
-playlist_parse_64 4856.405 requests/s median_of=5 iterations=750
-playlist_parse_256 1233.868 requests/s median_of=5 iterations=150
+playlist_parse_4 77526.532 requests/s median_of=5 iterations=10000
+playlist_parse_64 4851.014 requests/s median_of=5 iterations=750
+playlist_parse_256 1226.559 requests/s median_of=5 iterations=150
 $ /work/melodica/build/native-piano-evidence/api-odin
-piano 11706.013 suites/s median_of=5 iterations=100
-playlist 5276.380 suites/s median_of=5 iterations=100
-search 14717.080 suites/s median_of=5 iterations=100
-station_mutations 14123.418 suites/s median_of=5 iterations=100
-feedback 15057.436 suites/s median_of=5 iterations=100
-seed 14606.229 suites/s median_of=5 iterations=100
-station_info 14648.036 suites/s median_of=5 iterations=100
-quickmix_genre 15044.739 suites/s median_of=5 iterations=100
-explain_bookmarks 14733.694 suites/s median_of=5 iterations=100
-settings 15145.007 suites/s median_of=5 iterations=100
-station_modes 15092.440 suites/s median_of=5 iterations=100
+piano 11904.055 suites/s median_of=5 iterations=100
+playlist 5463.531 suites/s median_of=5 iterations=100
+search 14856.984 suites/s median_of=5 iterations=100
+station_mutations 14198.894 suites/s median_of=5 iterations=100
+feedback 15098.727 suites/s median_of=5 iterations=100
+seed 15241.454 suites/s median_of=5 iterations=100
+station_info 15223.221 suites/s median_of=5 iterations=100
+quickmix_genre 14983.797 suites/s median_of=5 iterations=100
+explain_bookmarks 15373.537 suites/s median_of=5 iterations=100
+settings 15138.938 suites/s median_of=5 iterations=100
+station_modes 14830.537 suites/s median_of=5 iterations=100
 $ /work/melodica/build/native-piano-evidence/playlist-odin --bench
-playlist_parse_4 42041.235 requests/s median_of=5 iterations=10000
-playlist_parse_64 2879.539 requests/s median_of=5 iterations=750
-playlist_parse_256 583.847 requests/s median_of=5 iterations=150
+playlist_parse_4 41621.563 requests/s median_of=5 iterations=10000
+playlist_parse_64 2838.413 requests/s median_of=5 iterations=750
+playlist_parse_256 589.667 requests/s median_of=5 iterations=150
 $ /work/melodica/build/native-piano-evidence/api-zig
-piano 11302.515 suites/s median_of=5 iterations=100
-playlist 5170.929 suites/s median_of=5 iterations=100
-search 14149.865 suites/s median_of=5 iterations=100
-station_mutations 13534.166 suites/s median_of=5 iterations=100
-feedback 14749.593 suites/s median_of=5 iterations=100
-seed 14273.390 suites/s median_of=5 iterations=100
-station_info 14470.364 suites/s median_of=5 iterations=100
-quickmix_genre 14763.608 suites/s median_of=5 iterations=100
-explain_bookmarks 14566.804 suites/s median_of=5 iterations=100
-settings 15089.727 suites/s median_of=5 iterations=100
-station_modes 15309.125 suites/s median_of=5 iterations=100
+piano 11769.326 suites/s median_of=5 iterations=100
+playlist 5305.761 suites/s median_of=5 iterations=100
+search 15076.878 suites/s median_of=5 iterations=100
+station_mutations 14420.099 suites/s median_of=5 iterations=100
+feedback 15151.295 suites/s median_of=5 iterations=100
+seed 14825.839 suites/s median_of=5 iterations=100
+station_info 14820.989 suites/s median_of=5 iterations=100
+quickmix_genre 15173.795 suites/s median_of=5 iterations=100
+explain_bookmarks 14927.354 suites/s median_of=5 iterations=100
+settings 14059.351 suites/s median_of=5 iterations=100
+station_modes 14492.588 suites/s median_of=5 iterations=100
 $ /work/melodica/build/native-piano-evidence/playlist-zig --bench
-playlist_parse_4 41669.119 requests/s median_of=5 iterations=10000
-playlist_parse_64 2817.772 requests/s median_of=5 iterations=750
-playlist_parse_256 592.529 requests/s median_of=5 iterations=150
+playlist_parse_4 40117.872 requests/s median_of=5 iterations=10000
+playlist_parse_64 2791.987 requests/s median_of=5 iterations=750
+playlist_parse_256 561.779 requests/s median_of=5 iterations=150
 $ /work/melodica/build/native-piano-evidence/api-nelua
-piano 11713.017 suites/s median_of=5 iterations=100
-playlist 5317.846 suites/s median_of=5 iterations=100
-search 14868.829 suites/s median_of=5 iterations=100
-station_mutations 14147.299 suites/s median_of=5 iterations=100
-feedback 15304.659 suites/s median_of=5 iterations=100
-seed 14843.378 suites/s median_of=5 iterations=100
-station_info 14625.207 suites/s median_of=5 iterations=100
-quickmix_genre 14968.485 suites/s median_of=5 iterations=100
-explain_bookmarks 14839.439 suites/s median_of=5 iterations=100
-settings 15167.480 suites/s median_of=5 iterations=100
-station_modes 15115.565 suites/s median_of=5 iterations=100
+piano 11290.223 suites/s median_of=5 iterations=100
+playlist 5319.134 suites/s median_of=5 iterations=100
+search 14506.310 suites/s median_of=5 iterations=100
+station_mutations 14503.166 suites/s median_of=5 iterations=100
+feedback 15104.029 suites/s median_of=5 iterations=100
+seed 14586.047 suites/s median_of=5 iterations=100
+station_info 14362.436 suites/s median_of=5 iterations=100
+quickmix_genre 13750.980 suites/s median_of=5 iterations=100
+explain_bookmarks 14293.657 suites/s median_of=5 iterations=100
+settings 14485.851 suites/s median_of=5 iterations=100
+station_modes 8591.978 suites/s median_of=5 iterations=100
 $ /work/melodica/build/native-piano-evidence/playlist-nelua --bench
-playlist_parse_4 40481.650 requests/s median_of=5 iterations=10000
-playlist_parse_64 2780.037 requests/s median_of=5 iterations=750
-playlist_parse_256 556.245 requests/s median_of=5 iterations=150
+playlist_parse_4 41741.441 requests/s median_of=5 iterations=10000
+playlist_parse_64 2784.903 requests/s median_of=5 iterations=750
+playlist_parse_256 577.854 requests/s median_of=5 iterations=150
 $ /work/melodica/build/native-piano-evidence/api-codin
-piano 11609.895 suites/s median_of=5 iterations=100
-playlist 5084.446 suites/s median_of=5 iterations=100
-search 14549.821 suites/s median_of=5 iterations=100
-station_mutations 13991.965 suites/s median_of=5 iterations=100
-feedback 14888.678 suites/s median_of=5 iterations=100
-seed 14340.201 suites/s median_of=5 iterations=100
-station_info 14279.111 suites/s median_of=5 iterations=100
-quickmix_genre 14382.691 suites/s median_of=5 iterations=100
-explain_bookmarks 14327.740 suites/s median_of=5 iterations=100
-settings 14699.512 suites/s median_of=5 iterations=100
-station_modes 14631.665 suites/s median_of=5 iterations=100
+piano 11662.640 suites/s median_of=5 iterations=100
+playlist 5210.456 suites/s median_of=5 iterations=100
+search 14737.716 suites/s median_of=5 iterations=100
+station_mutations 14081.913 suites/s median_of=5 iterations=100
+feedback 15145.386 suites/s median_of=5 iterations=100
+seed 14813.693 suites/s median_of=5 iterations=100
+station_info 14643.467 suites/s median_of=5 iterations=100
+quickmix_genre 15088.379 suites/s median_of=5 iterations=100
+explain_bookmarks 14687.104 suites/s median_of=5 iterations=100
+settings 14948.711 suites/s median_of=5 iterations=100
+station_modes 14695.110 suites/s median_of=5 iterations=100
 $ /work/melodica/build/native-piano-evidence/playlist-codin --bench
-playlist_parse_4 38806.878 requests/s median_of=5 iterations=10000
-playlist_parse_64 2737.738 requests/s median_of=5 iterations=750
-playlist_parse_256 584.130 requests/s median_of=5 iterations=150
+playlist_parse_4 40646.596 requests/s median_of=5 iterations=10000
+playlist_parse_64 2829.248 requests/s median_of=5 iterations=750
+playlist_parse_256 596.160 requests/s median_of=5 iterations=150
 $ /work/melodica/build/native-piano-evidence/api-codin
-piano 11810.146 suites/s median_of=5 iterations=100
-playlist 5153.336 suites/s median_of=5 iterations=100
-search 14833.160 suites/s median_of=5 iterations=100
-station_mutations 14093.024 suites/s median_of=5 iterations=100
-feedback 15089.292 suites/s median_of=5 iterations=100
-seed 14565.032 suites/s median_of=5 iterations=100
-station_info 14468.976 suites/s median_of=5 iterations=100
-quickmix_genre 15132.102 suites/s median_of=5 iterations=100
-explain_bookmarks 14717.236 suites/s median_of=5 iterations=100
-settings 15142.205 suites/s median_of=5 iterations=100
-station_modes 14390.881 suites/s median_of=5 iterations=100
+piano 11750.412 suites/s median_of=5 iterations=100
+playlist 5210.625 suites/s median_of=5 iterations=100
+search 14652.416 suites/s median_of=5 iterations=100
+station_mutations 13742.480 suites/s median_of=5 iterations=100
+feedback 14371.710 suites/s median_of=5 iterations=100
+seed 14362.981 suites/s median_of=5 iterations=100
+station_info 13964.109 suites/s median_of=5 iterations=100
+quickmix_genre 14296.052 suites/s median_of=5 iterations=100
+explain_bookmarks 14080.751 suites/s median_of=5 iterations=100
+settings 14421.674 suites/s median_of=5 iterations=100
+station_modes 14614.909 suites/s median_of=5 iterations=100
 $ /work/melodica/build/native-piano-evidence/playlist-codin --bench
-playlist_parse_4 41397.852 requests/s median_of=5 iterations=10000
-playlist_parse_64 2865.581 requests/s median_of=5 iterations=750
-playlist_parse_256 582.054 requests/s median_of=5 iterations=150
+playlist_parse_4 42588.242 requests/s median_of=5 iterations=10000
+playlist_parse_64 2869.989 requests/s median_of=5 iterations=750
+playlist_parse_256 602.862 requests/s median_of=5 iterations=150
 $ /work/melodica/build/native-piano-evidence/api-nelua
-piano 11976.051 suites/s median_of=5 iterations=100
-playlist 5321.599 suites/s median_of=5 iterations=100
-search 15177.317 suites/s median_of=5 iterations=100
-station_mutations 14351.046 suites/s median_of=5 iterations=100
-feedback 14421.149 suites/s median_of=5 iterations=100
-seed 14513.167 suites/s median_of=5 iterations=100
-station_info 14563.522 suites/s median_of=5 iterations=100
-quickmix_genre 14287.327 suites/s median_of=5 iterations=100
-explain_bookmarks 13429.474 suites/s median_of=5 iterations=100
-settings 14775.464 suites/s median_of=5 iterations=100
-station_modes 14654.608 suites/s median_of=5 iterations=100
+piano 11664.637 suites/s median_of=5 iterations=100
+playlist 5337.876 suites/s median_of=5 iterations=100
+search 14976.672 suites/s median_of=5 iterations=100
+station_mutations 14445.250 suites/s median_of=5 iterations=100
+feedback 15367.317 suites/s median_of=5 iterations=100
+seed 14769.731 suites/s median_of=5 iterations=100
+station_info 14772.829 suites/s median_of=5 iterations=100
+quickmix_genre 14552.114 suites/s median_of=5 iterations=100
+explain_bookmarks 14459.829 suites/s median_of=5 iterations=100
+settings 14808.571 suites/s median_of=5 iterations=100
+station_modes 14759.599 suites/s median_of=5 iterations=100
 $ /work/melodica/build/native-piano-evidence/playlist-nelua --bench
-playlist_parse_4 40486.416 requests/s median_of=5 iterations=10000
-playlist_parse_64 2773.103 requests/s median_of=5 iterations=750
-playlist_parse_256 585.949 requests/s median_of=5 iterations=150
+playlist_parse_4 40735.034 requests/s median_of=5 iterations=10000
+playlist_parse_64 2801.517 requests/s median_of=5 iterations=750
+playlist_parse_256 579.100 requests/s median_of=5 iterations=150
 $ /work/melodica/build/native-piano-evidence/api-zig
-piano 11909.970 suites/s median_of=5 iterations=100
-playlist 5370.675 suites/s median_of=5 iterations=100
-search 14687.676 suites/s median_of=5 iterations=100
-station_mutations 14341.544 suites/s median_of=5 iterations=100
-feedback 15052.993 suites/s median_of=5 iterations=100
-seed 14548.826 suites/s median_of=5 iterations=100
-station_info 14524.031 suites/s median_of=5 iterations=100
-quickmix_genre 15143.374 suites/s median_of=5 iterations=100
-explain_bookmarks 14832.398 suites/s median_of=5 iterations=100
-settings 14829.042 suites/s median_of=5 iterations=100
-station_modes 15043.620 suites/s median_of=5 iterations=100
+piano 11664.276 suites/s median_of=5 iterations=100
+playlist 5249.115 suites/s median_of=5 iterations=100
+search 14406.849 suites/s median_of=5 iterations=100
+station_mutations 13721.283 suites/s median_of=5 iterations=100
+feedback 14778.499 suites/s median_of=5 iterations=100
+seed 14262.631 suites/s median_of=5 iterations=100
+station_info 14191.040 suites/s median_of=5 iterations=100
+quickmix_genre 15037.976 suites/s median_of=5 iterations=100
+explain_bookmarks 14734.500 suites/s median_of=5 iterations=100
+settings 14728.412 suites/s median_of=5 iterations=100
+station_modes 14684.795 suites/s median_of=5 iterations=100
 $ /work/melodica/build/native-piano-evidence/playlist-zig --bench
-playlist_parse_4 40969.226 requests/s median_of=5 iterations=10000
-playlist_parse_64 2836.958 requests/s median_of=5 iterations=750
-playlist_parse_256 595.258 requests/s median_of=5 iterations=150
+playlist_parse_4 41876.970 requests/s median_of=5 iterations=10000
+playlist_parse_64 2812.793 requests/s median_of=5 iterations=750
+playlist_parse_256 576.752 requests/s median_of=5 iterations=150
 $ /work/melodica/build/native-piano-evidence/api-odin
-piano 11291.905 suites/s median_of=5 iterations=100
-playlist 5052.859 suites/s median_of=5 iterations=100
-search 14297.630 suites/s median_of=5 iterations=100
-station_mutations 13737.094 suites/s median_of=5 iterations=100
-feedback 14681.985 suites/s median_of=5 iterations=100
-seed 14253.904 suites/s median_of=5 iterations=100
-station_info 14524.446 suites/s median_of=5 iterations=100
-quickmix_genre 14443.939 suites/s median_of=5 iterations=100
-explain_bookmarks 14090.072 suites/s median_of=5 iterations=100
-settings 14677.581 suites/s median_of=5 iterations=100
-station_modes 14754.799 suites/s median_of=5 iterations=100
+piano 11582.253 suites/s median_of=5 iterations=100
+playlist 5220.753 suites/s median_of=5 iterations=100
+search 14203.512 suites/s median_of=5 iterations=100
+station_mutations 14156.041 suites/s median_of=5 iterations=100
+feedback 14913.304 suites/s median_of=5 iterations=100
+seed 14151.527 suites/s median_of=5 iterations=100
+station_info 14444.567 suites/s median_of=5 iterations=100
+quickmix_genre 14855.444 suites/s median_of=5 iterations=100
+explain_bookmarks 14624.095 suites/s median_of=5 iterations=100
+settings 14791.046 suites/s median_of=5 iterations=100
+station_modes 14717.018 suites/s median_of=5 iterations=100
 $ /work/melodica/build/native-piano-evidence/playlist-odin --bench
-playlist_parse_4 41337.258 requests/s median_of=5 iterations=10000
-playlist_parse_64 2814.447 requests/s median_of=5 iterations=750
-playlist_parse_256 605.782 requests/s median_of=5 iterations=150
+playlist_parse_4 42415.742 requests/s median_of=5 iterations=10000
+playlist_parse_64 2862.060 requests/s median_of=5 iterations=750
+playlist_parse_256 589.779 requests/s median_of=5 iterations=150
 $ /work/melodica/build/libpiano-evidence/api-melodica
-piano 8118.591 suites/s median_of=5 iterations=100
-playlist 5687.133 suites/s median_of=5 iterations=100
-search 9291.161 suites/s median_of=5 iterations=100
-station_mutations 9036.767 suites/s median_of=5 iterations=100
-feedback 9350.189 suites/s median_of=5 iterations=100
-seed 9228.731 suites/s median_of=5 iterations=100
-station_info 9228.493 suites/s median_of=5 iterations=100
-quickmix_genre 9416.772 suites/s median_of=5 iterations=100
-explain_bookmarks 9366.290 suites/s median_of=5 iterations=100
-settings 9368.665 suites/s median_of=5 iterations=100
-station_modes 9009.658 suites/s median_of=5 iterations=100
+piano 8110.106 suites/s median_of=5 iterations=100
+playlist 5644.706 suites/s median_of=5 iterations=100
+search 9345.502 suites/s median_of=5 iterations=100
+station_mutations 8879.746 suites/s median_of=5 iterations=100
+feedback 9317.523 suites/s median_of=5 iterations=100
+seed 9442.104 suites/s median_of=5 iterations=100
+station_info 9020.794 suites/s median_of=5 iterations=100
+quickmix_genre 8870.291 suites/s median_of=5 iterations=100
+explain_bookmarks 8977.779 suites/s median_of=5 iterations=100
+settings 9268.514 suites/s median_of=5 iterations=100
+station_modes 9261.015 suites/s median_of=5 iterations=100
 $ /work/melodica/build/libpiano-evidence/playlist-melodica --bench
-playlist_parse_4 78972.288 requests/s median_of=5 iterations=10000
-playlist_parse_64 4814.969 requests/s median_of=5 iterations=750
-playlist_parse_256 1206.045 requests/s median_of=5 iterations=150
+playlist_parse_4 77024.108 requests/s median_of=5 iterations=10000
+playlist_parse_64 4718.016 requests/s median_of=5 iterations=750
+playlist_parse_256 1147.259 requests/s median_of=5 iterations=150
 $ /work/melodica/build/libpiano-evidence/api-reference
-piano 6146.466 suites/s median_of=5 iterations=100
-playlist 4641.315 suites/s median_of=5 iterations=100
-search 13225.110 suites/s median_of=5 iterations=100
-station_mutations 10369.606 suites/s median_of=5 iterations=100
-feedback 10833.543 suites/s median_of=5 iterations=100
-seed 10348.982 suites/s median_of=5 iterations=100
-station_info 13068.675 suites/s median_of=5 iterations=100
-quickmix_genre 12384.195 suites/s median_of=5 iterations=100
-explain_bookmarks 12227.043 suites/s median_of=5 iterations=100
-settings 11383.411 suites/s median_of=5 iterations=100
-station_modes 12831.872 suites/s median_of=5 iterations=100
+piano 6206.168 suites/s median_of=5 iterations=100
+playlist 4724.752 suites/s median_of=5 iterations=100
+search 13770.899 suites/s median_of=5 iterations=100
+station_mutations 10778.537 suites/s median_of=5 iterations=100
+feedback 11245.996 suites/s median_of=5 iterations=100
+seed 10320.685 suites/s median_of=5 iterations=100
+station_info 13163.553 suites/s median_of=5 iterations=100
+quickmix_genre 12537.220 suites/s median_of=5 iterations=100
+explain_bookmarks 12310.754 suites/s median_of=5 iterations=100
+settings 11424.258 suites/s median_of=5 iterations=100
+station_modes 12949.394 suites/s median_of=5 iterations=100
 $ /work/melodica/build/libpiano-evidence/playlist-reference --bench
-playlist_parse_4 41974.653 requests/s median_of=5 iterations=10000
-playlist_parse_64 2820.226 requests/s median_of=5 iterations=750
-playlist_parse_256 586.405 requests/s median_of=5 iterations=150
+playlist_parse_4 41699.319 requests/s median_of=5 iterations=10000
+playlist_parse_64 2867.884 requests/s median_of=5 iterations=750
+playlist_parse_256 574.732 requests/s median_of=5 iterations=150

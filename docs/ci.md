@@ -94,8 +94,8 @@ inside those tests are fixtures.
 `native-ci.py` rebuilds and checks all five serializers, then runs the unchanged
 five-workload comparison serially. Acceptance remains a normalized geometric mean
 of at least 90% and a worst-workload ratio of at least 80%. The canonical Bak
-completion run passed for every lane: geometric means 93.4–97.3%, worst workloads
-86.8–94.0%. The [retained standings](evidence/completion-2026-10-21/serializer/standings.txt)
+completion run passed for every lane: geometric means 93.5–98.6%, worst workloads
+85.5–97.8%. The [retained standings](evidence/completion-2026-10-21/serializer/standings.txt)
 contain all normalized workload ratios and the unchanged thresholds.
 
 `libpiano-differential.sh` establishes the C/reference baseline and times 11 full

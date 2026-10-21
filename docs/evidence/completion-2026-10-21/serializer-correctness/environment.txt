@@ -1,13 +1,10 @@
 Linux-6.18.54-0-lts-x86_64-with-glibc2.43
 build policy: Makefile flags; no additional LTO/native CPU options
 $ git rev-parse HEAD
-d9d22ed2670f70bc35130528c9281bebae1670c1
+6e06745d0fc31a34103abd69e333dd5e81bacda4
 $ git status --short
 ?? build-codin-backend.log
 ?? build-codin-protocol.log
-?? profile.spall
-?? scripts/__pycache__/
-?? tests/__pycache__/
 $ uname -a
 Linux melodica-complete-20261020 6.18.54-0-lts #1-Alpine SMP PREEMPT_DYNAMIC 2026-09-28 07:13:34 x86_64 GNU/Linux
 $ lscpu
@@ -25,7 +22,7 @@ Thread(s) per core:                      2
 Core(s) per socket:                      6
 Socket(s):                               1
 Stepping:                                3
-CPU(s) scaling MHz:                      88%
+CPU(s) scaling MHz:                      19%
 CPU max MHz:                             4300.0000
 CPU min MHz:                             800.0000
 BogoMIPS:                                5799.77

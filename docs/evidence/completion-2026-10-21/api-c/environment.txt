@@ -1,5 +1,5 @@
 reference=ad5ec908de10479ecee7d7c0e1030d12146f8f16
-d9d22ed2670f70bc35130528c9281bebae1670c1
+6e06745d0fc31a34103abd69e333dd5e81bacda4
 gcc (GCC) 16.2.1 20260819 (Red Hat 16.2.1-2)
 Copyright (C) 2026 Free Software Foundation, Inc.
 This is free software; see the source for copying conditions.  There is NO
@@ -42,7 +42,7 @@ Thread(s) per core:                      2
 Core(s) per socket:                      6
 Socket(s):                               1
 Stepping:                                3
-CPU(s) scaling MHz:                      82%
+CPU(s) scaling MHz:                      63%
 CPU max MHz:                             4300.0000
 CPU min MHz:                             800.0000
 BogoMIPS:                                5799.77

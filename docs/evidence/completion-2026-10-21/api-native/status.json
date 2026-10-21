@@ -2,7 +2,7 @@
   "odin": {
     "status": "passed",
     "archive_bytes": 47672,
-    "archive_sha256": "6b55850f27a0b9557007232e3453f86cf29680991608765c8d917d9ab6f2547e",
+    "archive_sha256": "bd931bbf272571a4ba84445724b95e5508552654bbd6b273bc87fd6dd1dd83b1",
     "probes": [
       "piano",
       "playlist",
@@ -23,7 +23,7 @@
   "zig": {
     "status": "passed",
     "archive_bytes": 172856,
-    "archive_sha256": "cd8d4b324223649eff7f8865fdcae3b4d59d286df2eb89cf4989002bcc071f4a",
+    "archive_sha256": "6540e0fe1d54fe122cb6799edb325a11d357a0e4da98b6aeb29eb0f2a75f7122",
     "probes": [
       "piano",
       "playlist",
@@ -65,7 +65,7 @@
   "codin": {
     "status": "passed",
     "archive_bytes": 49240,
-    "archive_sha256": "c9f5171a0daa3f3b8b362b1cf48465bea197adf614423b7419f6f510df3ce18d",
+    "archive_sha256": "3a73dde151ab5ea9da8c4e471adf645a5018fd399b48068fed14702e02113d98",
     "probes": [
       "piano",
       "playlist",
