@@ -212,6 +212,7 @@ install: $(BUILD)/c/libmelodica.a $(PIANO_INSTALL_LIB)
 	cp -R bindings/python/melodica $(DESTDIR)$(PREFIX)/share/melodica/python/
 	install -m 0755 scripts/melodica-sync $(DESTDIR)$(PREFIX)/bin/melodica-sync
 	install -m 0755 scripts/melodica-library $(DESTDIR)$(PREFIX)/bin/melodica-library
+	install -m 0755 scripts/melodica-cloud $(DESTDIR)$(PREFIX)/bin/melodica-cloud
 	sed -e 's|@PREFIX@|$(PREFIX)|g' -e 's|@PRIVATE_LIBS@|$(PIANO_INSTALL_DEPS)|g' pkgconfig/piano.pc.in > $(DESTDIR)$(PREFIX)/lib/pkgconfig/piano.pc
 	sed -e 's|@PREFIX@|$(PREFIX)|g' pkgconfig/melodica.pc.in > $(DESTDIR)$(PREFIX)/lib/pkgconfig/melodica.pc
 

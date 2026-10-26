@@ -36,6 +36,16 @@ changes. Old prefixes remain readable until an owner runs a client-side copy
 from the retired crypt remote to the current one. This is necessary because
 rclone crypt keys cannot be changed in place without re-encrypting objects.
 
+The owner rotates without handling tokens directly:
+
+```sh
+melodica-cloud rotate
+```
+
+The helper obtains the existing `gh` login once, stores a mode-0600 refresh
+session, and refreshes locally against the Worker thereafter. The GitHub token
+is neither written to disk nor passed as a process argument.
+
 `melodica-sync --rclone melodica-v3` performs immutable, bidirectional copies
 of `objects`, `metadata`, `artwork`, and `lyrics`, then verifies content hashes
 and recreates the local aliases. It never mirrors the SQLite index or deletes
