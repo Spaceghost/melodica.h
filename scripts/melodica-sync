@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Merge melodica offline caches locally or through authenticated SSH/rsync."""
+"""Merge verified Melodica objects locally, over SSH, or through rclone."""
 
 import argparse
 import shlex
@@ -32,7 +32,7 @@ def remote_peer(value):
 
 def rsync(source, destination, check=True):
     return subprocess.run(
-        ["rsync", "-a", "--ignore-existing", "--protect-args", source, destination],
+        ["rsync", "-aL", "--ignore-existing", "--protect-args", source, destination],
         check=check,
     )
 
@@ -60,6 +60,25 @@ def sync_remote(local, peer):
     return imported
 
 
+def sync_rclone(local, remote_name, binary):
+    executable = shutil.which(binary)
+    if executable is None:
+        raise RuntimeError("{} is not installed".format(binary))
+    remote_root = remote_name.rstrip(":/")
+    for name in SYNC_DIRECTORIES:
+        local_path = str(local.root / name) + "/"
+        remote_path = "{}:{}/{}".format(remote_root, "library", name)
+        subprocess.run([
+            executable, "copy", local_path, remote_path,
+            "--copy-links", "--immutable", "--metadata", "--no-update-modtime",
+        ], check=True)
+        subprocess.run([
+            executable, "copy", remote_path, local_path,
+            "--immutable", "--metadata", "--no-update-modtime",
+        ], check=True)
+    return local.rebuild_index()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Bidirectionally merge verified Melodica audio, tags, lyrics, and artwork."
@@ -67,10 +86,17 @@ def main():
     parser.add_argument("peer", nargs="?", help="mounted cache path or SSH target HOST:/cache/path")
     parser.add_argument("--library", help="local cache root (defaults to MELODICA_OFFLINE_DIR)")
     parser.add_argument("--rebuild", action="store_true", help="verify objects and rebuild the local index")
+    parser.add_argument("--rclone", metavar="REMOTE", help="merge through an S3/crypt rclone remote")
+    parser.add_argument("--rclone-binary", default="melodica-rclone",
+                        help="private rclone binary (default: melodica-rclone)")
     args = parser.parse_args()
     local = OfflineLibrary(args.library)
     if args.rebuild:
         print("Indexed {} verified recording(s).".format(local.rebuild_index()))
+        return 0
+    if args.rclone:
+        indexed = sync_rclone(local, args.rclone, args.rclone_binary)
+        print("Merged immutable cloud objects; indexed {} verified recording(s).".format(indexed))
         return 0
     if not args.peer:
         parser.error("peer is required unless --rebuild is used")

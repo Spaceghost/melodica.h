@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "melodica-cloud",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-26",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "ACCESS_TOKEN_SECONDS": "604800",
+    "PUBLIC_ORIGIN": "https://melodica-cloud.spaceghost.workers.dev",
+    "R2_ACCOUNT_ID": "4535c96bfc7d1d8864f2d207e97f3ff5",
+    "R2_BUCKET_NAME": "melodica-library",
+    "R2_CREDENTIAL_SECONDS": "43200",
+    "PANDORA_AGENT_ENABLED": "false"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "melodica-cloud",
+      "database_id": "1093215f-9ee6-49d6-b094-46456de52b66",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": { "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 0.05 }
+  }
+}

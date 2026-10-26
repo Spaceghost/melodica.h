@@ -112,6 +112,16 @@ class OfflineLibrary:
                     fetched_at INTEGER NOT NULL
                 )"""
             )
+            db.execute(
+                """CREATE TABLE IF NOT EXISTS plays (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    identity TEXT NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    played_at INTEGER NOT NULL,
+                    client TEXT
+                )"""
+            )
+            db.execute("CREATE INDEX IF NOT EXISTS plays_recent ON plays(played_at DESC, id DESC)")
         self.rebuild_index()
 
     @staticmethod
@@ -120,6 +130,34 @@ class OfflineLibrary:
         with Path(path).open("rb") as stream:
             for block in iter(lambda: stream.read(1024 * 256), b""):
                 digest.update(block)
+        return digest.hexdigest()
+
+    @staticmethod
+    def _audio_sha256(path):
+        """Hash MPEG audio payload, excluding mutable ID3v2 and ID3v1 tags."""
+        path = Path(path)
+        size = path.stat().st_size
+        start = 0
+        end = size
+        with path.open("rb") as stream:
+            header = stream.read(10)
+            if len(header) == 10 and header[:3] == b"ID3":
+                tag_size = ((header[6] & 0x7f) << 21) | ((header[7] & 0x7f) << 14)
+                tag_size |= ((header[8] & 0x7f) << 7) | (header[9] & 0x7f)
+                start = min(size, 10 + tag_size)
+            if size >= 128:
+                stream.seek(size - 128)
+                if stream.read(3) == b"TAG":
+                    end -= 128
+            stream.seek(start)
+            remaining = max(0, end - start)
+            digest = hashlib.sha256()
+            while remaining:
+                block = stream.read(min(1024 * 256, remaining))
+                if not block:
+                    break
+                digest.update(block)
+                remaining -= len(block)
         return digest.hexdigest()
 
     @staticmethod
@@ -170,6 +208,60 @@ class OfflineLibrary:
             if path.is_file():
                 return path
         return None
+
+    def list_tracks(self, limit=None):
+        """Return the local library newest-first with playable file URIs."""
+        query = "SELECT metadata_json, audio_path FROM recordings ORDER BY captured_at DESC"
+        parameters = ()
+        if limit is not None:
+            query += " LIMIT ?"
+            parameters = (max(0, int(limit)),)
+        with sqlite3.connect(self.database) as db:
+            rows = db.execute(query, parameters).fetchall()
+        tracks = []
+        for serialized, audio_path in rows:
+            path = Path(audio_path)
+            if not path.is_file():
+                continue
+            record = json.loads(serialized)
+            record["local_path"] = str(path.resolve())
+            record["local_uri"] = path.resolve().as_uri()
+            tracks.append(record)
+        return tracks
+
+    def record_play(self, metadata, client=None):
+        """Record playback so every client shares previous-track history."""
+        identity = self.identity(metadata)
+        with sqlite3.connect(self.database) as db:
+            row = db.execute("SELECT sha256 FROM identities WHERE identity = ?", (identity,)).fetchone()
+            if row:
+                db.execute(
+                    "INSERT INTO plays(identity, sha256, played_at, client) VALUES (?, ?, ?, ?)",
+                    (identity, row[0], int(time.time()), client or metadata.get("client")),
+                )
+                db.execute(
+                    "DELETE FROM plays WHERE id NOT IN (SELECT id FROM plays ORDER BY id DESC LIMIT 1000)"
+                )
+                return True
+        return False
+
+    def previous_track(self, current=None):
+        """Return the most recent cached track other than the current track."""
+        current_identity = self.identity(current) if current else None
+        with sqlite3.connect(self.database) as db:
+            row = db.execute(
+                """SELECT recordings.metadata_json, recordings.audio_path
+                FROM plays JOIN recordings USING (sha256)
+                WHERE (? IS NULL OR plays.identity != ?)
+                ORDER BY plays.played_at DESC, plays.id DESC LIMIT 1""",
+                (current_identity, current_identity),
+            ).fetchone()
+        if not row or not Path(row[1]).is_file():
+            return None
+        record = json.loads(row[0])
+        record["local_path"] = str(Path(row[1]).resolve())
+        record["local_uri"] = Path(row[1]).resolve().as_uri()
+        return record
 
     @staticmethod
     def _component(value, fallback):
@@ -286,7 +378,7 @@ class OfflineLibrary:
         }
 
     @staticmethod
-    def _write_id3(path, metadata, artwork=None, lyrics=None):
+    def _write_id3(path, metadata, artwork=None, lyrics=None, content_address=None):
         if ID3 is None:
             return False
         try:
@@ -329,6 +421,7 @@ class OfflineLibrary:
             "Captured by": metadata.get("client"),
             "Protocol": metadata.get("protocol"),
             "Melodica identity": OfflineLibrary.identity(metadata),
+            "Melodica content address": content_address,
         }
         for description, value in custom.items():
             if value not in (None, ""):
@@ -352,30 +445,33 @@ class OfflineLibrary:
         tags.save(path, v2_version=3)
         return True
 
-    def _library_path(self, audio_path, metadata, identity):
+    def _library_path(self, audio_path, metadata, identity, content_address):
         artist = self._component(metadata.get("artist"), "Unknown Artist")
         album = self._component(metadata.get("album"), "Unknown Album")
         title = self._component(metadata.get("title"), "Unknown Title")
         directory = self.tracks / artist / album
         directory.mkdir(parents=True, exist_ok=True)
         destination = directory / "{}.mp3".format(title)
-        link = directory / ".{}.{}.tmp".format(title, identity[:8])
-        link.unlink(missing_ok=True)
+        temporary = directory / ".{}.{}.tmp".format(title, identity[:8])
+        temporary.unlink(missing_ok=True)
         try:
-            os.link(audio_path, link)
+            same_file = destination.exists() and os.path.samefile(audio_path, destination)
         except OSError:
-            shutil.copy2(audio_path, link)
-        link.replace(destination)
+            same_file = False
+        if not same_file:
+            shutil.copy2(audio_path, temporary, follow_symlinks=True)
+            temporary.replace(destination)
+
+        object_path = self.objects / "{}.mp3".format(content_address)
+        if os.path.lexists(object_path):
+            object_path.unlink()
+        object_path.symlink_to(os.path.relpath(destination, self.objects))
         music_id = self._music_id(metadata.get("music_id"))
         if music_id:
             alias = self.by_music_id / "{}.mp3".format(music_id)
-            temporary = self.by_music_id / ".{}.tmp".format(music_id)
-            temporary.unlink(missing_ok=True)
-            try:
-                os.link(audio_path, temporary)
-            except OSError:
-                shutil.copy2(audio_path, temporary)
-            temporary.replace(alias)
+            if os.path.lexists(alias):
+                alias.unlink()
+            alias.symlink_to(os.path.relpath(destination, self.by_music_id))
         return destination
 
     def _write_sidecars(self, identity, artwork, lyrics):
@@ -420,22 +516,21 @@ class OfflineLibrary:
                 artwork = None
             lyrics = self._fetch_lyrics(safe, timeout)
             embedded = self._write_id3(mp3_path, safe, artwork, lyrics)
-            sha256 = self._sha256(mp3_path)
+            sha256 = self._audio_sha256(mp3_path)
+            embedded = self._write_id3(mp3_path, safe, artwork, lyrics, sha256)
+            library_path = self._library_path(mp3_path, safe, identity, sha256)
             audio_path = self.objects / "{}.mp3".format(sha256)
-            if audio_path.exists():
-                mp3_path.unlink()
-            else:
-                mp3_path.replace(audio_path)
+            mp3_path.unlink(missing_ok=True)
             mp3_path = None
-            library_path = self._library_path(audio_path, safe, identity)
             sidecars = self._write_sidecars(identity, artwork, lyrics)
 
             record = dict(safe)
             record.update(
                 {
-                    "schema": "org.melodica.offline.v2",
+                    "schema": "org.melodica.offline.v3",
                     "sha256": sha256,
-                    "byte_length": audio_path.stat().st_size,
+                    "content_address": "sha256:" + sha256,
+                    "byte_length": library_path.stat().st_size,
                     "media_type": "audio/mpeg",
                     "captured_at": captured_at,
                     "audio_file": audio_path.name,
@@ -473,7 +568,7 @@ class OfflineLibrary:
                         str(audio_path),
                         str(metadata_path),
                         "audio/mpeg",
-                        audio_path.stat().st_size,
+                        library_path.stat().st_size,
                         captured_at,
                         serialized,
                     ),
@@ -530,19 +625,40 @@ class OfflineLibrary:
             return 0
         count = 0
         with sqlite3.connect(self.database) as db:
+            db.execute("DELETE FROM identities")
+            db.execute("DELETE FROM recordings")
+            db.execute("DELETE FROM lyrics")
             for metadata_path in sorted(self.metadata.glob("*.json")):
                 try:
                     record = json.loads(metadata_path.read_text(encoding="utf-8"))
-                    sha256 = record["sha256"]
-                    audio_path = self.objects / "{}.mp3".format(sha256)
-                    if self._sha256(audio_path) != sha256:
+                    old_sha256 = record["sha256"]
+                    audio_path = self.objects / "{}.mp3".format(old_sha256)
+                    if not audio_path.is_file():
                         continue
+                    sha256 = self._audio_sha256(audio_path)
                 except (OSError, KeyError, ValueError):
                     continue
                 identity = self.identity(record)
-                library_path = self._library_path(audio_path, record, identity)
+                self._write_id3(audio_path, record, content_address=sha256)
+                library_path = self._library_path(audio_path, record, identity, sha256)
+                audio_path = self.objects / "{}.mp3".format(sha256)
+                if old_sha256 != sha256:
+                    old_object = self.objects / "{}.mp3".format(old_sha256)
+                    if os.path.lexists(old_object):
+                        old_object.unlink()
+                    old_metadata = metadata_path
+                    metadata_path = self.metadata / "{}.json".format(sha256)
+                    old_metadata.unlink(missing_ok=True)
+                record["schema"] = "org.melodica.offline.v3"
+                record["sha256"] = sha256
+                record["content_address"] = "sha256:" + sha256
+                record["audio_file"] = "{}.mp3".format(sha256)
                 record["library_file"] = str(library_path.relative_to(self.root))
                 serialized = json.dumps(record, sort_keys=True, ensure_ascii=False)
+                metadata_path.write_text(
+                    json.dumps(record, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
                 db.execute(
                     """INSERT OR REPLACE INTO recordings
                     (sha256, audio_path, metadata_path, media_type, byte_length,
@@ -583,13 +699,13 @@ class OfflineLibrary:
                 record = json.loads(source_metadata.read_text(encoding="utf-8"))
                 sha256 = record["sha256"]
                 source_audio = peer / "objects" / "{}.mp3".format(sha256)
-                if self._sha256(source_audio) != sha256:
+                if self._audio_sha256(source_audio) != sha256:
                     continue
             except (OSError, KeyError, ValueError):
                 continue
             destination_audio = self.objects / source_audio.name
             destination_metadata = self.metadata / source_metadata.name
-            if not destination_audio.exists():
+            if not os.path.lexists(destination_audio):
                 shutil.copy2(source_audio, destination_audio)
                 imported += 1
             if not destination_metadata.exists():

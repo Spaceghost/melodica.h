@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Inspect and navigate the shared Melodica offline library."""
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve()
+for binding in (HERE.parents[1] / "bindings/python",
+                HERE.parent.parent / "share/melodica/python",
+                Path("/usr/local/share/melodica/python"), Path("/usr/share/melodica/python")):
+    if binding.is_dir():
+        sys.path.insert(0, str(binding))
+        break
+
+from melodica import OfflineLibrary
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Browse the shared offline music library")
+    parser.add_argument("command", choices=("list", "previous"))
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--path", action="store_true")
+    parser.add_argument("--limit", type=int)
+    parser.add_argument("--library")
+    args = parser.parse_args()
+    library = OfflineLibrary(args.library)
+    if args.command == "previous":
+        track = library.previous_track()
+        if not track:
+            return 1
+        if args.path:
+            print(track["local_path"])
+        else:
+            print(json.dumps(track, ensure_ascii=False) if args.json else
+                  "{} — {} ({})".format(track.get("artist", "Unknown Artist"),
+                                         track.get("title", "Unknown Title"),
+                                         track.get("album", "Unknown Album")))
+        return 0
+    tracks = library.list_tracks(args.limit)
+    if args.json:
+        print(json.dumps(tracks, indent=2, ensure_ascii=False))
+    else:
+        for index, track in enumerate(tracks, 1):
+            print("{:>4}  {} — {} ({})".format(index, track.get("artist", "Unknown Artist"),
+                                                track.get("title", "Unknown Title"),
+                                                track.get("album", "Unknown Album")))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
