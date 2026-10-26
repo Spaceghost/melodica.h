@@ -10,8 +10,9 @@ import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve()
-for binding in (HERE.parents[1] / "bindings/python", Path("/usr/local/share/melodica/python"),
-                Path("/usr/share/melodica/python")):
+for binding in (HERE.parents[1] / "bindings/python",
+                HERE.parent.parent / "share/melodica/python",
+                Path("/usr/local/share/melodica/python"), Path("/usr/share/melodica/python")):
     if binding.is_dir():
         sys.path.insert(0, str(binding))
         break
