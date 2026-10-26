@@ -6,7 +6,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
     "ACCESS_TOKEN_SECONDS": "604800",
-    "PUBLIC_ORIGIN": "https://melodica-cloud.spaceghost.workers.dev",
+    "PUBLIC_ORIGIN": "https://melodica.spacegho.st",
     "R2_ACCOUNT_ID": "4535c96bfc7d1d8864f2d207e97f3ff5",
     "R2_BUCKET_NAME": "melodica-library",
     "R2_CREDENTIAL_SECONDS": "43200",
