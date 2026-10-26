@@ -13,7 +13,7 @@ PIANO_INSTALL_DEPS = $(if $(filter c,$(PIANO_IMPL)),,-ljson-c -lgcrypt -lm -ldl 
 ODIN_FLAGS ?= -o:speed -microarch:generic -reloc-mode:pic -no-entry-point
 NELUA_FLAGS ?= --release -P nogc --cflags=-O3
 
-.PHONY: all c odin zig nelua codin-native codin-check libpiano test test-c test-odin test-zig test-nelua test-codin-native test-libpiano test-blowfish test-crypt test-json bench bench-c bench-odin bench-zig bench-nelua bench-codin shootout shootout-gate portable install clean
+.PHONY: all c shared odin zig nelua codin-native codin-check libpiano test test-c test-odin test-zig test-nelua test-codin-native test-libpiano test-blowfish test-crypt test-json bench bench-c bench-odin bench-zig bench-nelua bench-codin shootout shootout-gate portable install clean
 .PHONY: check test-install test-pianobar-source test-pianobar-integration
 
 all: test
@@ -46,6 +46,10 @@ $(BUILD)/c/melodica.o: impl/c/melodica.c include/melodica.h
 
 $(BUILD)/c/libmelodica.a: $(BUILD)/c/melodica.o
 	$(AR) rcs $@ $<
+
+$(BUILD)/c/libmelodica.so: impl/c/melodica.c include/melodica.h
+	mkdir -p $(BUILD)/c
+	$(CC) -O3 -std=c99 -pedantic-errors -Wall -Wextra -Werror -fPIC -shared -Iinclude $< -o $@
 
 $(BUILD)/odin/libmelodica.a: impl/odin/melodica.odin
 	mkdir -p $(BUILD)/odin
@@ -129,6 +133,7 @@ $(BUILD)/nelua/bench: bench/bench.c include/melodica.h $(BUILD)/nelua/libmelodic
 		$(BUILD)/nelua/libmelodica.a -o $@
 
 c: $(BUILD)/c/libmelodica.a
+shared: $(BUILD)/c/libmelodica.so
 odin: $(BUILD)/odin/libmelodica.a
 zig: $(BUILD)/zig/libmelodica.a
 nelua: $(BUILD)/nelua/libmelodica.a
