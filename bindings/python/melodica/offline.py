@@ -53,6 +53,39 @@ class OfflineLibrary:
                     metadata_json TEXT NOT NULL
                 )"""
             )
+            db.execute(
+                """CREATE TABLE IF NOT EXISTS identities (
+                    identity TEXT PRIMARY KEY,
+                    sha256 TEXT NOT NULL
+                )"""
+            )
+
+    @staticmethod
+    def identity(metadata):
+        """Return a stable key from descriptive, non-secret track fields."""
+        safe = _public_metadata(metadata)
+        fields = {
+            key: safe.get(key)
+            for key in ("artist", "album", "title", "duration", "station_id")
+            if safe.get(key) is not None
+        }
+        material = json.dumps(fields, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        return hashlib.sha256(material).hexdigest()
+
+    def lookup(self, metadata):
+        """Return a complete cached audio object for a track, if one exists."""
+        identity = self.identity(metadata)
+        with sqlite3.connect(self.database) as db:
+            row = db.execute(
+                """SELECT recordings.audio_path FROM identities
+                JOIN recordings USING (sha256) WHERE identity = ?""",
+                (identity,),
+            ).fetchone()
+        if row:
+            path = Path(row[0])
+            if path.is_file():
+                return path
+        return None
 
     def capture(self, source_url, metadata, timeout=30):
         """Download one authorized stream and atomically add it to the library."""
@@ -120,6 +153,10 @@ class OfflineLibrary:
                         captured_at,
                         serialized,
                     ),
+                )
+                db.execute(
+                    "INSERT OR REPLACE INTO identities (identity, sha256) VALUES (?, ?)",
+                    (self.identity(safe), sha256),
                 )
             return audio_path
         finally:
