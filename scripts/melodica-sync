@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""Merge melodica offline caches locally or through authenticated SSH/rsync."""
+
+import argparse
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+HERE = Path(__file__).resolve()
+for binding in (HERE.parents[1] / "bindings/python", Path("/usr/local/share/melodica/python"),
+                Path("/usr/share/melodica/python")):
+    if binding.is_dir():
+        sys.path.insert(0, str(binding))
+        break
+
+from melodica import OfflineLibrary
+
+
+SYNC_DIRECTORIES = ("objects", "metadata", "artwork", "lyrics")
+
+
+def remote_peer(value):
+    if ":" not in value:
+        return None
+    host, path = value.split(":", 1)
+    return (host, path.rstrip("/")) if host and path else None
+
+
+def rsync(source, destination, check=True):
+    return subprocess.run(
+        ["rsync", "-a", "--ignore-existing", "--protect-args", source, destination],
+        check=check,
+    )
+
+
+def sync_remote(local, peer):
+    if shutil.which("rsync") is None or shutil.which("ssh") is None:
+        raise RuntimeError("remote synchronization requires ssh and rsync")
+    host, remote_root = peer
+    subprocess.run(["ssh", host, "mkdir", "-p", remote_root], check=True)
+    with tempfile.TemporaryDirectory(prefix="melodica-sync-") as temporary:
+        staging = Path(temporary)
+        for name in SYNC_DIRECTORIES:
+            (staging / name).mkdir()
+            rsync("{}:{}/{}/".format(host, remote_root, name),
+                  str(staging / name) + "/", check=False)
+        imported = local.sync_from(staging)
+    for name in SYNC_DIRECTORIES:
+        subprocess.run(["ssh", host, "mkdir", "-p", "{}/{}".format(remote_root, name)],
+                       check=True)
+        rsync(str(local.root / name) + "/", "{}:{}/{}/".format(host, remote_root, name))
+    subprocess.run(
+        ["ssh", host, "melodica-sync --rebuild --library {}".format(shlex.quote(remote_root))],
+        check=False,
+    )
+    return imported
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Bidirectionally merge verified Melodica audio, tags, lyrics, and artwork."
+    )
+    parser.add_argument("peer", nargs="?", help="mounted cache path or SSH target HOST:/cache/path")
+    parser.add_argument("--library", help="local cache root (defaults to MELODICA_OFFLINE_DIR)")
+    parser.add_argument("--rebuild", action="store_true", help="verify objects and rebuild the local index")
+    args = parser.parse_args()
+    local = OfflineLibrary(args.library)
+    if args.rebuild:
+        print("Indexed {} verified recording(s).".format(local.rebuild_index()))
+        return 0
+    if not args.peer:
+        parser.error("peer is required unless --rebuild is used")
+    remote = remote_peer(args.peer)
+    if remote:
+        imported = sync_remote(local, remote)
+        print("Imported {} new recording(s); exported the merged immutable library.".format(imported))
+        return 0
+    peer = OfflineLibrary(args.peer)
+    imported = local.sync_from(peer.root)
+    exported = peer.sync_from(local.root)
+    print("Imported {} and exported {} new recording(s).".format(imported, exported))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
