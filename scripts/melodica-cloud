@@ -1,0 +1,89 @@
+#!/bin/sh
+set -eu
+
+origin=${MELODICA_CLOUD_ORIGIN:-https://melodica.spacegho.st}
+state_dir=${XDG_STATE_HOME:-"$HOME/.local/state"}/melodica
+session_file=$state_dir/cloud-session.json
+umask 077
+
+need() {
+    command -v "$1" >/dev/null 2>&1 || {
+        echo "melodica-cloud: $1 is required" >&2
+        exit 127
+    }
+}
+
+request_with_header() {
+    header=$1
+    path=$2
+    body=${3:-}
+    if [ -n "$body" ]; then
+        printf 'header = "%s"\nheader = "Content-Type: application/json"\n' "$header" |
+            curl --fail-with-body --silent --show-error --config - \
+                --request POST --data "$body" "$origin$path"
+    else
+        printf 'header = "%s"\n' "$header" |
+            curl --fail-with-body --silent --show-error --config - \
+                --request POST "$origin$path"
+    fi
+}
+
+save_session() {
+    mkdir -p "$state_dir"
+    temporary=$session_file.$$
+    jq -e '{access_token, refresh_token, expires_in}' >"$temporary"
+    chmod 600 "$temporary"
+    mv "$temporary" "$session_file"
+}
+
+login() {
+    need gh
+    github_token=$(gh auth token)
+    request_with_header "Authorization: GitHub $github_token" /auth/github-token |
+        save_session
+    unset github_token
+}
+
+refresh() {
+    if [ ! -s "$session_file" ]; then
+        login
+        return
+    fi
+    refresh_token=$(jq -er .refresh_token "$session_file")
+    body=$(jq -cn --arg token "$refresh_token" '{refresh_token:$token}')
+    if ! request_with_header "Content-Type: application/json" /auth/refresh "$body" |
+        save_session; then
+        login
+    fi
+    unset refresh_token body
+}
+
+authorized_post() {
+    path=$1
+    body=${2:-{}}
+    refresh
+    access_token=$(jq -er .access_token "$session_file")
+    request_with_header "Authorization: Bearer $access_token" "$path" "$body"
+    unset access_token
+}
+
+need curl
+need jq
+
+case ${1:-} in
+    login)
+        login
+        echo "Melodica cloud session saved."
+        ;;
+    refresh)
+        refresh
+        echo "Melodica cloud session refreshed."
+        ;;
+    rotate)
+        authorized_post /v1/admin/rotate '{}'
+        ;;
+    *)
+        echo "usage: melodica-cloud {login|refresh|rotate}" >&2
+        exit 2
+        ;;
+esac
