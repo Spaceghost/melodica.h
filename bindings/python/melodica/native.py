@@ -23,6 +23,7 @@ class NativeMelodica:
         candidates.extend(
             (
                 here.parents[3] / "build" / "c" / "libmelodica.so",
+                Path.home() / ".local/lib/libmelodica.so",
                 Path("/usr/local/lib/libmelodica.so"),
                 Path("/usr/lib/libmelodica.so"),
             )
