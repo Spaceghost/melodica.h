@@ -204,11 +204,13 @@ portable:
 	$(ZIG) cc -target x86_64-windows-gnu -std=c99 -pedantic-errors -Wall -Wextra -Werror -ffreestanding -Iinclude -c impl/c/melodica.c -o $(BUILD)/portable/x86_64-windows-gnu.o
 
 install: $(BUILD)/c/libmelodica.a $(PIANO_INSTALL_LIB)
-	install -d $(DESTDIR)$(PREFIX)/include $(DESTDIR)$(PREFIX)/lib/pkgconfig $(DESTDIR)$(PREFIX)/share/licenses/melodica
+	install -d $(DESTDIR)$(PREFIX)/include $(DESTDIR)$(PREFIX)/bin $(DESTDIR)$(PREFIX)/lib/pkgconfig $(DESTDIR)$(PREFIX)/share/licenses/melodica $(DESTDIR)$(PREFIX)/share/melodica/python
 	install -m 0644 include/melodica.h include/piano.h $(DESTDIR)$(PREFIX)/include/
 	install -m 0644 $(BUILD)/c/libmelodica.a $(DESTDIR)$(PREFIX)/lib/libmelodica.a
 	install -m 0644 $(PIANO_INSTALL_LIB) $(DESTDIR)$(PREFIX)/lib/libpiano.a
 	install -m 0644 LICENSE.libpiano $(DESTDIR)$(PREFIX)/share/licenses/melodica/
+	cp -R bindings/python/melodica $(DESTDIR)$(PREFIX)/share/melodica/python/
+	install -m 0755 scripts/melodica-sync $(DESTDIR)$(PREFIX)/bin/melodica-sync
 	sed -e 's|@PREFIX@|$(PREFIX)|g' -e 's|@PRIVATE_LIBS@|$(PIANO_INSTALL_DEPS)|g' pkgconfig/piano.pc.in > $(DESTDIR)$(PREFIX)/lib/pkgconfig/piano.pc
 	sed -e 's|@PREFIX@|$(PREFIX)|g' pkgconfig/melodica.pc.in > $(DESTDIR)$(PREFIX)/lib/pkgconfig/melodica.pc
 

@@ -62,6 +62,13 @@ sh scripts/pianobar-source-compat.sh # Compile unchanged historical application 
 make test-pianobar-integration # Link the full application and check startup/audio offline
 ```
 
+Offline clients share `$MELODICA_OFFLINE_DIR` (defaulting to
+`~/.local/share/melodica/offline`). Merge a mounted peer cache in both
+directions with `melodica-sync /path/to/peer/cache`, or connect securely over
+SSH with `melodica-sync host:/path/to/cache`. Synchronization transfers only
+content-addressed MP3 objects and public metadata, artwork, and lyrics; each
+machine rebuilds its own SQLite index instead of copying live databases.
+
 C requires a C99 compiler and make. Native protocol variants require their pinned
 language toolchains plus json-c and libgcrypt development packages. Reference
 comparisons also require libcurl, libao and FFmpeg development packages; sanitizer
