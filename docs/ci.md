@@ -43,7 +43,7 @@ export ODIN="$tools/odin/odin" ZIG="$tools/zig/zig" NELUA="$tools/nelua/nelua"
 make check
 ```
 
-The dependency script provisions compilers, Clang sanitizer runtimes, Python,
+The dependency script provisions compilers, Clang sanitizer runtimes, Python, Node.js,
 tmux, JSON/crypto libraries and the libcurl/libao/FFmpeg reference headers inside
 the worker. It rejects host package installation on an Atomic host.
 
@@ -80,6 +80,17 @@ make test-pianobar-source
 make test-install
 python3 -m unittest discover -s tests -p 'test_ci*.py' -v
 ```
+
+The [WebAssembly core](wasm.md) has a separate execution check:
+
+```sh
+make wasm test-wasm
+```
+
+This needs only Clang, LLD and Node.js 18.13 or newer. It links the actual `.wasm`,
+instantiates it, exercises the C ABI and JavaScript binding, and verifies HTTP
+loading. `make check` and the comparison workflow include this check; the workflow
+retains `build/wasm/` with its other artifacts.
 
 The historical consumer check compiles eight unchanged pinned pianobar application
 objects against melodica's `piano.h`, using
