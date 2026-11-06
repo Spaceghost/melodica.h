@@ -79,6 +79,21 @@ json-c or libgcrypt at runtime.
 Historical consumers that used gcrypt declarations transitively from `piano.h`
 can compile with `-DMELODICA_PIANO_LEGACY_GCRYPT`.
 
+## WebAssembly
+
+```sh
+make wasm test-wasm           # Link and execute the portable serializer core
+make wasm-example            # Add a browser example to build/wasm/
+python3 -m http.server --bind 127.0.0.1 --directory build/wasm 8080
+```
+
+Open `http://localhost:8080/`. The build produces `melodica.wasm` and an ES module
+bridge, `melodica.mjs`, using Clang and LLD. Node.js 18.13 or newer runs the tests.
+The module has no host imports, allocator, WASI or Emscripten runtime. It exports
+the seven functions from `include/melodica.h`; the full `piano.h` protocol API and
+audio playback remain separate. See [the WASM guide](docs/wasm.md) for JavaScript
+usage, compiler overrides and the exact memory contract.
+
 ## Install and use
 
 Choose `PIANO_IMPL=c`, `odin`, `zig`, `nelua` or `codin`. Installation provides both

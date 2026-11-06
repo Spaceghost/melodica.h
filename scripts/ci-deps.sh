@@ -15,7 +15,7 @@ as_root() {
 if command -v dnf >/dev/null; then
     as_root dnf -y --disable-repo=fedora-cisco-openh264 --setopt=install_weak_deps=False install \
         ca-certificates git curl xz tar gzip patch gcc gcc-c++ make clang compiler-rt llvm lld \
-        binutils pkgconf-pkg-config python3 readline-devel tmux json-c-devel libgcrypt-devel
+        binutils pkgconf-pkg-config python3 nodejs readline-devel tmux json-c-devel libgcrypt-devel
     if [ "$mode" = reference ]; then
         as_root dnf -y --disable-repo=fedora-cisco-openh264 --setopt=install_weak_deps=False install \
             libcurl-devel libao-devel libavcodec-free-devel libavformat-free-devel \
@@ -27,7 +27,7 @@ command -v apt-get >/dev/null || { echo 'Use a Fedora or Ubuntu/Debian Incus wor
 as_root env DEBIAN_FRONTEND=noninteractive apt-get update -qq
 as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates git curl xz-utils patch build-essential clang libclang-rt-dev llvm lld binutils \
-    pkg-config python3 libreadline-dev tmux libgcrypt20-dev libjson-c-dev
+    pkg-config python3 nodejs libreadline-dev tmux libgcrypt20-dev libjson-c-dev
 if [ "$mode" = reference ]; then
     as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         libcurl4-openssl-dev libgcrypt20-dev libjson-c-dev libao-dev \

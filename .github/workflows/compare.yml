@@ -53,6 +53,9 @@ jobs:
       - name: Prove portable C core across freestanding targets
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
         run: make portable
+      - name: Link and execute the WebAssembly module and JavaScript binding
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        run: make test-wasm
       - name: Preserve readable evidence in job logs
         if: always()
         run: python3 scripts/ci-evidence.py build/native-evidence build/toolchain-evidence build/shootout
@@ -73,6 +76,7 @@ jobs:
             build/nelua/
             build/codin/
             build/portable/
+            build/wasm/
           if-no-files-found: warn
           retention-days: 7
           compression-level: 9

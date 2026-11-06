@@ -21,7 +21,7 @@ all: test
 # Complete validation; each comparison builds first and then times serially.
 check:
 	@test "$(BUILD)" = build || { echo 'make check requires BUILD=build; individual API targets support custom BUILD paths' >&2; exit 64; }
-	$(MAKE) test-blowfish test-crypt test-json test-libpiano test-libpiano-alloc test-json-oracle test-playlist-wire test-libpiano-sanitize portable libpiano-native test-pianobar-source
+	$(MAKE) test-blowfish test-crypt test-json test-libpiano test-libpiano-alloc test-json-oracle test-playlist-wire test-libpiano-sanitize portable test-wasm libpiano-native test-pianobar-source
 	python3 -m unittest discover -s tests -p 'test_ci*.py' -v
 	python3 scripts/native-ci.py
 	BUILD_DIR="$(abspath $(BUILD))" sh scripts/libpiano-differential.sh
@@ -221,3 +221,4 @@ clean:
 
 include tests/reference/playlist.mk
 include mk/native-piano.mk
+include mk/wasm.mk

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Melodica · WebAssembly</title>
+<style>
+  :root { color-scheme: light dark; font: 16px/1.5 system-ui, sans-serif; }
+  body { max-width: 46rem; margin: 4rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 2rem; letter-spacing: -.04em; margin-bottom: .25rem; }
+  p { margin-top: .5rem; }
+  form { display: grid; gap: 1rem; margin: 2rem 0; }
+  label { display: grid; gap: .25rem; }
+  input, button { font: inherit; padding: .6rem .8rem; border: 1px solid #8888; border-radius: .4rem; }
+  button { justify-self: start; cursor: pointer; }
+  pre { padding: 1rem; background: #8881; border: 1px solid #8884; border-radius: .4rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+  #status[data-state="ready"] { color: #27834f; }
+  #status[data-state="error"] { color: #c6483a; }
+</style>
+<h1>Melodica · WebAssembly</h1>
+<p>Generate a station-list request with the portable serializer.</p>
+<p id="status" role="status" data-state="loading">Loading WebAssembly…</p>
+<form id="request-form">
+  <label>Example auth token
+    <input id="token" value="demo-token" autocomplete="off" spellcheck="false">
+  </label>
+  <label>Sync time
+    <input id="sync-time" type="number" value="12345" min="0" max="4294967295" step="1" required>
+  </label>
+  <button id="serialize" type="submit" disabled>Serialize request</button>
+</form>
+<pre id="result" aria-label="Serialized request">Waiting for the module.</pre>
+<p>Sample data stays in this page. No service requests or audio playback.</p>
+<script type="module">
+  import { loadMelodica } from './melodica.mjs';
+
+  const status = document.querySelector('#status');
+  const result = document.querySelector('#result');
+  const button = document.querySelector('#serialize');
+  const decoder = new TextDecoder();
+
+  try {
+    const melodica = await loadMelodica();
+    const serialize = () => {
+      try {
+        const token = document.querySelector('#token').value;
+        const time = document.querySelector('#sync-time').valueAsNumber;
+        result.textContent = decoder.decode(melodica.stationListRequest(token, time));
+        status.dataset.state = 'ready';
+        status.textContent = `WASM ready · ABI ${melodica.abiVersion}`;
+      } catch (error) {
+        status.dataset.state = 'error';
+        status.textContent = error.message;
+      }
+    };
+    document.querySelector('#request-form').addEventListener('submit', (event) => {
+      event.preventDefault();
+      serialize();
+    });
+    button.disabled = false;
+    serialize();
+  } catch (error) {
+    status.dataset.state = 'error';
+    status.textContent = `Could not load WASM: ${error.message}`;
+    result.textContent = 'Build with make wasm-example, then serve build/wasm over HTTP.';
+  }
+</script>
+</html>
