@@ -3,7 +3,7 @@
 
 import { browser, loadSettings, saveSettings, normalizeEndpoint, SETTINGS_DEFAULTS, send } from './shared.imba'
 import { AUTH_BASE, normalizeAuthBase } from './github.imba'
-import { gateLine, UpdateBanner } from './ui.imba'
+import { gateLine, UpdateBanner, Top, Foot, Mark } from './ui.imba'
 
 const DIAG_LINES = 50
 
@@ -166,101 +166,67 @@ tag Options
 			message = String(e.message or e)
 			kind = 'error'
 
-	css
-		main
-			max-width: 560px
-			margin: 0 auto
-			padding: 24px 16px
-			display: grid
-			gap: 16px
-		h1
-			margin: 0
-			font-size: 20px
-			color: var(--gold-2)
-		label
-			display: grid
-			gap: 4px
-			color: var(--muted)
-			font-size: 12px
-		.row
-			display: flex
-			gap: 8px
-			align-items: center
-		.row input
-			width: auto
-		.actions
-			display: flex
-			gap: 8px
-			flex-wrap: wrap
-		.primary
-			background: var(--gold)
-			color: var(--ink)
-			border-color: var(--gold)
-			font-weight: 600
-		p.help
-			color: var(--muted)
-			margin: 0
-			font-size: 13px
-		h2
-			margin: 8px 0 0
-			font-size: 15px
-			color: var(--gold-2)
-		textarea#diagnostics
-			width: 100%
-			min-height: 180px
-			font: 11px/1.4 ui-monospace, monospace
-			white-space: pre
-			resize: vertical
-
 	def render
-		<self>
-			<main#options>
-				<h1>
-					"melodica options"
-					<small> " {version}"
-				<UpdateBanner update=update @reload=reloadExtension>
-				if !loaded
-					<p.help#options-loading> "Loading settings…"
-				else
-					<label>
-						"API endpoint"
-						<input#endpoint type="url" bind=endpoint placeholder=SETTINGS_DEFAULTS.endpoint spellcheck=false>
-					<p.help> "Default: {SETTINGS_DEFAULTS.endpoint} (Pandora's JSON API v5, reached directly with the extension's host permission). Point it at a melodica-tuner or a relay for testing."
-					if origin and origin !== 'https://tuner.pandora.com'
-						<div.row>
-							<button#grant type="button" @click=grant> "Grant access to {origin}"
-							<span.message#granted> (granted === yes ? "granted" : (granted === no ? "not granted (CORS needed)" : ''))
-					<label>
-						"Audio quality"
-						<select#quality bind=quality>
-							<option value="high"> "high"
-							<option value="medium"> "medium"
-							<option value="low"> "low"
-					<label.row>
-						<input#remember type="checkbox" bind=remember>
-						"Remember the password on this device (kept unencrypted in extension storage)"
-					<h2> "GitHub gate"
-					<p.help#options-gate> "melodica requires a GitHub sign-in. GitHub sign-in is used for identity only; nothing is stored. {authBase} is asked whether the signed-in account may use melodica. Status: {gateLine(gate) or 'unknown'}"
-					if authBase !== AUTH_BASE
-						<p.help#options-authbase> "Auth server overridden (storage key authBase): {authBase}. Default: {AUTH_BASE}"
-					<div.actions>
-						if gate and (gate.mode === 'anon' or gate.mode === 'error')
-							<button#options-github-signin type="button" disabled=gateBusy @click=gateAction('github-signin')> "Sign in with GitHub"
-						<button#options-gate-check type="button" disabled=gateBusy @click=gateAction('gate-check')> "Check again"
-						if gate and gate.login
-							<button#options-github-signout type="button" disabled=gateBusy @click=gateAction('github-signout')> "Sign out"
-					<h2> "Updates"
-					<p.help#options-update> "Firefox and .crx or policy installs update themselves from the feeds on spacegho.st/extensions; an unpacked zip only gets the banner. Running {update and update.current or version}; the store serves {update and update.latest or 'unknown'}{update and update.checkedAt ? ', checked ' + new Date(update.checkedAt).toLocaleString() : ''}."
-					<div.actions>
-						<button#options-update-check type="button" @click=updateCheck> "Check for updates"
-					<div.actions>
-						<button#save.primary type="button" @click=save> "Save"
-						<button#reset type="button" @click=reset> "Reset to Pandora"
-						<button#copy-diagnostics type="button" title="The last {DIAG_LINES} background log lines (tokens redacted) for a bug report" @click=copyDiagnostics> "Copy diagnostics"
-					<p.message#options-message .error=(kind === 'error') .info=(kind === 'info')> message
-					if diagnostics
-						<label>
-							"Diagnostics (tokens redacted)"
-							<textarea#diagnostics readonly spellcheck=false bind=diagnostics>
+		<self.ext-root>
+			<Top label="options">
+			<main#app.app>
+				<div#options.view>
+					<UpdateBanner update=update @reload=reloadExtension>
+					<div.ext-opts>
+						<section.card>
+							<Mark>
+							<p.eyebrow[ta:center]> "melodica extension {version}"
+							<h2[ta:center mb:1rem]> "Options"
+							if !loaded
+								<p.fine#options-loading> "Loading settings…"
+							else
+								<div.ext-form>
+									<label.field>
+										<span> "API endpoint"
+										<input#endpoint type="url" bind=endpoint placeholder=SETTINGS_DEFAULTS.endpoint spellcheck=false>
+									<p.fine> "Default: {SETTINGS_DEFAULTS.endpoint} (Pandora's JSON API v5, reached directly with the extension's host permission). Point it at a melodica-tuner or a relay for testing."
+									if origin and origin !== 'https://tuner.pandora.com'
+										<div.ext-actions>
+											<button#grant type="button" @click=grant> "Grant access to {origin}"
+											<span.message#granted> (granted === yes ? "granted" : (granted === no ? "not granted (CORS needed)" : ''))
+									<label.field>
+										<span> "Audio quality"
+										<select#quality bind=quality>
+											<option value="high"> "high"
+											<option value="medium"> "medium"
+											<option value="low"> "low"
+									<label.check>
+										<input#remember type="checkbox" bind=remember>
+										<span> "Remember the password on this device (kept unencrypted in extension storage)"
+									<div.ext-actions>
+										<button#save.primary type="button" @click=save> "Save"
+										<button#reset type="button" @click=reset> "Reset to Pandora"
+									<p.message#options-message .error=(kind === 'error') .info=(kind === 'info')> message
+						if loaded
+							<div.ext-opts-side>
+								<section.panel.ext-form>
+									<h3> "GitHub sign-in"
+									<p.fine#options-gate> "melodica requires a GitHub sign-in. GitHub sign-in is used for identity only; nothing is stored. {authBase} is asked whether the signed-in account may use melodica. Status: {gateLine(gate) or 'unknown'}"
+									if authBase !== AUTH_BASE
+										<p.fine#options-authbase> "Auth server overridden (storage key authBase): {authBase}. Default: {AUTH_BASE}"
+									<div.ext-actions>
+										if gate and (gate.mode === 'anon' or gate.mode === 'error')
+											<button#options-github-signin type="button" disabled=gateBusy @click=gateAction('github-signin')> "Sign in with GitHub"
+										<button#options-gate-check type="button" disabled=gateBusy @click=gateAction('gate-check')> "Check again"
+										if gate and gate.login
+											<button#options-github-signout type="button" disabled=gateBusy @click=gateAction('github-signout')> "Sign out"
+								<section.panel.ext-form>
+									<h3> "Updates"
+									<p.fine#options-update> "Firefox and .crx or policy installs update themselves from the feeds on spacegho.st/extensions; an unpacked zip only gets the banner. Running {update and update.current or version}; the store serves {update and update.latest or 'unknown'}{update and update.checkedAt ? ', checked ' + new Date(update.checkedAt).toLocaleString() : ''}."
+									<div.ext-actions>
+										<button#options-update-check type="button" @click=updateCheck> "Check for updates"
+								<section.panel.ext-form>
+									<h3> "Diagnostics"
+									<p.fine> "The last {DIAG_LINES} background log lines, tokens redacted, for a bug report."
+									<div.ext-actions>
+										<button#copy-diagnostics type="button" @click=copyDiagnostics> "Copy diagnostics"
+									if diagnostics
+										<textarea#diagnostics readonly spellcheck=false aria-label="Diagnostics (tokens redacted)" bind=diagnostics>
+			<Foot version=version>
 
 imba.mount <Options>

@@ -363,8 +363,8 @@ jobs:
           node -e 'const r=require("./smoke-firefox-node-probe.json"); console.log("node probe: "+r.summary); if (r.ok!==true || !r.userLogin || r.userLogin.code!==1002) { console.error("the Node probe did not get code 1002"); process.exit(1); }'
           node -e 'const r=require("./smoke-firefox.json"); if (!r.realPandora || r.realPandora.code!==1002) { console.error("the Firefox run did not get code 1002 from Pandora"); process.exit(1); }'
           ls smoke-extension-gate.png smoke-extension-gate-denied.png
-          ls smoke-extension-playing.png smoke-extension-popup-playing.png smoke-extension-player-tab.png smoke-extension-bridge.png
-          ls smoke-brave-gate.png smoke-brave-gate-denied.png smoke-brave-login.png smoke-brave-stations.png smoke-brave-playing.png smoke-brave-popup-playing.png smoke-brave-player-tab.png smoke-brave-bridge.png
+          ls smoke-extension-playing.png smoke-extension-popup-playing.png smoke-extension-player-tab.png smoke-extension-player-tab-dark.png smoke-extension-options.png smoke-extension-bridge.png
+          ls smoke-brave-gate.png smoke-brave-gate-denied.png smoke-brave-login.png smoke-brave-stations.png smoke-brave-playing.png smoke-brave-popup-playing.png smoke-brave-player-tab.png smoke-brave-player-tab-dark.png smoke-brave-options.png smoke-brave-bridge.png
           ls smoke-firefox-gate.png smoke-firefox-gate-denied.png smoke-firefox-login.png smoke-firefox-stations.png smoke-firefox-playing.png smoke-firefox-popup-playing.png smoke-firefox-player-tab.png smoke-firefox-real-pandora.png
           for f in smoke-extension.json smoke-brave.json smoke-firefox.json; do
             node -e 'const f=process.argv[1]; const a=require("./"+f).audio; if (!a || !a.noPage || a.noPage.after.status!=="playing" || !a.playerTab || a.playerTab.afterClose.status!=="playing") { console.error(f+": background playback not proven"); process.exit(1); } console.log(f+": background playback ok ("+a.engine+")")' "$f"
@@ -393,6 +393,8 @@ jobs:
             smoke-extension-playing.png
             smoke-extension-popup-playing.png
             smoke-extension-player-tab.png
+            smoke-extension-player-tab-dark.png
+            smoke-extension-options.png
             smoke-extension-bridge.png
             smoke-brave.json
             smoke-brave-gate.png
@@ -402,6 +404,8 @@ jobs:
             smoke-brave-playing.png
             smoke-brave-popup-playing.png
             smoke-brave-player-tab.png
+            smoke-brave-player-tab-dark.png
+            smoke-brave-options.png
             smoke-brave-bridge.png
             smoke-firefox.json
             smoke-firefox-gate.png

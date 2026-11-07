@@ -2,8 +2,8 @@
 # (bg.imba owns the state and the engine). Opening it starts nothing; closing
 # it stops nothing. It renders `player-state` and sends `player` commands.
 
-import { browser, send } from './shared.imba'
-import { StationList, NowPlaying, Transport, Gate, UpdateBanner, gateAllowed, gateLine } from './ui.imba'
+import { browser, send, FALLBACK_COVER } from './shared.imba'
+import { StationList, NowPlaying, Transport, Gate, UpdateBanner, Top, Foot, gateAllowed, gateLine } from './ui.imba'
 
 # While this page is open the background is asked for the gate this often; it
 # re-checks with the auth server once its last check is an hour old.
@@ -206,142 +206,76 @@ tag Player
 			when 'error' then player.error
 			else "Pick a station. The music plays in the background; this tab only shows it."
 
-	css
-		.layout
-			display: grid
-			grid-template-columns: 280px 1fr
-			min-height: 100vh
-		aside
-			border-right: 1px solid var(--line)
-			padding: 16px
-			background: var(--panel)
-			overflow: auto
-		.main
-			padding: 24px
-			display: grid
-			gap: 20px
-			align-content: start
-		header
-			display: flex
-			justify-content: space-between
-			align-items: baseline
-		h1
-			margin: 0 0 12px
-			font-size: 18px
-			color: var(--gold-2)
-		h1 small
-			color: var(--muted)
-			font-weight: 400
-			margin-left: 6px
-		.panel
-			background: var(--panel)
-			border: 1px solid var(--line)
-			border-radius: 14px
-			padding: 16px
-		.controls
-			display: flex
-			gap: 16px
-			align-items: center
-			flex-wrap: wrap
-		.volume
-			display: flex
-			gap: 8px
-			align-items: center
-			color: var(--muted)
-			font-size: 12px
-		.volume input
-			width: 140px
-		.quality
-			display: flex
-			gap: 6px
-			align-items: center
-			color: var(--muted)
-			font-size: 12px
-		.quality select
-			width: auto
-		.history
-			list-style: none
-			margin: 0
-			padding: 0
-			display: grid
-			gap: 6px
-		.history li
-			display: grid
-			grid-template-columns: 1fr auto
-			gap: 8px
-			color: var(--muted)
-		.history .t
-			color: var(--text)
-		.traits
-			color: var(--muted)
-		.signin
-			display: grid
-			gap: 8px
-			justify-items: start
-		.account
-			display: flex
-			justify-content: space-between
-			gap: 8px
-			margin-bottom: 12px
-			font-size: 12px
-			color: var(--muted)
-		.gate-status
-			margin: 0 0 12px
-			font-size: 12px
-			color: var(--muted)
-		.state
-			color: var(--muted)
-			font-size: 13px
-			margin: 0
-
 	def render
 		const song = player and player.track
-		<self @keydown=onKey tabindex="-1">
-			<div#app.layout data-view=(gate and !gateAllowed(gate) ? 'gate' : (loggedIn ? 'player' : 'login')) data-status=(player and player.status or '')>
-				<aside>
-					<h1>
-						"melodica"
-						<small#version> version
-					<div.account>
-						<span#status> (loggedIn ? "Signed in" : "Not signed in")
-						if loggedIn
-							<button#logout type="button" @click=logout> "Sign out"
-					<p#gate-status.gate-status> gateLine(gate)
+		<self.ext-root @keydown=onKey tabindex="-1">
+			<Top label="player">
+				if loggedIn
+					<div.ext-account>
+						<span#status> "Signed in"
+						<button#logout type="button" @click=logout> "Sign out"
+				else
+					<span#status.fine> "Not signed in"
+			<main#app.app data-view=(gate and !gateAllowed(gate) ? 'gate' : (loggedIn ? 'player' : 'login')) data-status=(player and player.status or '')>
+				<div.view>
 					<UpdateBanner update=update @reload=reloadExtension>
 					if gate and !gateAllowed(gate)
 						<Gate gate=gate busy=gateBusy message=gateError @signin=githubSignin @check=gateCheck @signout=githubSignout>
-					elif loggedIn
-						<StationList stations=stations active=(player and player.station and player.station.token) @select=select @refresh=reload @delete=remove>
+					elif !loggedIn
+						<div.view.login>
+							<div.card.login-card>
+								<p.eyebrow> "melodica"
+								<h2> "Not signed in"
+								<p.intro> "Sign in from the toolbar popup, then pick a station."
+								<button#open-login.primary type="button" @click=openPopupLogin> "Open sign-in"
 					else
-						<div.signin>
-							<p.message> "Sign in from the toolbar popup, then pick a station."
-							<button#open-login type="button" @click=openPopupLogin> "Open sign-in"
-				<section.main>
-					<section.panel>
-						<NowPlaying now=now>
-						<p#player-status.state> statusLine
-					<section.controls>
-						<Transport now=now @control=control(e.detail)>
-						<button#explain type="button" disabled=!song title="Why this song?" @click=explain> "Why?"
-						<label.volume>
-							"Volume"
-							<input#volume type="range" min="0" max="100" value=(player and player.volume or 80) @change=setVolume(e.target.value)>
-						<label.quality>
-							"Quality"
-							<select#quality value=(player and player.quality or 'high') @change=setQuality(e.target.value)>
-								<option value="high"> "high"
-								<option value="medium"> "medium"
-								<option value="low"> "low"
-					<p.message#player-message .error=(kind === 'error') .info=(kind === 'info')> message
-					if traits
-						<p.traits#explain-panel> (traits.length ? "Because it features {traits.join(', ')}." : "Pandora gave no explanation.")
-					if player and player.history and player.history.length
-						<section.panel>
-							<h2> "Play log"
-							<ol.history#history>
-								for h in player.history
-									<li>
-										<span.t> "{h.title} – {h.artist}"
-										<span> (song and h.trackToken === song.trackToken ? 'now playing' : (h.rating === 1 ? 'loved' : (h.rating === 2 ? 'banned' : (h.rating === 3 ? 'tired' : ''))))
+						<div.ext-desk>
+							<aside.ext-side>
+								<StationList stations=stations active=(player and player.station and player.station.token) @select=select @refresh=reload @delete=remove>
+							<section.ext-main>
+								<div.card.now>
+									<NowPlaying now=now>
+									<Transport now=now @control=control(e.detail)>
+									<p#player-status.ext-state> statusLine
+									<div.deck>
+										<label.deck-item for="volume">
+											<svg aria-hidden="true" viewBox="0 0 24 24">
+												<path d="M11 5 6 9H2v6h4l5 4z">
+												<path d="M15.5 8.5a5 5 0 0 1 0 7">
+												<path d="M19 5.5a9 9 0 0 1 0 13">
+											<span.sr> "Volume"
+											<input#volume type="range" min="0" max="100" value=(player and player.volume or 80) aria-label="Volume" @change=setVolume(e.target.value)>
+										<label.deck-item for="quality">
+											<span> "Quality"
+											<select#quality value=(player and player.quality or 'high') aria-label="Audio quality" @change=setQuality(e.target.value)>
+												<option value="high"> "high"
+												<option value="medium"> "medium"
+												<option value="low"> "low"
+										<button#explain.round type="button" disabled=!song aria-label="Why is this song playing?" title="Why this song? (e)" @click=explain>
+											<svg aria-hidden="true" viewBox="0 0 24 24">
+												<circle cx="12" cy="12" r="9">
+												<path d="M9.3 9.2a2.8 2.8 0 0 1 5.4 1c0 1.8-2.7 2.5-2.7 4">
+												<path d="M12 17.3h.01">
+								<p.message#player-message .error=(kind === 'error') .info=(kind === 'info')> message
+								if traits
+									<blockquote#explain-panel.panel.pull>
+										<p.pull-text> (traits.length ? "Because it features {traits.join(', ')}." : "Pandora gave no explanation.")
+										<footer.pull-foot> "Pandora, on why this song is playing"
+								if player and player.history and player.history.length
+									<section.panel.recent>
+										<div.panel-head>
+											<h3> "Play log"
+											<span.fine.nowrap> "this session"
+										<ol.history#history>
+											for h in player.history
+												<li.hist .now=(song and h.trackToken === song.trackToken) data-rating=(h.rating or 0)>
+													<img.hist-cover src=(h.coverArt or FALLBACK_COVER) alt="">
+													<div.hist-meta>
+														<span.hist-title> h.title
+														<span.hist-artist> h.artist
+														<span.hist-rating> (song and h.trackToken === song.trackToken ? 'now playing' : (h.rating === 1 ? 'loved' : (h.rating === 2 ? 'banned' : (h.rating === 3 ? 'tired' : ''))))
+			<Foot version=version>
+				<span#gate-status.ext-gate-status> gateLine(gate)
+				<span.fine> "Keys: space play/pause · n next · + love · - ban · t tired · e why"
 
 imba.mount <Player>

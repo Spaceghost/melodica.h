@@ -213,7 +213,7 @@ is how the CI smoke runs).
 | `tests/fake-auth.mjs` | the smokes' stand-in for the Worker's `/melodica/auth/me`, deciding from the token's claims |
 | `src/popup.imba`, `src/player.imba`, `src/options.imba`, `src/ui.imba`, `src/shared.imba` | the pages (views of the background's state) and shared tags |
 | `src/content.imba`, `docs/BRIDGE.md` | the bridge content script for `https://spacegho.st/melodica/app/*`: the request relay and the playback remote control |
-| `public/` | `manifest.json` (one template, two outputs), the HTML pages (no inline scripts), `theme.css` |
+| `public/` | `manifest.json` (one template, two outputs), the HTML pages (no inline scripts), `theme.css`: part 1 is melodica-web's `web/app.css` copied unchanged (the phone layout: one centered column of cream cards, ink in dark mode), part 2 the extension's additions (popup width 380 px, the inline station list, the update banner, the options form) |
 | `scripts/build-core.sh` | Nelua → C (`--target wasm32-unknown-unknown`) → `clang -nostdlib` → audits exports/imports |
 | `scripts/build.mjs` | esbuild + `imba/compiler` → `dist/chrome`, `dist/firefox`, `build/node/{core,pandora,github}.js`; generated icons; CSP guards |
 | `scripts/real-pandora-probe.mjs` | no-account probe of the client + wasm core against the real `tuner.pandora.com` from Node: partnerLogin, syncTime, userLogin with bogus credentials, expects code 1002 (below) |
