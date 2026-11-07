@@ -1,0 +1,9 @@
+LIBRARY melodica
+EXPORTS
+    melodica_abi_version
+    melodica_url_encode_size
+    melodica_url_encode
+    melodica_json_escape_size
+    melodica_json_escape
+    melodica_station_list_request_size
+    melodica_station_list_request

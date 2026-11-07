@@ -1,0 +1,256 @@
+name: release
+
+on:
+  push:
+    tags: ['1.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and publish (empty: build only, no release)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      publish: ${{ steps.ver.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          submodules: true
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then v="${{ inputs.tag }}"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then v="${GITHUB_REF#refs/tags/}"
+          else v="0.0.0-dev.${GITHUB_RUN_NUMBER}"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "publish=$([[ "$v" == 0.0.0-dev.* ]] && echo false || echo true)" >> "$GITHUB_OUTPUT"
+          echo "version=$v"
+
+      - uses: microsoft/setup-msbuild@v2
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x86
+
+      - name: Build melodica native bridge (MSVC, x86)
+        shell: cmd
+        run: |
+          mkdir native\out
+          cl /nologo /O2 /W4 /std:c11 /Ivendor\melodica\include /LD vendor\melodica\impl\c\melodica.c /Fo:native\out\ /Fe:native\out\melodica.dll /link /DEF:native\melodica.def
+          dumpbin /nologo /exports native\out\melodica.dll | findstr melodica_abi_version
+          dumpbin /nologo /headers native\out\melodica.dll | findstr /C:"machine (x86)"
+
+      - name: NuGet restore
+        run: nuget restore Elpis.sln
+
+      - name: Install .NET Framework 4.0/4.6 reference assemblies
+        shell: pwsh
+        run: |
+          nuget install Microsoft.NETFramework.ReferenceAssemblies.net40 -Version 1.0.3 -ExcludeVersion -OutputDirectory refpacks
+          nuget install Microsoft.NETFramework.ReferenceAssemblies.net46 -Version 1.0.3 -ExcludeVersion -OutputDirectory refpacks
+          $roots = @('net40','net46') | ForEach-Object { (Resolve-Path "refpacks\Microsoft.NETFramework.ReferenceAssemblies.$_\build").Path }
+          "TFM_FALLBACK=$($roots -join '%3B')" >> $env:GITHUB_ENV
+
+      - name: Build Elpis (Release|x86)
+        run: msbuild Elpis.sln /t:Elpis /m /restore:false /p:Configuration=Release /p:Platform=x86 "/p:TargetFrameworkFallbackSearchPaths=$env:TFM_FALLBACK" /v:minimal
+
+      - name: Package
+        id: pkg
+        shell: pwsh
+        run: |
+          $v = '${{ steps.ver.outputs.version }}'
+          $name = "elpis-$v-win-x86"
+          $stage = Join-Path 'stage' $name
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item 'Elpis\bin\Release\*' $stage -Recurse
+          Get-ChildItem $stage -Recurse -Include *.pdb,*.vshost.*,*.xml | Remove-Item -Force
+          Copy-Item 'native\out\melodica.dll' $stage
+          Copy-Item 'Elpis\License.txt','Elpis\README.txt','README.md' $stage
+          New-Item -ItemType Directory -Force "$stage\melodica" | Out-Null
+          Copy-Item 'vendor\melodica\README.md','vendor\melodica\THIRD_PARTY_NOTICES.md','vendor\melodica\LICENSE.libpiano','vendor\melodica\include\melodica.h' "$stage\melodica"
+          foreach ($f in 'Elpis.exe','melodica.dll','bass.dll','PandoraSharp.dll') {
+            if (-not (Test-Path "$stage\$f")) { throw "missing $f in package" }
+          }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path "$stage\*" -DestinationPath "dist\$name.zip"
+          Get-ChildItem $stage -Recurse | Select-Object -ExpandProperty FullName
+
+      - name: Build installer (Inno Setup 6)
+        shell: pwsh
+        run: |
+          $v = '${{ steps.ver.outputs.version }}'
+          $num = ($v -split '-')[0]
+          if ($num -notmatch '^\d+\.\d+\.\d+$') { $num = '0.0.0' }
+          $src = (Resolve-Path "stage\elpis-$v-win-x86").Path
+          $out = (Resolve-Path dist).Path
+          & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' "/DAppVersion=$v" "/DNumVersion=$num" "/DSourceDir=$src" "/DOutputDir=$out" installer\elpis.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
+          $exe = "dist\elpis-$v-setup-win-x86.exe"
+          if (-not (Test-Path $exe)) { throw "missing $exe" }
+          if ((Get-Item $exe).Length -lt 3MB) { throw "installer suspiciously small" }
+
+      - name: Checksums
+        shell: pwsh
+        run: |
+          Push-Location dist
+          Get-ChildItem *.zip,*.exe | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_ -Algorithm SHA256).Hash.ToLower(), $_.Name } | Set-Content -Encoding ascii SHA256SUMS
+          Get-Content SHA256SUMS
+          Get-ChildItem | Select-Object Name,Length
+          Pop-Location
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: elpis-${{ steps.ver.outputs.version }}-win-x86
+          path: dist/*
+
+  smoke:
+    # Installs the built installer on a fresh windows-latest desktop session,
+    # opens Elpis and drives it with UI Automation. See installer/smoke/.
+    needs: windows
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      VERSION: ${{ needs.windows.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: elpis-${{ needs.windows.outputs.version }}-win-x86
+          path: dist
+
+      # Fake tuner.pandora.com on 127.0.0.1:443 (+ http 80): hosts override and CA in the
+      # machine Root store, which is what PandoraSharp's HttpWebRequest trusts.
+      - uses: Spaceghost/melodica-tuner@v1
+        id: tuner
+        with:
+          hosts-override: 'true'
+          install-ca: 'true'
+
+      - name: Tuner health (through the hosts override and the installed CA)
+        shell: pwsh
+        run: |
+          (Invoke-WebRequest -UseBasicParsing '${{ steps.tuner.outputs.http-url }}/__tuner/health').Content
+          try { (Invoke-WebRequest -UseBasicParsing 'https://tuner.pandora.com/__tuner/health').Content } catch { Write-Host "::warning::https health via hosts override failed: $_" }
+          Resolve-DnsName tuner.pandora.com | Format-Table
+
+      # Run 42099990245 hung for six hours in `devcon install` (the job timeout cancelled it),
+      # so the driver install is bounded; audio is a bonus finding, not a smoke requirement.
+      - name: Virtual audio device (Scream) so BASS has an output device
+        id: audio
+        continue-on-error: true
+        timeout-minutes: 6
+        shell: pwsh
+        run: |
+          # The usual CI recipe (Scream 3.6, catalog signer into TrustedPublisher, devcon-x64).
+          # Without a device Elpis now falls back to BASS's "No sound" device, so this is a bonus.
+          Set-Service audiosrv -StartupType Automatic; Start-Service audiosrv
+          Invoke-WebRequest -UseBasicParsing https://github.com/duncanthrax/scream/releases/download/3.6/Scream3.6.zip -OutFile scream.zip
+          Expand-Archive scream.zip -DestinationPath scream
+          Import-Certificate -FilePath scream\Install\driver\x64\Scream.cat -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
+          $d = Start-Process -FilePath scream\Install\helpers\devcon-x64.exe -ArgumentList @('install', 'scream\Install\driver\x64\Scream.inf', '*Scream') -PassThru -NoNewWindow
+          if (-not $d.WaitForExit(180000)) { Stop-Process -Id $d.Id -Force; throw 'devcon install did not finish within 180 s' }
+          "devcon exit code $($d.ExitCode)"
+          Start-Sleep 5
+          Get-CimInstance Win32_SoundDevice | Format-Table Name, Status, StatusInfo
+
+      - name: Install, open, screenshot, uninstall
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist -Filter "elpis-$env:VERSION-setup-win-x86.exe" | Select-Object -First 1
+          if (-not $exe) { throw "installer not in artifact" }
+          & installer\smoke\smoke-windows.ps1 -Installer $exe.FullName -OutDir smoke `
+            -TunerUser '${{ steps.tuner.outputs.user }}' -TunerPassword '${{ steps.tuner.outputs.password }}' `
+            -TunerLogUrl '${{ steps.tuner.outputs.log-url }}' -TunerName 'melodica-tuner'
+
+      - name: Tuner log and state
+        if: always()
+        shell: pwsh
+        run: |
+          try { (Invoke-WebRequest -UseBasicParsing '${{ steps.tuner.outputs.http-url }}/__tuner/state').Content | Set-Content -Encoding utf8 smoke/smoke-windows-tuner-state.json } catch { "state: $_" }
+          Get-Content smoke/smoke-windows-tuner.log -ErrorAction SilentlyContinue | Select-Object -First 60
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-windows-${{ needs.windows.outputs.version }}
+          path: smoke/*
+
+  publish:
+    needs: [windows, smoke]
+    if: needs.windows.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: elpis-${{ needs.windows.outputs.version }}-win-x86
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: smoke-windows-${{ needs.windows.outputs.version }}
+          path: smoke
+      - name: Smoke result must be ok
+        run: |
+          cat smoke/smoke-windows.json
+          test "$(jq -r .ok smoke/smoke-windows.json)" = true
+          for s in installed opened 'login screen' 'logged in' stations; do
+            jq -e --arg s "$s" '.steps | index($s) != null' smoke/smoke-windows.json >/dev/null || { echo "missing step: $s"; exit 1; }
+          done
+      - name: SHA256SUMS over every published file
+        run: |
+          mkdir -p out
+          cp dist/*.zip dist/*.exe out/
+          cp smoke/smoke-windows.json smoke/smoke-windows-*.png out/
+          (cd out && sha256sum * > SHA256SUMS && cat SHA256SUMS)
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.windows.outputs.version }}
+          name: Elpis ${{ needs.windows.outputs.version }} (melodica.h)
+          files: |
+            out/*
+          body: |
+            Windows x86 build of Elpis from this melodica.h-integrated mirror.
+
+            **Installer:** run the `.exe`. **Portable:** unzip anywhere and run `Elpis.exe`.
+            Needs .NET Framework 4.6 or newer (built into Windows 10/11); the installer
+            checks for it and points at the download if it is missing.
+
+            The installer (Inno Setup 6, per-user or per-machine) is not code-signed, so
+            Windows SmartScreen will warn on first run ("More info" -> "Run anyway").
+
+            The build ships `melodica.dll` (built from the vendored
+            [melodica.h](https://github.com/Spaceghost/melodica.h) C implementation, ABI 1)
+            next to `Elpis.exe`; the client loads it at startup through the melodica ABI
+            bridge. melodica.h is the replacement for the PandoraSharp Pandora protocol layer;
+            in this release the bridge binds the native library and verifies its ABI while the
+            managed PandoraSharp code is still present. See `melodica/` in the zip for the
+            header and notices.
+
+            Built on GitHub Actions `windows-latest` with MSBuild (Release|x86, .NET Framework)
+            and MSVC; the installer with Inno Setup 6 from `installer/elpis.iss` (the upstream
+            `ElpisSetup.vdproj` is not built).
+
+            **Smoke test** (`smoke-windows.json`, `smoke-windows-*.png`): on a second
+            `windows-latest` runner the release job ran this installer silently, started the
+            installed `Elpis.exe`, and drove it with UI Automation
+            (`installer/smoke/smoke-windows.ps1`). The JSON lists exactly which steps were
+            observed (`installed`, `opened`, `login screen`, and against the melodica-tuner
+            test server `logged in`, `stations`, `playing`) plus findings such as the
+            audio-engine outcome (`audio.bass_log`: the runner has no sound card, so the
+            engine falls back to BASS's "No sound" device unless the virtual Scream device
+            installed); the PNGs are desktop screenshots taken at those points. Nothing
+            beyond those steps has been exercised, and no real Pandora login was made.
+
+            Checksums: `SHA256SUMS` covers every file attached here, smoke evidence included.
