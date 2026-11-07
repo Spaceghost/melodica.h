@@ -29,6 +29,8 @@ jobs:
           MELODICA_SMOKE_ALLOW_RELAY_BLOCK: '1'
       - name: Node unit test (canned Pandora responses)
         run: node tests/node-unit.mjs
+      - name: Bridge unit test (fake window, no network)
+        run: node tests/bridge-unit.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: dist

@@ -52,6 +52,7 @@ h1, h2, h3 { font-family: var(--display); font-weight: 400; letter-spacing: 0.01
 p { margin: 0; }
 .muted { color: var(--muted); }
 .fine { color: var(--muted); font-size: 0.8rem; }
+.fine code { font-family: var(--mono); font-size: 0.95em; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 kbd { font: 0.78em var(--mono); padding: 1px 6px; border: 1px solid var(--control-line); border-bottom-width: 2px; border-radius: 6px; color: var(--text); background: var(--solid); }
 .eyebrow { font: 600 0.7rem/1.4 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold); }
