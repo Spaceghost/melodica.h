@@ -1,0 +1,7 @@
+dist/
+*.tar.gz
+SHA256SUMS
+node_modules/
+tests/artifacts/playwright/
+tests/artifacts/login-*.png
+tests/artifacts/smoke-web*
