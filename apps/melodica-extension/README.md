@@ -101,19 +101,21 @@ is how the CI smoke runs); the `-cws` one is the Chrome build without
 | `core/melodica_core.nelua` | the wasm core (freestanding Nelua); `core/pi_hex.nelua` is Blowfish's pi table copied from melodica.h |
 | `core/test.mjs`, `core/ref-blowfish.mjs` | Node unit test: libpiano's vector from melodica.h `tests/crypt.c`, an independent JS Blowfish for cross-checks, hex, syncTime, the envelope, the arena |
 | `src/core.imba` | JS wrapper around the wasm exports |
-| `src/pandora.imba` | JSON API v5 client: partnerLogin, userLogin, station list, playlist, feedback, sleep, explain, search, create/delete station; one re-login on code 1001 |
-| `src/bg.imba` | background: session (in `storage.session`), every Pandora request, player-tab management, the bridge relay |
+| `src/pandora.imba` | JSON API v5 client: partnerLogin, userLogin, station list, playlist, feedback, sleep, explain, search, create/delete station; one re-login on code 1001; errors name the call and code ("Pandora rejected auth.userLogin (code 1002: invalid login). Wrong email address or password."); the client User-Agent (below) |
+| `src/bg.imba` | background: session (in `storage.session`), every Pandora request, player-tab management, the bridge relay, the diagnostics log (last 200 lines in `storage.session`, no tokens) |
 | `src/popup.imba`, `src/player.imba`, `src/options.imba`, `src/ui.imba`, `src/shared.imba` | the pages and shared tags |
 | `src/content.imba` | the bridge content script for `https://spacegho.st/melodica/app/*` |
 | `public/` | `manifest.json` (one template, two outputs), the three HTML pages (no inline scripts), `theme.css` |
 | `scripts/build-core.sh` | Nelua → C (`--target wasm32-unknown-unknown`) → `clang -nostdlib` → audits exports/imports |
-| `scripts/build.mjs` | esbuild + `imba/compiler` → `dist/chrome`, `dist/firefox`, `build/node/core.js`; generated icons; CSP guards |
+| `scripts/build.mjs` | esbuild + `imba/compiler` → `dist/chrome`, `dist/cws`, `dist/firefox`, `build/node/{core,pandora}.js`; generated icons; CSP guards |
+| `scripts/real-pandora-probe.mjs` | no-account probe of the client + wasm core against the real `tuner.pandora.com` from Node: partnerLogin, syncTime, userLogin with bogus credentials, expects code 1002 (below) |
 | `scripts/package.sh` | the zips (`-chrome`, `-cws` without `update_url`, `-firefox`), the `.xpi`, the `.crx` (via `crx3`, key from `$CRX_KEY`), the source tarball, `SHA256SUMS` |
 | `scripts/edge-publish.sh` | upload + publish a package through the Edge Add-ons REST API v1.1 (used by the `publish-edge` job) |
 | `docs/STORES.md` | store publishing: what CI does, the one-time dashboard steps, the privacy text, the Firefox fallback |
 | `scripts/crx-id.mjs` | the Chrome extension id of a key: first 128 bits of SHA-256 over the DER SubjectPublicKeyInfo, hex mapped to a–p |
 | `tests/smoke-extension.spec.mjs` | the Playwright proof (below) in Playwright's Chromium or, with `MELODICA_BROWSER=brave`, an installed Brave; `tests/fixtures/melodica-web-dist` is melodica-web 0.2.0's built page |
-| `.github/workflows/ci.yml` | build (+ AMO signing) → `smoke` (Chromium) and `smoke-brave` (Brave stable from Brave's apt repository) → release on `v*` tags → `publish-cws`, `publish-edge` (skip without their secrets) |
+| `tests/smoke-firefox.mjs` | the Firefox proof (below): Mozilla Firefox through geckodriver + selenium-webdriver, `dist/firefox` as a temporary add-on, the tuner, then the real Pandora with bogus credentials |
+| `.github/workflows/ci.yml` | build (+ AMO signing) → `smoke` (Chromium), `smoke-brave` (Brave stable from Brave's apt repository) and `smoke-firefox` (Mozilla Firefox from packages.mozilla.org, plus the real-Pandora probe) → release on `v*` tags → `publish-cws`, `publish-edge` (skip without their secrets) |
 
 ### Core (wasm) exports
 
@@ -147,7 +149,7 @@ Nelua fork copied to `/opt/nelua`) and on GitHub Actions.
 ```sh
 npm install
 NELUA=/opt/nelua/nelua scripts/build-core.sh      # build/core/melodica_core.wasm (+ export/import audit)
-node scripts/build.mjs --version 0.1.0            # dist/chrome, dist/firefox, build/node/core.js
+node scripts/build.mjs --version 0.1.0            # dist/chrome, dist/cws, dist/firefox, build/node/{core,pandora}.js
 node core/test.mjs                                # 30 checks
 npx web-ext lint --source-dir dist/firefox --self-hosted
 CRX_KEY=/path/to/key.pem scripts/package.sh 0.1.0 # release/*-{chrome,cws,firefox}.zip, .xpi, .crx, -src.tar.gz, SHA256SUMS (no .crx without CRX_KEY)
@@ -185,6 +187,42 @@ not errors).
   (falls back to the next available).
 - **Remember password**: kept unencrypted in `storage.local`, only when
   ticked; used for the automatic re-login after Pandora's code 1001.
+- **Copy diagnostics**: the last 50 lines of the background log (boot,
+  permissions, each request's method, size, syncTime, clock offset and which
+  User-Agent it carried, each answer's HTTP status and Pandora code) plus the
+  browser's UA, the endpoint and the granted permissions, with tokens and
+  passwords reduced to their lengths; copied to the clipboard when the page is
+  allowed to, and always shown in a box to copy from.
+
+## The request User-Agent (why 0.1.4 said "Your session expired")
+
+Versions up to 0.1.4 sent every request with the browser's own `User-Agent`
+(an extension's `fetch` does, unless it sets one). `tuner.pandora.com` treats
+a request whose User-Agent is a browser's differently: `auth.userLogin` then
+takes ten seconds and comes back as **code 1001** with the message "Invalid
+username and/or password", which the client mapped to "Your session
+expired." The same request with any non-browser User-Agent (Node's, pianobar's
+`pianobar-<version>`, ours, even an empty one) is answered at once with
+code 1002 for bogus credentials. This was found on 2026-11-07 by driving
+`src/pandora.imba` + the wasm core from Node against the real Pandora with the
+headers varied one at a time (`Origin`, `Sec-Fetch-*`, `Accept-Language` made
+no difference; `User-Agent: Mozilla/5.0 … Firefox/159.0` and Chrome's UA each
+flipped the answer to 1001), and then reproduced in a real Firefox with the
+extension installed (`tests/smoke-firefox.mjs`, before the fix: 1001; after:
+1002). The envelope, syncTime (4 junk bytes, 10 ASCII digits, padding) and
+`auth_token`/`partner_id` query were byte-identical to melodica.h's C
+reference in both cases, so none of them was the cause.
+
+Since 0.1.7 the client sends `User-Agent: melodica-extension/<version>
+(+https://github.com/Spaceghost/melodica-extension)`, as pianobar names
+itself. A User-Agent header is not CORS-safelisted, so it is only sent to an
+origin the extension holds a host permission for (Pandora's, or an endpoint
+the user granted on the options page); a tuner or relay reached through CORS
+keeps the browser's UA (the diagnostics say which, per request). Whether a
+Pandora login with *valid* credentials now succeeds from the extension has
+not been observed: CI has no account, and the only real-Pandora evidence is
+the bogus-credentials probe (1002) from Node and from the installed Firefox
+extension.
 
 ## Bridge protocol (as implemented in `src/content.imba`)
 
@@ -246,6 +284,39 @@ It writes `tests/artifacts/smoke-extension.json` (`ok`, `platform:
 the background (message `state`) which endpoint it will use and requires the
 tuner's, so a save the worker did not pick up fails there, not at login.
 
+### Firefox (`smoke-firefox`)
+
+A third job installs the current Mozilla Firefox from `packages.mozilla.org`
+(unpinned, like Brave) with geckodriver (latest release) and drives it
+headless through `selenium-webdriver` (Playwright's Firefox cannot load
+extensions). `tests/smoke-firefox.mjs` installs `dist/firefox` as a temporary
+add-on (`installAddon(dir, true)`; the moz-extension UUID is pinned through
+the `extensions.webextensions.uuids` pref, and extension pages are loaded
+from Firefox's chrome context because WebDriver refuses `moz-extension://`
+navigations), reads `browser.permissions.getAll()` in the options page and
+requires `https://tuner.pandora.com/*` among the granted origins (Firefox
+grants MV3 `host_permissions` at install; this checks it for a temporary
+install too), requires `browser.storage.session` and a `background.scripts`
+event page, then repeats the tuner proof: endpoint set, popup login, the
+fixture's stations, the player tab's `<audio>` at `readyState >= 2` and not
+paused (a PulseAudio null sink stands in for a sound card). Then the
+Firefox-only part: the endpoint is reset to Pandora, bogus credentials are
+submitted, and the popup must show "Pandora rejected auth.userLogin (code
+1002: invalid login). Wrong email address or password." while the background
+log (read through the options page's diagnostics) shows `auth.partnerLogin`
+answered `stat=ok` and `auth.userLogin` answered `code=1002`. The same job
+first runs `scripts/real-pandora-probe.mjs`, the client and wasm core alone in
+Node, against the real Pandora and requires code 1002 there too; its report is
+`smoke-firefox-node-probe.json`. The report is `smoke-firefox.json`
+(`platform: "firefox"`, `browser` = the `firefox --version` line, `engine`
+from WebDriver, `permissions`, `sessionStorage`, `background`, `audio`,
+`realPandora` with the code and the log lines, `log`) plus
+`smoke-firefox-login.png`, `smoke-firefox-stations.png`,
+`smoke-firefox-playing.png`, `smoke-firefox-real-pandora.png`. The bridge to
+the web page is not exercised in Firefox (the page would have to be served as
+`https://spacegho.st` on port 443). The release job requires all three
+reports and lists them in `SHA256SUMS`.
+
 ### The same proof in Brave (`smoke-brave`)
 
 A second job installs Brave from `https://brave-browser-apt-release.s3.brave.com/`
@@ -298,9 +369,11 @@ tagged commit; see the release notes for the run of each tag.
 ### What this does and does not prove
 
 - Proven by the tag's run: the exact `dist/chrome` build loads in Chromium
-  and in Brave, its options/popup/player pages work, its wasm core frames
-  requests the strict tuner accepts, audio plays from the tuner, and the
-  bridge protocol round-trips through the content script and background.
+  and in Brave and the exact `dist/firefox` build in Mozilla Firefox, their
+  options/popup/player pages work, the wasm core frames requests the strict
+  tuner accepts, audio plays from the tuner, the bridge protocol round-trips
+  through the content script and background (Chromium and Brave), and the
+  real Pandora accepts the request framing (the bogus-credentials probe).
 - **Brave: the stable of the day, Shields at defaults, on Linux.** The job
   does not pin Brave, so each run proves whatever `brave-browser` apt
   installed then (the version is in the report). Shields were not configured;
@@ -309,19 +382,24 @@ tagged commit; see the release notes for the run of each tag.
   before it (waited for, recorded, not asserted). Brave on Windows or macOS,
   Brave's `.crx` drag-install and Brave's policy install have not been
   exercised.
-- **Not a real Pandora login.** CI has no Pandora account and GitHub runners
-  are not in the US; the extension has not been observed against
-  `tuner.pandora.com` itself. The request shapes are those of pianobar's
-  libpiano and melodica-web, both of which work against Pandora, but that is
-  inference, not observation.
-- **Firefox is linted, not run.** `web-ext lint` passes with 0 errors on
-  `dist/firefox`; the extension has not been loaded in a running Firefox.
+- **Real Pandora, without an account.** The `smoke-firefox` job talks to
+  `tuner.pandora.com` itself twice per run, from Node and from the installed
+  Firefox extension: `auth.partnerLogin` succeeds and `auth.userLogin` with
+  bogus credentials is answered with code 1002, which proves the framing
+  (query, envelope, syncTime, User-Agent) is one Pandora accepts. CI has no
+  Pandora account, so a login with valid credentials, the station list and
+  playback against Pandora are not observed anywhere in CI.
+- **Firefox is run, headless, on Linux, as a temporary add-on.** The `.xpi`
+  install prompt, a signed install, Firefox on Windows or macOS and the bridge
+  in Firefox are not exercised.
 - **Stores.** The `.xpi` is signed by Mozilla on the unlisted channel (the
   sign step's log and `META-INF/` in the file are the evidence); the Chrome
   Web Store and Edge Add-ons jobs run only once their secrets exist and prove
   an accepted upload, not a passed review (`docs/STORES.md`). No job installs
   the `.xpi` or `.crx` in a browser; Firefox's install prompt and Chrome's
   policy install have not been exercised.
+- The three browser jobs install whatever Mozilla and Brave ship on the day
+  and Playwright's pinned Chromium; the versions are in the reports.
 - The web page's side of the bridge is being implemented in melodica-web; the
   smoke test drives the protocol from the page context itself, so it proves
   the extension's half against the agreed protocol, not the shipped page's

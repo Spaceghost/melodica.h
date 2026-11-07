@@ -1,7 +1,18 @@
 # Options page: API endpoint (the default is Pandora's; CI points it at
 # melodica-tuner), audio quality, remembered password.
 
-import { browser, loadSettings, saveSettings, normalizeEndpoint, SETTINGS_DEFAULTS } from './shared.imba'
+import { browser, loadSettings, saveSettings, normalizeEndpoint, SETTINGS_DEFAULTS, send } from './shared.imba'
+
+const DIAG_LINES = 50
+
+# Tokens never belong in a pasted bug report: query tokens, JSON token fields,
+# anything that looks like a base64 blob of 20+ characters, and passwords.
+export def redact text
+	String(text)
+		.replace(/(auth_token|user_id|partner_id)=([^&\s]+)/g, do(m, k, v) "{k}=[{v.length}chars]")
+		.replace(/"(partnerAuthToken|userAuthToken|password)":"([^"]*)"/g, do(m, k, v) "\"{k}\":\"[{v.length}chars]\"")
+		.replace(/password[=:]\s*\S+/gi, 'password=[redacted]')
+		.replace(/[A-Za-z0-9+]{20,}={0,2}|[A-Za-z0-9+\/]{20,}={1,2}/g, do(m) "[{m.length}chars]")
 
 tag Options
 	prop endpoint = ''
@@ -11,6 +22,7 @@ tag Options
 	prop kind = ''
 	prop version = ''
 	prop granted = null
+	prop diagnostics = ''
 	# The form is shown only once the stored settings are in; a value typed
 	# before that would be overwritten when they arrived (seen in Brave, where
 	# the page is interactive before storage answers).
@@ -52,6 +64,33 @@ tag Options
 		endpoint = SETTINGS_DEFAULTS.endpoint
 		quality = SETTINGS_DEFAULTS.quality
 		await save()
+
+	# The last DIAG_LINES background log lines plus the environment, tokens
+	# redacted, shown in the textarea and copied to the clipboard when allowed.
+	def copyDiagnostics
+		try
+			const d = await send({type: 'diagnostics'})
+			const lines = (d.lines or []).slice(-DIAG_LINES)
+			const head = [
+				"melodica-extension {d.version} core {d.core}"
+				"browser {d.ua}"
+				"endpoint {d.endpoint}; signed in: {d.loggedIn ? 'yes' : 'no'}; clock offset {d.syncOffset}s; request User-Agent: {d.userAgent}"
+				"storage.session: {d.sessionStorage ? 'available' : 'missing (storage.local used)'}; background: {JSON.stringify(d.background)}"
+				"permissions: {JSON.stringify(d.permissions)}"
+				"last {lines.length} background log lines:"
+			]
+			diagnostics = redact(head.concat(lines).join('\n'))
+			let copied = no
+			try
+				await navigator.clipboard.writeText(diagnostics)
+				copied = yes
+			catch e
+				copied = no
+			message = copied ? "Diagnostics copied to the clipboard ({lines.length} log lines)." : "Diagnostics shown below (the clipboard was not available); copy them from the box."
+			kind = 'info'
+		catch e
+			message = "Could not collect diagnostics: {e.message or e}"
+			kind = 'error'
 
 	# Optional host permission for a non-Pandora endpoint (a relay or a test
 	# server). Without it the endpoint must allow CORS, which melodica-tuner does.
@@ -99,6 +138,12 @@ tag Options
 			color: var(--muted)
 			margin: 0
 			font-size: 13px
+		textarea#diagnostics
+			width: 100%
+			min-height: 180px
+			font: 11px/1.4 ui-monospace, monospace
+			white-space: pre
+			resize: vertical
 
 	def render
 		<self>
@@ -129,6 +174,11 @@ tag Options
 					<div.actions>
 						<button#save.primary type="button" @click=save> "Save"
 						<button#reset type="button" @click=reset> "Reset to Pandora"
+						<button#copy-diagnostics type="button" title="The last {DIAG_LINES} background log lines (tokens redacted) for a bug report" @click=copyDiagnostics> "Copy diagnostics"
 					<p.message#options-message .error=(kind === 'error') .info=(kind === 'info')> message
+					if diagnostics
+						<label>
+							"Diagnostics (tokens redacted)"
+							<textarea#diagnostics readonly spellcheck=false bind=diagnostics>
 
 imba.mount <Options>

@@ -119,10 +119,11 @@ jobs:
             echo "- \`SHA256SUMS\`"
             echo "- \`smoke-extension.json\`, \`smoke-extension-login.png\`, \`smoke-extension-stations.png\`, \`smoke-extension-playing.png\`, \`smoke-extension-bridge.png\`: the Chromium proof below."
             echo "- \`smoke-brave.json\`, \`smoke-brave-login.png\`, \`smoke-brave-stations.png\`, \`smoke-brave-playing.png\`, \`smoke-brave-bridge.png\`: the same proof in Brave (its \`browser\` field is the Brave version the job installed)."
+            echo "- \`smoke-firefox.json\`, \`smoke-firefox-login.png\`, \`smoke-firefox-stations.png\`, \`smoke-firefox-playing.png\`, \`smoke-firefox-real-pandora.png\`, \`smoke-firefox-node-probe.json\`: the Firefox proof below (its \`browser\` field is the Mozilla Firefox the job installed; \`realPandora\` and the node probe are the no-account checks against tuner.pandora.com itself)."
             echo
             echo "## Proof"
             echo
-            echo "The \`smoke\` job of this release's workflow loaded this exact Chrome build unpacked into Playwright's Chromium (headed under xvfb) against [melodica-tuner](https://github.com/Spaceghost/melodica-tuner), a stand-in tuner.pandora.com: set the endpoint on the options page, signed in from the popup, listed the fixture's stations, started a station (the player tab opened and the \`<audio>\` element played), and bridged an \`auth.partnerLogin\` for the melodica-web page served locally as https://spacegho.st. \`smoke-extension.json\` is the report. The \`smoke-brave\` job repeated every step in Brave (the current stable from Brave's apt repository, Shields at their defaults) with the same Chrome build; \`smoke-brave.json\` is its report and its \`blocked\` list holds every request Brave refused (none of them may be the extension's, the tuner's or the page's, or the job fails). This proves the extension against the tuner, not against Pandora; the Firefox build was linted with web-ext, not run; the .xpi and .crx files were packaged from the same dist/ but no job installed them in a browser. Nothing is listed publicly on the Chrome Web Store, addons.mozilla.org or Edge Add-ons: the AMO signature (when present) is on the unlisted channel, and the store uploads (when the credentials exist) go to unlisted/hidden items that only their links reach."
+            echo "The \`smoke\` job of this release's workflow loaded this exact Chrome build unpacked into Playwright's Chromium (headed under xvfb) against [melodica-tuner](https://github.com/Spaceghost/melodica-tuner), a stand-in tuner.pandora.com: set the endpoint on the options page, signed in from the popup, listed the fixture's stations, started a station (the player tab opened and the \`<audio>\` element played), and bridged an \`auth.partnerLogin\` for the melodica-web page served locally as https://spacegho.st. \`smoke-extension.json\` is the report. The \`smoke-brave\` job repeated every step in Brave (the current stable from Brave's apt repository, Shields at their defaults) with the same Chrome build; \`smoke-brave.json\` is its report and its \`blocked\` list holds every request Brave refused (none of them may be the extension's, the tuner's or the page's, or the job fails). The \`smoke-firefox\` job installed the \`dist/firefox\` build (the bytes of the -firefox.zip and of the unsigned .xpi) as a temporary add-on in the current Mozilla Firefox from packages.mozilla.org, headless, through geckodriver: it checked that Firefox granted the \`https://tuner.pandora.com/*\` host permission at install, that \`storage.session\` exists and the background is an event page, repeated the login/stations/playback proof against the tuner, and then reset the endpoint to Pandora and signed in with bogus credentials: tuner.pandora.com itself answered \`auth.userLogin\` with code 1002 and the popup said \"Pandora rejected auth.userLogin (code 1002: invalid login). Wrong email address or password.\" (\`smoke-firefox-real-pandora.png\`); \`smoke-firefox-node-probe.json\` is the same no-account probe from Node with the client and wasm core alone. That is the only contact with Pandora in CI: no job signs in to a real account, so stations and playback against Pandora remain unproven here. The signed .xpi and the .crx files were packaged from the same dist/ but no job installed those files themselves in a browser; the bridge to the web page was proven in Chromium and Brave, not in Firefox. Nothing is listed publicly on the Chrome Web Store, addons.mozilla.org or Edge Add-ons: the AMO signature (when present) is on the unlisted channel, and the store uploads (when the credentials exist) go to unlisted/hidden items that only their links reach."
           } > release/RELEASE_BODY.md
           ls -l release
       - uses: actions/upload-artifact@v4
@@ -133,6 +134,14 @@ jobs:
         with:
           name: dist-${{ steps.v.outputs.version }}
           path: dist/
+      # The Node bundles of the core wrapper and the Pandora client, for the no-account
+      # probe against the real tuner.pandora.com in smoke-firefox (scripts/real-pandora-probe.mjs).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-${{ steps.v.outputs.version }}
+          path: |
+            build/node/
+            build/core/melodica_core.wasm
 
   # Real-browser proof against melodica-tuner: options, popup login, stations,
   # playback in the player tab, and the bridge for the melodica-web page.
@@ -249,8 +258,83 @@ jobs:
           path: tests/artifacts/playwright/
           if-no-files-found: ignore
 
+  # Real Mozilla Firefox (packages.mozilla.org, unpinned) driven through geckodriver +
+  # selenium-webdriver with the dist/firefox build installed as a temporary add-on:
+  # the tuner proof (options, popup login, stations, playback), then the no-account
+  # probe against the real tuner.pandora.com, where bogus credentials must come back
+  # as code 1002 both from Node (the client + wasm core alone) and from the installed
+  # extension's popup. This is the only job that talks to Pandora itself.
+  smoke-firefox:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-${{ needs.build.outputs.version }}
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: node-${{ needs.build.outputs.version }}
+          path: build
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Mozilla Firefox (packages.mozilla.org), geckodriver, a PulseAudio null sink
+        timeout-minutes: 15
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://packages.mozilla.org/apt/repo-signing-key.gpg | sudo tee /etc/apt/keyrings/packages.mozilla.org.asc >/dev/null
+          echo "deb [signed-by=/etc/apt/keyrings/packages.mozilla.org.asc] https://packages.mozilla.org/apt mozilla main" | sudo tee /etc/apt/sources.list.d/mozilla.list
+          printf 'Package: *\nPin: origin packages.mozilla.org\nPin-Priority: 1000\n' | sudo tee /etc/apt/preferences.d/mozilla
+          for i in 1 2 3 4 5; do sudo apt-get update -qq && sudo apt-get install -y -qq firefox pulseaudio pulseaudio-utils && break; sleep 20; done
+          firefox --version
+          v="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/mozilla/geckodriver/releases/latest | node -e 'let s="";process.stdin.on("data",(d)=>s+=d).on("end",()=>console.log(JSON.parse(s).tag_name))')"
+          curl -fsSL "https://github.com/mozilla/geckodriver/releases/download/$v/geckodriver-$v-linux64.tar.gz" | sudo tar -xz -C /usr/local/bin geckodriver
+          geckodriver --version | head -1
+          # Headless Firefox needs an audio sink for <audio> to progress; a null sink will do.
+          pulseaudio -D --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=ci >/dev/null && pactl info | grep -i 'default sink'
+          npm install --no-audit --no-fund
+      - uses: Spaceghost/melodica-tuner@v1
+        id: tuner
+        with:
+          user: ci@example.com
+          password: ci-secret
+          hosts-override: false
+          install-ca: false
+      - name: Node probe against the real tuner.pandora.com (the client + wasm core, bogus credentials -> code 1002)
+        run: |
+          mkdir -p tests/artifacts
+          node scripts/real-pandora-probe.mjs --core build/core/melodica_core.wasm --out tests/artifacts/smoke-firefox-node-probe.json
+      - name: Firefox smoke test (dist/firefox as a temporary add-on, melodica-tuner, then real Pandora)
+        run: node tests/smoke-firefox.mjs
+        env:
+          TUNER_HTTPS_URL: ${{ steps.tuner.outputs.https-url }}
+          TUNER_HTTP_URL: ${{ steps.tuner.outputs.http-url }}
+          TUNER_USER: ${{ steps.tuner.outputs.user }}
+          TUNER_PASSWORD: ${{ steps.tuner.outputs.password }}
+          MELODICA_EXT_DIST: dist/firefox
+      - name: Show the report
+        if: always()
+        run: |
+          cat tests/artifacts/smoke-firefox.json || true
+          node -e 'const r=require("./tests/artifacts/smoke-firefox.json"); if (r.ok!==true) { console.error("smoke-firefox.json is not ok"); process.exit(1); }'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-firefox
+          path: |
+            tests/artifacts/smoke-firefox.json
+            tests/artifacts/smoke-firefox-*.png
+            tests/artifacts/smoke-firefox-node-probe.json
+          if-no-files-found: error
+
   release:
-    needs: [build, smoke, smoke-brave]
+    needs: [build, smoke, smoke-brave, smoke-firefox]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -263,13 +347,19 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: smoke-brave
-      - name: Check both proofs and extend SHA256SUMS
+      - uses: actions/download-artifact@v4
+        with:
+          name: smoke-firefox
+      - name: Check the three proofs and extend SHA256SUMS
         run: |
-          for f in smoke-extension.json smoke-brave.json; do
+          for f in smoke-extension.json smoke-brave.json smoke-firefox.json; do
             node -e 'const f=process.argv[1]; const r=require("./"+f); console.log(f+": "+r.browser+" :: "+r.summary); if (r.ok!==true) { console.error(f+" is not ok"); process.exit(1); }' "$f"
           done
+          node -e 'const r=require("./smoke-firefox-node-probe.json"); console.log("node probe: "+r.summary); if (r.ok!==true || !r.userLogin || r.userLogin.code!==1002) { console.error("the Node probe did not get code 1002"); process.exit(1); }'
+          node -e 'const r=require("./smoke-firefox.json"); if (!r.realPandora || r.realPandora.code!==1002) { console.error("the Firefox run did not get code 1002 from Pandora"); process.exit(1); }'
           ls smoke-brave-login.png smoke-brave-stations.png smoke-brave-playing.png smoke-brave-bridge.png
-          sha256sum smoke-extension.json smoke-extension-*.png smoke-brave.json smoke-brave-*.png >> SHA256SUMS
+          ls smoke-firefox-login.png smoke-firefox-stations.png smoke-firefox-playing.png smoke-firefox-real-pandora.png
+          sha256sum smoke-extension.json smoke-extension-*.png smoke-brave.json smoke-brave-*.png smoke-firefox.json smoke-firefox-*.png smoke-firefox-node-probe.json >> SHA256SUMS
           cat SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
@@ -293,6 +383,12 @@ jobs:
             smoke-brave-stations.png
             smoke-brave-playing.png
             smoke-brave-bridge.png
+            smoke-firefox.json
+            smoke-firefox-login.png
+            smoke-firefox-stations.png
+            smoke-firefox-playing.png
+            smoke-firefox-real-pandora.png
+            smoke-firefox-node-probe.json
 
   # Chrome Web Store (covers Chrome and Brave; Edge can install from it too). The item is
   # created once by hand in the developer dashboard with Visibility: Unlisted (docs/STORES.md);

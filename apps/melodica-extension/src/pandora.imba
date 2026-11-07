@@ -15,6 +15,21 @@ export const PARTNER = {
 
 export const QUALITIES = ['high', 'medium', 'low']
 
+# The User-Agent the requests carry. tuner.pandora.com answers a request whose
+# User-Agent is a browser's ("Mozilla/5.0 ... Firefox/159.0", Chrome's too)
+# differently from one with a client UA: auth.userLogin then takes ten seconds
+# and comes back as code 1001 "Invalid username and/or password" even though
+# the token, envelope and syncTime are right (seen 2026-11-07 against real
+# Pandora from Node with the headers varied one at a time; the same request
+# with Node's or pianobar's UA gets 1002 for bogus credentials at once). An
+# extension's fetch carries the browser's UA unless it sets its own, so the
+# requests name this client instead, as pianobar names itself. A User-Agent
+# header is not CORS-safelisted: it can only go to an origin the extension has
+# a host permission for (Pandora's), so the background passes `userAgent: null`
+# for an endpoint reached through CORS (a tuner or relay without the optional
+# permission), and those requests keep the browser's UA.
+export const USER_AGENT = 'melodica-extension (+https://github.com/Spaceghost/melodica-extension)'
+
 const CODE_MESSAGES = {
 	0: 'Pandora reported an internal error. Try again in a moment.'
 	1: 'Pandora is in maintenance mode. Try again later.'
@@ -38,16 +53,48 @@ const CODE_MESSAGES = {
 	1039: 'Pandora is rate limiting this client. Wait a minute and try again.'
 }
 
+# libpiano's names for the codes (piano.h PIANO_RET_P_*), lower-cased.
+const CODE_NAMES = {
+	0: 'internal error', 1: 'maintenance mode', 2: 'url param missing method', 3: 'url param missing auth token'
+	4: 'url param missing partner id', 5: 'url param missing user id', 6: 'secure protocol required'
+	7: 'certificate required', 8: 'parameter type mismatch', 9: 'parameter missing', 10: 'parameter value invalid'
+	11: 'api version not supported', 12: 'licensing restrictions', 13: 'insufficient connectivity'
+	14: 'unknown method name', 15: 'wrong protocol', 1000: 'read only mode', 1001: 'invalid auth token'
+	1002: 'invalid login', 1003: 'listener not authorized', 1004: 'user not authorized', 1005: 'max stations reached'
+	1006: 'station does not exist', 1007: 'complimentary period already in use', 1008: 'call not allowed'
+	1009: 'device not found', 1010: 'partner not authorized', 1011: 'invalid username', 1012: 'invalid password'
+	1013: 'username already exists', 1014: 'device already associated to account', 1015: 'upgrade device model invalid'
+	1018: 'explicit pin incorrect', 1020: 'explicit pin malformed', 1023: 'device model invalid', 1024: 'zip code invalid'
+	1025: 'birth year invalid', 1026: 'birth year too young', 1027: 'invalid country code', 1034: 'device disabled'
+	1035: 'daily trial limit reached', 1036: 'invalid sponsor', 1037: 'user already used trial', 1039: 'playlist exceeded'
+}
+
 export def describeCode code, message
 	CODE_MESSAGES[code] or (message ? "Pandora error {code}: {message}" : "Pandora error {code}.")
 
+# The text the UI shows for a failed call: which method Pandora rejected, the
+# code with its libpiano name, then the plain-language line. Pandora's own
+# `message` is usually "An unexpected error occurred" and is kept only when
+# the code is unknown to us.
+export def describeFailure method, code, message
+	const name = CODE_NAMES[code]
+	const head = code === null ? "Pandora rejected {method}" : (name ? "Pandora rejected {method} (code {code}: {name})" : "Pandora rejected {method} (code {code})")
+	const known = CODE_MESSAGES[code]
+	if known
+		"{head}. {known}"
+	elif message
+		"{head}. {message}"
+	else
+		"{head}."
+
 export class PandoraError < Error
-	def constructor message, code = null, status = 0, kind = 'pandora'
+	def constructor message, code = null, status = 0, kind = 'pandora', method = null
 		super(message)
 		self.name = 'PandoraError'
 		self.code = code
 		self.status = status
 		self.kind = kind
+		self.method = method
 
 	get expired
 		self.code === 1001
@@ -56,7 +103,7 @@ export class PandoraError < Error
 		self.code === 1002 or self.code === 1011 or self.code === 1012
 
 	def toJSON
-		{message: self.message, code: self.code, status: self.status, kind: self.kind}
+		{message: self.message, code: self.code, status: self.status, kind: self.kind, method: self.method}
 
 export def nowSeconds
 	Math.floor(Date.now() / 1000)
@@ -106,6 +153,7 @@ export class Pandora
 		self.core = core
 		self.endpoint = options.endpoint or DEFAULT_ENDPOINT
 		self.fetch = options.fetch or globalThis.fetch.bind(globalThis)
+		self.userAgent = options.userAgent === undefined ? USER_AGENT : options.userAgent
 		self.log = options.log or (do(line) null)
 		self.partner = null
 		self.user = null
@@ -142,26 +190,32 @@ export class Pandora
 		const text = JSON.stringify(body)
 		const payload = encrypt ? self.core.envelope(text, nowSeconds()) : text
 		throw new PandoraError('The request could not be framed.', null, 0, 'client') unless payload
-		self.log("-> {method}")
+		self.log("-> {method} ({payload.length} bytes{encrypt ? ', encrypted' : ''}, syncTime {self.core.syncTime(nowSeconds())}, offset {self.core.syncOffset}s, ua {self.userAgent ? 'client' : 'browser'})")
+		const headers = {'content-type': 'text/plain'}
+		headers['user-agent'] = self.userAgent if self.userAgent
 		let res
 		try
 			res = await self.fetch(self.url(method, params), {
 				method: 'POST'
-				headers: {'content-type': 'text/plain'}
+				headers: headers
 				body: payload
 				credentials: 'omit'
 			})
 		catch e
+			self.log("<- {method} network error: {e and e.message or e}")
 			throw new PandoraError("Could not reach {self.endpoint} ({e and e.message or e}).", null, 0, 'network')
 		const raw = await res.text()
 		let json
 		try
 			json = JSON.parse(raw)
 		catch e
+			self.log("<- {method} HTTP {res.status}, not JSON: {raw.slice(0, 80)}")
 			throw new PandoraError("{self.endpoint} answered HTTP {res.status} with something other than JSON.", null, res.status, 'relay')
 		if json.stat !== 'ok'
 			const code = typeof json.code === 'number' ? json.code : null
-			throw new PandoraError(describeCode(code, json.message), code, res.status)
+			self.log("<- {method} HTTP {res.status} stat={json.stat} code={code} {json.message or ''}")
+			throw new PandoraError(describeFailure(method, code, json.message), code, res.status, 'pandora', method)
+		self.log("<- {method} HTTP {res.status} stat=ok")
 		json.result
 
 	def partnerLogin
