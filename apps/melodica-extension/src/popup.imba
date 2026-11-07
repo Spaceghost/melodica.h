@@ -3,7 +3,7 @@
 # page is a view of the background's player state and sends it commands.
 
 import { browser, send } from './shared.imba'
-import { Login, StationList, NowPlaying, Transport, Gate, UpdateBanner, gateAllowed, gateLine } from "./ui.imba"
+import { Login, StationList, NowPlaying, Transport, Gate, UpdateBanner, Top, Foot, gateAllowed, gateLine } from "./ui.imba"
 
 tag Popup
 	prop view = 'loading'
@@ -175,86 +175,45 @@ tag Popup
 		return null unless player and player.track
 		{song: player.track, station: player.station, paused: player.status !== 'playing', position: player.position, duration: player.duration}
 
-	css
-		.wrap
-			padding: 12px
-			display: grid
-			gap: 12px
-		header
-			display: flex
-			align-items: baseline
-			justify-content: space-between
-			gap: 8px
-		h1
-			margin: 0
-			font-size: 16px
-			color: var(--gold-2)
-			letter-spacing: 0.02em
-		h1 small
-			color: var(--muted)
-			font-weight: 400
-			margin-left: 6px
-		nav
-			display: flex
-			gap: 6px
-		nav button
-			padding: 4px 8px
-			font-size: 12px
-		.account
-			display: flex
-			justify-content: space-between
-			align-items: center
-			gap: 8px
-			color: var(--muted)
-			font-size: 12px
-		.gate-status
-			color: var(--muted)
-			font-size: 12px
-			margin: 0
-		.stations
-			max-height: 260px
-			overflow: auto
-		.panel
-			background: var(--panel)
-			border: 1px solid var(--line)
-			border-radius: 12px
-			padding: 10px
-		.state
-			color: var(--muted)
-			font-size: 12px
-			margin: 4px 0 0
+	get statusText
+		return '' unless player
+		switch player.status
+			when 'playing' then "Playing in the background"
+			when 'paused' then "Paused"
+			when 'loading' then "Loading…"
+			when 'error' then player.error
+			else "Pick a station"
 
 	def render
-		<self>
-			<main#app.wrap data-view=view data-status=(player and player.status or '')>
-				<header>
-					<h1>
-						"melodica"
-						<small#version> version
-					<nav>
-						<button#open-player type="button" title="Open the full-size player tab (optional; the music plays without it)" @click=openPlayer> "Player"
-						<button#open-options type="button" title="Options" @click=openOptions> "Options"
-				<UpdateBanner update=update @reload=reloadExtension>
-				if view === 'loading'
-					<p.message#status> "Loading…"
-				elif view === 'error'
-					<p.message.error#status> message
-				elif view === 'gate'
-					<Gate gate=gate busy=busy message=(kind === 'error' ? message : '') @signin=githubSignin @check=gateCheck @signout=githubSignout>
-				elif view === 'login'
-					<p#gate-status.gate-status> gateLine(gate)
-					<Login busy=busy message=message kind=kind @login=login>
-				else
-					<div.account>
-						<span#signed-in> email
-						<span#gate-status.gate-status> gateLine(gate)
-						<button#logout type="button" @click=logout> "Sign out"
-					<section.panel>
-						<NowPlaying now=now compact=yes>
-						<Transport now=now @control=control>
-						<p#player-status.state> (player ? (player.status === 'playing' ? "Playing in the background" : (player.status === 'paused' ? "Paused" : (player.status === 'loading' ? "Loading…" : (player.status === 'error' ? player.error : "Pick a station")))) : '')
-					<section.stations>
+		<self.ext-root>
+			<Top label="extension">
+				<nav.ext-nav>
+					<button#open-player.pill type="button" title="Open the full-size player tab (optional; the music plays without it)" @click=openPlayer> "Player"
+					<button#open-options.pill type="button" title="Options" @click=openOptions> "Options"
+			<main#app.app data-view=view data-status=(player and player.status or '')>
+				<div.view>
+					<UpdateBanner update=update @reload=reloadExtension>
+					if view === 'loading'
+						<p.message#status> "Loading…"
+					elif view === 'error'
+						<div.card>
+							<h2> "melodica could not start"
+							<p.message.error#status role="alert"> message
+					elif view === 'gate'
+						<Gate gate=gate busy=busy message=(kind === 'error' ? message : '') @signin=githubSignin @check=gateCheck @signout=githubSignout>
+					elif view === 'login'
+						<Login busy=busy message=message kind=kind @login=login>
+					else
+						<div.ext-account>
+							<span#signed-in> email
+							<button#logout type="button" @click=logout> "Sign out"
+						<div.card.now.ext-compact>
+							<NowPlaying now=now compact=yes>
+							<Transport now=now @control=control>
+							<p#player-status.ext-state> statusText
 						<StationList stations=stations active=(player and player.station and player.station.token) compact=yes @select=select @refresh=reload @delete=remove>
-					<p.message#player-message .error=(kind === 'error') .info=(kind === 'info')> message
+						<p.message#player-message .error=(kind === 'error') .info=(kind === 'info')> message
+			<Foot version=version>
+				<span#gate-status.ext-gate-status> gateLine(gate)
 
 imba.mount <Popup>

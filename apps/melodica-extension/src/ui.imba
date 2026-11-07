@@ -1,4 +1,8 @@
-# Tags shared by the popup and the player page.
+# Tags shared by the popup, the player page and the options page. They render
+# melodica-web's markup classes (public/theme.css part 1 is its stylesheet):
+# .card / .login-card with the ring .mark, .eyebrow, serif h2, button.primary,
+# the .now card with .stage / .controls / button.round, .panel, .station-list.
+# No scoped css here: the look is the shared stylesheet's.
 
 import { FALLBACK_COVER, fmtTime } from './shared.imba'
 
@@ -16,6 +20,39 @@ export def gateLine g
 		when 'error' then "GitHub gate: {g.reason}"
 		else "GitHub: not signed in"
 
+# The concentric-rings mark of the sign-in cards.
+export tag Mark
+	def render
+		<self.mark aria-hidden="true">
+			<svg viewBox="0 0 120 120">
+				<circle cx="60" cy="60" r="54">
+				<circle cx="60" cy="60" r="38">
+				<circle cx="60" cy="60" r="22">
+				<circle.dot cx="60" cy="60" r="7">
+
+# The page header: "melodica <tag>" and the page's own buttons (slot).
+export tag Top
+	prop label = 'extension'
+	prop version = ''
+	def render
+		<self.top>
+			<h1.brand>
+				"melodica "
+				<span.brand-tag> label
+			<div.top-right>
+				<slot>
+
+# The mono footer: status lines and the version.
+export tag Foot
+	prop version = ''
+	def render
+		<self.foot>
+			<slot>
+			<span>
+				"melodica-extension {version} · "
+				<a href="https://spacegho.st/extensions/#melodica-extension" target="_blank" rel="noopener"> "spacegho.st/extensions"
+				" · MIT / libpiano"
+
 # "melodica <v> is available": shown by every page when the store serves a newer
 # version than the running one (the update check in bg.imba). On Chromium, once
 # the browser has fetched the update, a Reload button installs it.
@@ -23,87 +60,48 @@ export tag UpdateBanner
 	prop update = null
 	prop busy = no
 
-	css
-		.banner
-			display: flex
-			align-items: center
-			gap: 8px
-			flex-wrap: wrap
-			padding: 6px 10px
-			border: 1px solid var(--gold)
-			border-radius: 10px
-			background: var(--panel)
-			font-size: 12px
-		a
-			color: var(--gold-2)
-		button
-			padding: 4px 8px
-			font-size: 12px
-
 	def render
 		const b = update and update.banner
-		<self>
+		<self[display:contents]>
 			if b
-				<div#update-banner.banner data-version=b.version>
+				<div#update-banner.panel.ext-banner data-version=b.version>
 					<span#update-text> b.text
 					<a#update-link href=b.url target="_blank" rel="noopener"> "Get it"
 					if b.reload and update.canReload
 						<button#update-reload type="button" disabled=busy @click=emit('reload')> "Reload to update"
 
-# The gate screen: who may use melodica, the GitHub sign-in, and what the sign-in
-# is used for. Shown instead of the Pandora login whenever the gate is closed.
+# The gate screen: the GitHub sign-in card, or the not-available card. Shown
+# instead of the Pandora login whenever the gate is closed.
 export tag Gate
 	prop gate = null
 	prop busy = no
 	prop message = ''
 
-	css
-		.gate
-			display: grid
-			gap: 10px
-		h2
-			margin: 0
-			font-size: 15px
-			color: var(--gold-2)
-		p
-			margin: 0
-		.note, .reason
-			color: var(--muted)
-			font-size: 12px
-		.actions
-			display: flex
-			gap: 8px
-			flex-wrap: wrap
-		.primary
-			background: var(--gold)
-			color: var(--ink)
-			border-color: var(--gold)
-			font-weight: 600
-
 	def render
 		const g = gate or {mode: 'anon', reason: ''}
 		const anon = g.mode !== 'denied' and g.mode !== 'error'
-		<self>
-			<section#gate.gate data-mode=g.mode>
-				<h2> "GitHub sign-in"
-				<p#gate-message.message>
+		<self.view.login>
+			<section#gate.card.login-card data-mode=g.mode>
+				<Mark>
+				<p.eyebrow> "melodica"
+				<h2> (anon ? "Sign in with GitHub" : (g.mode === 'denied' ? "Not available" : "Could not check"))
+				<p#gate-message.intro>
 					if g.mode === 'denied'
 						"melodica is not available for your GitHub account ({g.login})."
 					elif g.mode === 'error'
 						"Could not check the GitHub sign-in: {g.reason}. Press Check again."
 					else
-						"melodica requires a GitHub sign-in."
+						"melodica requires a GitHub sign-in, then sign in to Pandora as usual."
 				if anon and g.reason and g.reason !== 'not signed in with GitHub'
-					<p#gate-reason.reason> g.reason
-				<p#gate-note.note> "GitHub sign-in is used for identity only; nothing is stored."
-				<div.actions>
-					if anon
-						<button#github-signin.primary type="button" disabled=busy @click=emit('signin')> (busy ? "Opening GitHub…" : "Sign in with GitHub")
-					else
-						<button#gate-check.primary type="button" disabled=busy @click=emit('check')> (busy ? "Checking…" : "Check again")
-						<button#github-signout type="button" disabled=busy @click=emit('signout')> "Sign out"
+					<p#gate-reason.fine> g.reason
+				if anon
+					<button#github-signin.primary type="button" disabled=busy @click=emit('signin')> (busy ? "Opening GitHub…" : "Sign in with GitHub")
+				else
+					<button#gate-check.primary type="button" disabled=busy @click=emit('check')> (busy ? "Checking…" : "Check again")
+					<button#github-signout.quiet type="button" disabled=busy @click=emit('signout')> "Sign out"
 				if message
-					<p#gate-error.message.error> message
+					<p#gate-error.message.error role="alert"> message
+				<p#gate-note.fine> "GitHub sign-in is used for identity only; nothing is stored."
 
 export tag Login
 	prop email = ''
@@ -116,46 +114,26 @@ export tag Login
 	def submit
 		emit('login', {email: email.trim(), password, remember})
 
-	css
-		form
-			display: grid
-			gap: 10px
-		label
-			display: grid
-			gap: 4px
-			color: var(--muted)
-			font-size: 12px
-		.row
-			display: flex
-			align-items: center
-			gap: 8px
-			color: var(--muted)
-		.row input
-			width: auto
-		.primary
-			background: var(--gold)
-			color: var(--ink)
-			border-color: var(--gold)
-			font-weight: 600
-		small
-			color: var(--muted)
-
 	def render
-		<self>
-			<form#login-form @submit.prevent=submit>
-				<label>
-					"Email"
+		<self.view.login>
+			<form#login-form.card.login-card autocomplete="on" @submit.prevent=submit>
+				<Mark>
+				<p.eyebrow> "Pandora · US accounts"
+				<h2> "Sign in to Pandora"
+				<label.field>
+					<span> "Email"
 					<input#login-email type="email" autocomplete="username" required bind=email>
-				<label>
-					"Password"
+				<label.field>
+					<span> "Password"
 					<input#login-password type="password" autocomplete="current-password" required bind=password>
-				<label.row>
+				<label.check>
 					<input#login-remember type="checkbox" bind=remember>
-					"Remember password on this device"
+					<span> "Remember password on this device"
 				if remember
-					<small#remember-warning> "The password is kept in the extension's local storage, unencrypted."
+					<p#remember-warning.warn> "The password is kept in the extension's local storage, unencrypted."
 				<button#login-button.primary type="submit" disabled=busy> (busy ? "Signing in…" : "Sign in")
-				<div#login-message.message .error=(kind === 'error') .info=(kind === 'info')> message
+				<p#login-message.message .error=(kind === 'error') .info=(kind === 'info') role="status"> message
+				<p.fine> "Sign-in and every Pandora call go from the extension straight to Pandora; no relay sees them."
 
 export tag StationList
 	prop stations = []
@@ -171,151 +149,74 @@ export tag StationList
 			(a.name or '').localeCompare(b.name or '', undefined, {sensitivity: 'base'})
 		list
 
-	css
-		ul
-			list-style: none
-			margin: 0
-			padding: 0
-			display: grid
-			gap: 4px
-		li
-			display: flex
-			gap: 4px
-		button.station
-			flex: 1
-			text-align: left
-			overflow: hidden
-			text-overflow: ellipsis
-			white-space: nowrap
-			background: var(--panel)
-		li.active button.station
-			border-color: var(--gold)
-			color: var(--gold-2)
-		button.delete
-			padding: 6px 8px
-			color: var(--muted)
-		.tools
-			display: flex
-			gap: 6px
-			margin-bottom: 8px
-			align-items: center
-		.count
-			color: var(--muted)
-			font-size: 12px
-			white-space: nowrap
-		.empty
-			color: var(--muted)
-			padding: 8px 0
-
 	def render
-		<self>
-			<div.tools>
-				<input#station-filter type="search" placeholder="Filter stations" aria-label="Filter stations" bind=filter>
-				<span.count#station-count> (stations.length ? "{shown.length} of {stations.length}" : '')
-				<button#refresh-stations title="Reload the station list" @click=emit('refresh')> "↻"
-			<ul#station-list>
+		<self.panel.ext-stations>
+			<div.rail-head>
+				<h2>
+					"Stations"
+					<span.count#station-count> (stations.length ? "{shown.length} of {stations.length}" : '')
+				<button#refresh-stations.icon type="button" aria-label="Reload the station list" title="Reload the station list" @click=emit('refresh')>
+					<svg aria-hidden="true" viewBox="0 0 24 24">
+						<path d="M23 4v6h-6">
+						<path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10">
+			<input#station-filter.filter type="search" placeholder="Filter stations" aria-label="Filter stations" autocomplete="off" bind=filter>
+			<ul#station-list.station-list>
 				for s in shown
 					<li .active=(active and s.token === active) data-token=s.token>
 						<button.station type="button" title=s.name aria-current=(active and s.token === active ? 'true' : null) @click=emit('select', s)> s.name
 						if !compact and !s.isQuickMix and s.allowDelete
 							<button.delete type="button" title="Delete station {s.name}" aria-label="Delete station {s.name}" @click=emit('delete', s)> "×"
 			if stations.length === 0
-				<p.empty#station-empty> "No stations yet."
+				<p.fine#station-empty> "No stations yet."
 
+# The now-playing stage: cover, station, title, artist, album, quality, progress.
 export tag NowPlaying
 	prop now = null
 	prop compact = no
 
-	css
-		.stage
-			display: grid
-			grid-template-columns: 72px 1fr
-			gap: 12px
-			align-items: center
-		.stage.big
-			grid-template-columns: 160px 1fr
-		img.cover
-			width: 100%
-			aspect-ratio: 1
-			border-radius: 10px
-			object-fit: cover
-			background: var(--panel)
-		.title
-			font-weight: 600
-			font-size: 15px
-		.big .title
-			font-size: 22px
-		.artist, .album, .station
-			color: var(--muted)
-		.station
-			font-size: 12px
-		.idle
-			color: var(--muted)
-		.chip
-			display: inline-block
-			font-size: 11px
-			color: var(--gold-2)
-			border: 1px solid var(--line)
-			border-radius: 999px
-			padding: 1px 8px
-			margin-top: 4px
-		progress
-			width: 100%
-			height: 6px
-			margin-top: 8px
-			accent-color: var(--gold)
-		.times
-			display: flex
-			justify-content: space-between
-			color: var(--muted)
-			font-size: 12px
-
 	def render
 		const song = now and now.song
-		<self>
-			if song
-				<div.stage .big=!compact>
-					<img.cover#np-cover src=(song.coverArt or FALLBACK_COVER) alt=(song.album ? "Cover of {song.album}" : '')>
-					<div>
-						<div.title#np-title> song.title
-						<div.artist#np-artist> song.artist
-						if song.album
-							<div.album#np-album> song.album
-						<div.station#np-station> (now.station ? "on {now.station.name}" : '')
-						if song.audioFormat
-							<span.chip#np-quality> "{song.quality} · {song.audioFormat}"
+		<self.stage .idle=!song aria-label="Now playing">
+			<figure.art>
+				<img.cover#np-cover src=(song and song.coverArt or FALLBACK_COVER) alt=(song and song.album ? "Cover of {song.album}" : '')>
+			<div.meta>
+				<p.eyebrow.station-name#np-station> (song and now.station ? "on {now.station.name}" : '')
+				<h2.title#np-title> (song ? song.title : "Pick a station")
+				<p.artist#np-artist> (song ? song.artist : '')
 				if !compact
-					<progress#np-progress max=(now.duration or song.duration or 1) value=(now.position or 0)>
-					<div.times>
-						<span#np-time-cur> fmtTime(now.position or 0)
-						<span#np-time-len> fmtTime(now.duration or song.duration or 0)
-			else
-				<p.idle#np-title> "Pick a station"
+					<p.album#np-album> (song and song.album or '')
+				if song and song.audioFormat
+					<p.line>
+						<span.chip#np-quality> "{song.quality} · {song.audioFormat}"
+			if song and !compact
+				<div.progress>
+					<span#np-time-cur> fmtTime(now.position or 0)
+					<progress#np-progress max=(now.duration or song.duration or 1) value=(now.position or 0) aria-label="Playback position">
+					<span#np-time-len> fmtTime(now.duration or song.duration or 0)
 
 export tag Transport
 	prop now = null
 
-	css
-		.bar
-			display: flex
-			gap: 6px
-			flex-wrap: wrap
-		button
-			min-width: 40px
-		.on
-			color: var(--gold-2)
-			border-color: var(--gold)
-		.off
-			color: var(--red)
-			border-color: var(--red)
-
 	def render
 		const song = now and now.song
 		const rating = song and song.rating or 0
-		<self>
-			<div.bar role="group" aria-label="Playback controls">
-				<button#play type="button" data-state=(now and !now.paused ? 'playing' : 'paused') aria-label=(now and !now.paused ? 'Pause' : 'Play') @click=emit('control', 'toggle')> (now and !now.paused ? "❚❚" : "▶")
-				<button#next type="button" title="Next song" aria-label="Next song" disabled=!song @click=emit('control', 'next')> "⏭"
-				<button#love type="button" .on=(rating === 1) aria-pressed=(rating === 1 ? 'true' : 'false') title="Love this song" aria-label="Love" disabled=!song @click=emit('control', 'love')> "♥"
-				<button#ban type="button" .off=(rating === 2) aria-pressed=(rating === 2 ? 'true' : 'false') title="Ban this song (skips)" aria-label="Ban" disabled=!song @click=emit('control', 'ban')> "✕"
-				<button#tired type="button" title="Tired of this song (a month off)" aria-label="Tired" disabled=!song @click=emit('control', 'tired')> "zz"
+		const playing = now and !now.paused
+		<self.controls-bar>
+			<div.controls role="group" aria-label="Playback controls">
+				<button#love.round type="button" .on=(rating === 1) aria-pressed=(rating === 1 ? 'true' : 'false') title="Love this song" aria-label="Love" disabled=!song @click=emit('control', 'love')>
+					<svg aria-hidden="true" viewBox="0 0 24 24">
+						<path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3">
+				<button#ban.round type="button" .off=(rating === 2) aria-pressed=(rating === 2 ? 'true' : 'false') title="Ban this song (skips)" aria-label="Ban" disabled=!song @click=emit('control', 'ban')>
+					<svg aria-hidden="true" viewBox="0 0 24 24">
+						<path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17">
+				<button#play.round.big type="button" data-state=(playing ? 'playing' : 'paused') aria-label=(playing ? 'Pause' : 'Play') title="Play / pause" @click=emit('control', 'toggle')>
+					<svg.ico-play aria-hidden="true" viewBox="0 0 24 24">
+						<path.fill d="M8 5v14l11-7z">
+					<svg.ico-pause aria-hidden="true" viewBox="0 0 24 24">
+						<path.fill d="M6 5h4v14H6zM14 5h4v14h-4z">
+				<button#next.round type="button" title="Next song" aria-label="Next song" disabled=!song @click=emit('control', 'next')>
+					<svg aria-hidden="true" viewBox="0 0 24 24">
+						<path.fill d="M5 5v14l10-7zM17 5h2v14h-2z">
+				<button#tired.round type="button" title="Tired of this song (a month off)" aria-label="Tired" disabled=!song @click=emit('control', 'tired')>
+					<svg aria-hidden="true" viewBox="0 0 24 24">
+						<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z">

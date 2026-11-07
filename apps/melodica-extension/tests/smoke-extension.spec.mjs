@@ -315,7 +315,11 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     // 0. The GitHub gate, while the endpoint is still Pandora's default. The popup must
     // show the gate screen, not the Pandora login; tokens are placed where the sign-in
     // flow puts them (storage.local "github") and the background is asked to re-check.
+    // Popup pages are shot at the toolbar popup's size (popup.html sets 380 px).
+    const POPUP = { width: 380, height: 640 };
+    const coverLoaded = (p) => p.waitForFunction(() => { const i = document.getElementById('np-cover'); return !i || (i.complete && i.naturalWidth > 0); }, null, { timeout: 10_000 }).catch(() => {});
     const gatePage = await context.newPage();
+    await gatePage.setViewportSize(POPUP);
     watch(gatePage, 'gate');
     await gatePage.goto(`chrome-extension://${id}/popup.html`);
     await expect(gatePage.locator('#app')).toHaveAttribute('data-view', 'gate', { timeout: 30_000 });
@@ -401,10 +405,12 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     console.log(`background endpoint: ${effective}`);
     expect(effective, 'endpoint the background will use').toBe(`${tuner.https}/services/json/`);
     step('endpoint set');
+    await options.screenshot({ path: shot('options') });
     await options.close();
 
     // 2. Popup as a tab: login, stations.
     const popup = await context.newPage();
+    await popup.setViewportSize(POPUP);
     watch(popup, 'popup');
     await popup.goto(`chrome-extension://${id}/popup.html`);
     await expect(popup.locator('#app')).toHaveAttribute('data-view', 'login', { timeout: 30_000 });
@@ -465,6 +471,7 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     };
     console.log(`now playing: ${now.title} – ${now.artist} on ${now.station}`);
     expect(context.pages().length, 'no tab opened by starting a station').toBe(pagesBefore);
+    await coverLoaded(popup);
     await popup.screenshot({ path: shot('playing') });
     const first = await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'player-get' }).then((r) => { if (!r || !r.ok) throw new Error(`player-get: ${r && r.error}`); return r.state; }));
     expect(first.status, 'background state').toBe('playing');
@@ -515,10 +522,12 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
 
     // A new popup shows the same track.
     const popup2 = await context.newPage();
+    await popup2.setViewportSize(POPUP);
     watch(popup2, 'popup2');
     await popup2.goto(`chrome-extension://${id}/popup.html`);
     await expect(popup2.locator('#np-title')).toHaveText(now.title, { timeout: 15_000 });
     await expect(popup2.locator('#app')).toHaveAttribute('data-status', 'playing');
+    await coverLoaded(popup2);
     await popup2.screenshot({ path: shot('popup-playing') });
     step('popup shows the track');
 
@@ -536,7 +545,12 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     expect(await player.locator('#audio').count(), 'no audio element in the player tab').toBe(0);
     const shown = await player.evaluate(() => Number(document.getElementById('np-progress').value));
     await player.waitForFunction((v) => Number(document.getElementById('np-progress').value) > v + 1, shown, { timeout: 15_000 });
+    await coverLoaded(player);
     await player.screenshot({ path: shot('player-tab') });
+    // The same tab in dark mode (prefers-color-scheme), at the same size.
+    await player.emulateMedia({ colorScheme: 'dark' });
+    await player.screenshot({ path: shot('player-tab-dark') });
+    await player.emulateMedia({ colorScheme: 'light' });
     await player.close();
     const p3 = await probe();
     await new Promise((ok) => setTimeout(ok, 3000));
