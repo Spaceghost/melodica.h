@@ -24,6 +24,14 @@
       <div class="account-menu">
         <p class="account-line"><b id="signed-in-full"></b></p>
         <p id="account-menu-line" class="account-line" hidden><span class="muted">spacegho.st</span> <b id="account-menu-name"></b></p>
+        <form id="username-change" class="username-change" hidden novalidate>
+          <label class="field" for="username-change-input"><span>Change username</span></label>
+          <div class="username-row">
+            <input id="username-change-input" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="24" aria-describedby="username-change-message">
+            <button id="username-change-save" type="submit" class="quiet">Save</button>
+          </div>
+          <p id="username-change-message" class="message" role="status"></p>
+        </form>
         <button id="shortcuts-open" type="button" class="menu-item">Keyboard shortcuts <kbd>?</kbd></button>
         <button id="logout" type="button" class="menu-item">Sign out</button>
         <button id="account-menu-signout" type="button" class="menu-item" hidden>Sign out of spacegho.st</button>
@@ -212,6 +220,21 @@
     <span>Single-key shortcuts are on</span></label>
   <p class="fine">Turn them off if you use speech input or press keys by accident; the buttons
     do everything the keys do, and <kbd>?</kbd> still opens this sheet.</p>
+</dialog>
+
+<dialog id="username-pick" class="sheet username-sheet" aria-labelledby="username-pick-head">
+  <form id="username-pick-form" novalidate>
+    <h3 id="username-pick-head">Pick a username</h3>
+    <p id="username-pick-notice" class="warn" role="status" hidden>Your earlier username belonged to a GitHub account and went to that account. Pick a new one.</p>
+    <p class="fine">It is the name melodica shows for you. Until you pick one, you are <b id="username-pick-current"></b>.</p>
+    <label class="field" for="username-pick-input"><span>Username</span></label>
+    <input id="username-pick-input" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="24" aria-describedby="username-pick-message">
+    <p id="username-pick-message" class="message" role="status"></p>
+    <div class="confirm-actions">
+      <button id="username-pick-later" type="button" class="quiet">Not now</button>
+      <button id="username-pick-save" type="submit" class="primary">Save</button>
+    </div>
+  </form>
 </dialog>
 
 <dialog id="confirm" class="sheet confirm" aria-labelledby="confirm-text">

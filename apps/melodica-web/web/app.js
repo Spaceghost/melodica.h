@@ -3,7 +3,7 @@
 
 import { PianoClient, PianoError, resolveApiBase } from './piano.js';
 import { BridgeTransport } from './bridge.js';
-import { Account } from './account.js';
+import { Account, USERNAME_RE, USERNAME_FORMAT, normalizeUsername } from './account.js';
 
 const VERSION = '__MELODICA_WEB_VERSION__';
 const STORAGE = {
@@ -71,6 +71,11 @@ const el = {
   shortcuts: $('shortcuts'), shortcutsOpen: $('shortcuts-open'), shortcutsClose: $('shortcuts-close'),
   shortcutsEnabled: $('shortcuts-enabled'),
   confirm: $('confirm'), confirmText: $('confirm-text'),
+  usernamePick: $('username-pick'), usernamePickForm: $('username-pick-form'), usernamePickInput: $('username-pick-input'),
+  usernamePickMessage: $('username-pick-message'), usernamePickCurrent: $('username-pick-current'),
+  usernamePickNotice: $('username-pick-notice'), usernamePickLater: $('username-pick-later'), usernamePickSave: $('username-pick-save'),
+  usernameChange: $('username-change'), usernameChangeInput: $('username-change-input'),
+  usernameChangeMessage: $('username-change-message'), usernameChangeSave: $('username-change-save'),
   audio: $('audio'),
 };
 
@@ -1012,6 +1017,8 @@ function enterRemote() {
   el.searchForm.hidden = true;
   el.searchResults.hidden = true;
   el.logout.hidden = true;
+  closeUsernamePick();
+  el.usernameChange.hidden = true; // the extension's account is the extension's to name
   el.signedIn.textContent = 'melodica extension';
   el.signedInFull.textContent = 'Playing in the melodica extension';
   renderUpNext = () => {}; // the queue panel shows the extension's count (renderRemote)
@@ -1079,6 +1086,95 @@ async function accountSignOut() {
   updateAccountLine();
 }
 
+// ---------------------------------------------------------------- username
+// docs/ACCOUNT.md, Usernames: after the Pandora login the page asks
+// /oauth/melodica/me (bearer: the spacegho.st account's token when signed in, else
+// the relay's access token). The account chip shows the username, a generated
+// listener-… until one is chosen, and never the email; names go in as text only.
+// While the name is generated, "Pick a username" opens once per login; "Not now"
+// keeps it closed for the rest of this browser session.
+const USERNAME_LATER_KEY = 'melodica.username.later';
+
+function showUsername(name) {
+  el.signedIn.textContent = name || 'Signed in';
+  el.signedInFull.textContent = name ? `Signed in as ${name}` : 'Signed in to Pandora';
+  el.usernameChange.hidden = !name;
+  if (!name) message(el.usernameChangeMessage, '', '', 0);
+  if (document.activeElement !== el.usernameChangeInput) el.usernameChangeInput.value = name || '';
+}
+
+// A 401 invalid_token or 404 unknown_user (docs/ACCOUNT.md, Revoked tokens): the
+// account's tokens are forgotten; a relay token that no longer counts ends the
+// Pandora login too, and the login card says so.
+async function usernameAuthFailed(r) {
+  const revoked = (r.status === 401 && r.error === 'invalid_token') || (r.status === 404 && r.error === 'unknown_user');
+  if (!revoked) return false;
+  if (r.bearer === 'account') {
+    state.account.forget();
+    updateAccountLine();
+    refreshPolicy();
+    return false; // the relay token may still name the user: the caller asks again
+  }
+  logout();
+  loginMessage('Your melodica session has ended; log in again.', 'error');
+  return true;
+}
+
+async function refreshMe({ prompt = false } = {}) {
+  const a = state.account;
+  if (!a || state.remote || !state.client) return;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const token = state.client.accessToken;
+    const me = await a.me(token);
+    if (state.remote || state.client.accessToken !== token || el.app.dataset.view !== 'player') return; // logged out or moved on meanwhile
+    if (me.ok) {
+      showUsername(me.username);
+      if (prompt && !me.chosen && a.session.get(USERNAME_LATER_KEY) !== '1') openUsernamePick(me);
+      return;
+    }
+    if (me.status === 0 || (await usernameAuthFailed(me))) return;
+    if (me.bearer !== 'account') return;
+  }
+}
+
+function openUsernamePick(me) {
+  el.usernamePickCurrent.textContent = me.username;
+  el.usernamePickNotice.hidden = me.notice !== 'renamed_github';
+  el.usernamePickInput.value = me.suggested || '';
+  message(el.usernamePickMessage, '', '', 0);
+  if (typeof el.usernamePick.showModal === 'function') { if (!el.usernamePick.open) el.usernamePick.showModal(); }
+  else el.usernamePick.setAttribute('open', '');
+  el.usernamePickInput.focus();
+}
+function closeUsernamePick() {
+  if (!el.usernamePick.open) return;
+  if (typeof el.usernamePick.close === 'function') el.usernamePick.close();
+  else el.usernamePick.removeAttribute('open');
+}
+
+// Checks the format here (the rest is the server's: reserved, taken, locked, rate
+// limits) and shows the server's error_description next to the field.
+async function saveUsername(input, msgEl, button) {
+  const name = normalizeUsername(input.value);
+  if (!USERNAME_RE.test(name)) { message(msgEl, USERNAME_FORMAT, 'error', 0); input.focus(); return false; }
+  button.disabled = true;
+  message(msgEl, 'Saving…', 'info', 0);
+  try {
+    const r = await state.account.setUsername(name, state.client.accessToken);
+    if (r.ok) {
+      showUsername(r.username);
+      message(msgEl, '', '', 0);
+      return true;
+    }
+    if (await usernameAuthFailed(r)) return false;
+    message(msgEl, r.message, 'error', 0);
+    input.focus();
+    return false;
+  } finally {
+    button.disabled = false;
+  }
+}
+
 // ---------------------------------------------------------------- login
 
 function showLogin() {
@@ -1110,13 +1206,13 @@ async function login(email, password) {
     if (el.remember.checked) store.set(STORAGE.password, password);
     else store.remove(STORAGE.password);
     loginMessage('');
-    el.signedIn.textContent = 'Signed in'; // never the Pandora email; a chosen username comes with docs/ACCOUNT.md's username endpoint
-    el.signedInFull.textContent = 'Signed in to Pandora';
+    showUsername(''); // never the Pandora email: "Signed in" until /oauth/melodica/me names the user
     await loadStations();
     show(el.viewPlayer);
     updateHint();
     renderUpNext();
     visibleStationButton()?.focus();
+    refreshMe({ prompt: true }); // not awaited: the username never holds up playback
   } catch (err) {
     loginMessage(describeError(err), 'error');
   } finally {
@@ -1125,6 +1221,9 @@ async function login(email, password) {
 }
 
 function logout() {
+  closeUsernamePick();
+  showUsername('');
+  if (state.account && !state.account.signedIn) state.account.name = '';
   stopPlayback();
   state.client.logout();
   store.remove(STORAGE.password);
@@ -1170,6 +1269,21 @@ function installEvents() {
     store.set(STORAGE.shortcuts, state.shortcutsOn ? '1' : '0');
   });
   el.logout.addEventListener('click', logout);
+  el.usernamePickForm.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    if (await saveUsername(el.usernamePickInput, el.usernamePickMessage, el.usernamePickSave)) closeUsernamePick();
+  });
+  el.usernamePickLater.addEventListener('click', () => {
+    state.account.session.set(USERNAME_LATER_KEY, '1');
+    closeUsernamePick();
+  });
+  el.usernamePick.addEventListener('cancel', () => state.account.session.set(USERNAME_LATER_KEY, '1'));
+  el.usernameChange.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    if (await saveUsername(el.usernameChangeInput, el.usernameChangeMessage, el.usernameChangeSave)) {
+      message(el.usernameChangeMessage, 'Saved.', 'info', 4000);
+    }
+  });
   el.accountSignin.addEventListener('click', accountSignIn);
   el.remoteSigninOpen.addEventListener('click', openExtensionLogin);
   el.accountSignout.addEventListener('click', accountSignOut);

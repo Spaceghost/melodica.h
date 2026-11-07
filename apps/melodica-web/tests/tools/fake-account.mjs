@@ -10,6 +10,8 @@
 //   GET  /oauth/userinfo, GET /oauth/melodica/policy, POST /oauth/revoke
 //   POST /oauth/melodica/access      the allow-list check (also accessCheck/accessVerify for
 //                                    the fake relay); its tokens are policy bearers too
+//   GET  /oauth/melodica/me, POST /oauth/melodica/username   usernames (format, reserved,
+//                                    look-alikes, taken 409, locked 423, 3 changes a day 429)
 //   GET|POST /oauth/invite           invite confirm page; POST accepts once, makes the email
 //                                    account, sets the session cookie, 302 /oauth/
 //   POST /oauth/email, GET|POST /oauth/email/verify   magic-link sign-in for email accounts
@@ -17,7 +19,10 @@
 //   GET  /oauth/github/callback      ?code=code-<login>&state -> session, 302 next
 //
 // Test helpers: invite(email) -> token, setPolicy(name, {inserts}), mail (sent messages),
-// allow(email, {inserts}) (the allow-list), requests (emails that asked for access).
+// allow(email, {inserts}) (the allow-list), requests (emails that asked for access),
+// person(email) / setPerson(email, fields) (username, chosen, suggested, notice),
+// claimName(name) (someone else holds it), lockName(name), revokeAccess() (every relay
+// access token stops counting, as when the admin deletes the account).
 // `export function makeBackend(issuer, opts)` returns {handle(Request), ...helpers}; the
 // real Worker can be plugged in instead (tests/account.spec.mjs, SPACEGHOST_AUTH_DIR).
 
@@ -42,6 +47,8 @@ export function makeBackend(issuer, { github = {}, emailSending = true } = {}) {
   const accessTokens = new Map(); // melodica access token -> email
   const requests = [];
   const log = [];
+  const people = new Map();      // 'e:<email>' | 'u:<user id>' -> {username, chosen, suggested, notice, changes}
+  const locked = new Set();
   const redirectUri = `${issuer}/melodica/app/`;
 
   const html = (body, status = 200, headers = {}) => new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>spacegho.st</title></head><body><main>${body}</main></body></html>`,
@@ -87,6 +94,36 @@ ${emailSending ? `<p class="or">or</p><form method="post" action="/oauth/email">
     return { allowed: true, plus: !entry.inserts, token };
   }
   const accessVerify = (token) => !!token && accessTokens.has(token);
+
+  // Usernames (docs/ACCOUNT.md): one record per Pandora login (relay token) or account.
+  const person = (key) => {
+    if (!people.has(key)) people.set(key, { username: `listener-${randomBytes(3).toString('hex')}`, chosen: false, suggested: '', notice: '', changes: 0 });
+    return people.get(key);
+  };
+  const fold = (n) => n.toLowerCase().replace(/[-_]/g, '').replace(/rn/g, 'm').replace(/vv/g, 'w').replace(/0/g, 'o').replace(/[1il]/g, 'l');
+  const RESERVED = ['admin', 'root', 'support', 'mod', 'staff', 'system', 'null', 'anonymous'];
+  function checkName(name, self) {
+    if (!/^[a-z0-9][a-z0-9_-]{1,22}[a-z0-9]$/.test(name)) return [422, { error: 'username_invalid', reason: 'format', error_description: 'Use 3 to 24 letters, digits, - or _.' }];
+    if (RESERVED.includes(name) || /spaceghost|melodica|pandora/.test(name) || name.startsWith('listener-')) return [422, { error: 'username_invalid', reason: 'reserved', error_description: 'That username is reserved.' }];
+    if (/badword/.test(fold(name))) return [422, { error: 'username_invalid', reason: 'blocked', error_description: 'That username is not allowed.' }];
+    if (locked.has(name)) return [423, { error: 'username_locked', error_description: 'That username is locked.' }];
+    for (const p of people.values()) if (p !== self && fold(p.username) === fold(name)) return [409, { error: 'username_taken', error_description: 'That username is taken.' }];
+    return null;
+  }
+  // The person a melodica bearer names, or null (invalid_token).
+  function bearerPerson(req) {
+    const b = bearer(req);
+    if (accessTokens.has(b)) return person(`e:${accessTokens.get(b)}`);
+    const a = access.get(b);
+    if (a) {
+      // An account comes with its name chosen (GitHub login or invite name), as when
+      // signing in with GitHub claims the login.
+      const u = users.get(a.user);
+      if (!people.has(`u:${u.id}`)) people.set(`u:${u.id}`, { username: String(u.name || 'someone').toLowerCase(), chosen: true, suggested: '', notice: '', changes: 0 });
+      return person(`u:${u.id}`);
+    }
+    return null;
+  }
 
   async function handle(req) {
     const url = new URL(req.url);
@@ -149,6 +186,26 @@ ${emailSending ? `<p class="or">or</p><form method="post" action="/oauth/email">
       const u = users.get(a.user);
       return json({ playback: { plus: !u.inserts }, display: { name: u.name || null } });
     }
+    if (p === '/oauth/melodica/me' && m === 'GET') {
+      const who = bearerPerson(req);
+      if (!who) return json({ error: 'invalid_token' }, 401);
+      const out = { username: who.username, username_chosen: who.chosen, github: null, scrobbling: true };
+      if (who.suggested) out.suggested = who.suggested;
+      if (who.notice) out.notice = who.notice;
+      return json(out);
+    }
+    if (p === '/oauth/melodica/username' && m === 'POST') {
+      const who = bearerPerson(req);
+      if (!who) return json({ error: 'invalid_token' }, 401);
+      let body = null;
+      try { body = await req.json(); } catch (_) { /* below */ }
+      const name = String((body && body.username) || '').trim().toLowerCase();
+      const bad = checkName(name, who);
+      if (bad) return json(bad[1], bad[0]);
+      if (who.changes >= 3) return json({ error: 'rate_limited', error_description: 'Too many username changes today; try again tomorrow.' }, 429);
+      Object.assign(who, { username: name, chosen: true, notice: '', changes: who.changes + 1 });
+      return json({ username: name, username_chosen: true });
+    }
     if (p === '/oauth/revoke' && m === 'POST') { refresh.delete((await form(req)).get('token') || ''); return json({}); }
     if (p === '/oauth/invite') {
       if (m === 'GET') {
@@ -210,6 +267,11 @@ ${emailSending ? `<p class="or">or</p><form method="post" action="/oauth/email">
     accessCheck,
     accessVerify,
     allow(email, { inserts = true } = {}) { allowList.set(norm(email), { inserts }); },
+    person: (email) => person(`e:${norm(email)}`),
+    setPerson(email, fields) { Object.assign(person(`e:${norm(email)}`), fields); },
+    claimName(name) { Object.assign(person(`x:${name}`), { username: name, chosen: true }); },
+    lockName(name) { locked.add(name); },
+    revokeAccess() { accessTokens.clear(); },
     invite(email) { const t = rand(); invites.set(sha(t), { email: email.toLowerCase(), used: false }); return t; },
     async setPolicy(name, { inserts }) { const u = [...users.values()].find((x) => x.name === name); if (!u) throw new Error(`no account ${name}`); u.inserts = inserts; },
   };

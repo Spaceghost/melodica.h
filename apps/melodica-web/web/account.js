@@ -4,6 +4,8 @@
 // token when signed in, else with the relay's access token from the Pandora login
 // (x-melodica-access); the page obeys `playback.plus` and shows no text about it.
 // Anything unexpected, or no token at all, is {inserts: true}.
+// The username (GET /oauth/melodica/me, POST /oauth/melodica/username) is asked with
+// the same bearer. No email is read or shown anywhere.
 // OAuth 2.1 authorization code + PKCE (S256), public client `melodica-web`.
 //
 // The account server is the page's own origin (spacegho.st serves both); its
@@ -20,6 +22,12 @@ export const DEFAULT_POLICY = Object.freeze({ inserts: true });
 // localhost for development and the tests. Elsewhere (a self-hosted copy) nothing is
 // probed, so no failed request shows up in the console.
 export const ACCOUNT_HOSTS = ['spacegho.st', 'localhost'];
+
+// docs/ACCOUNT.md's username format: 3 to 24 of a-z 0-9 - _, starting and ending with a
+// letter or digit (case-insensitive). Reserved and taken names only the server knows.
+export const USERNAME_RE = /^[a-z0-9][a-z0-9_-]{1,22}[a-z0-9]$/;
+export const USERNAME_FORMAT = 'Use 3 to 24 letters, digits, - or _, starting and ending with a letter or digit.';
+export const normalizeUsername = (s) => String(s || '').trim().toLowerCase();
 
 const b64url = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
@@ -48,8 +56,7 @@ export class Account {
     this.now = now || (() => Date.now());
     this.log = log || (() => {});
     this.config = null;      // discovery document, when the account server exists
-    this.name = '';          // display name of the signed-in account
-    this.email = '';
+    this.name = '';          // username of the signed-in account
   }
 
   get tokens() {
@@ -71,7 +78,6 @@ export class Account {
   forget() {
     this.store.remove(ACCOUNT_KEY);
     this.name = '';
-    this.email = '';
   }
 
   // The discovery document, or null when this origin has no account server.
@@ -90,6 +96,8 @@ export class Account {
     const same = (u) => { try { return new URL(u).origin === this.origin; } catch (_) { return false; } };
     if (!d || d.issuer !== this.origin || !same(d.authorization_endpoint) || !same(d.token_endpoint)) return null;
     d.policy_endpoint = `${this.origin}/oauth/melodica/policy`;
+    d.me_endpoint = `${this.origin}/oauth/melodica/me`;
+    d.username_endpoint = `${this.origin}/oauth/melodica/username`;
     this.config = d;
     return d;
   }
@@ -198,7 +206,7 @@ export class Account {
     return { ...DEFAULT_POLICY };
   }
 
-  // Name and email for the account line (userinfo; best effort).
+  // The username for the account line (userinfo; best effort).
   async profile() {
     const d = await this.discover();
     const token = d && d.userinfo_endpoint ? await this.accessToken() : '';
@@ -207,16 +215,70 @@ export class Account {
         const res = await this.fetch(d.userinfo_endpoint, { headers: { authorization: `Bearer ${token}` } });
         if (res.ok) {
           const u = await res.json();
-          if (u && typeof u.name === 'string' && u.name) this.name = this.name || u.name;
-          if (u && typeof u.email === 'string') this.email = u.email;
+          const n = u && (u.preferred_username || u.name);
+          if (typeof n === 'string' && n) this.name = this.name || n;
         }
       } catch (_) { /* name from the policy, if any, stays */ }
     }
-    return { name: this.name, email: this.email };
+    return { name: this.name };
   }
 
-  // The label for the account: its display name, else its email, else a neutral word.
-  get label() { return this.name || this.email || 'spacegho.st account'; }
+  // The label for the account: its username, else a neutral word.
+  get label() { return this.name || 'spacegho.st account'; }
+
+  // One call to /oauth/melodica/me or /username with the account's token when signed in,
+  // else the relay's access token. Returns {status, body} (status 0: no server, no token
+  // or a network error). A 401 with the account's own token refreshes and retries once.
+  async melodicaCall(which, relayToken, init = {}) {
+    const d = await this.discover();
+    if (!d) return { status: 0, body: null, bearer: '' };
+    const own = this.signedIn;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const token = own ? await this.accessToken({ force: attempt > 0 }) : relayToken;
+      if (!token) return { status: 0, body: null, bearer: own ? 'account' : '' };
+      let res;
+      try {
+        res = await this.fetch(d[`${which}_endpoint`], { ...init, headers: { ...(init.headers || {}), authorization: `Bearer ${token}` }, cache: 'no-store' });
+      } catch (_) { return { status: 0, body: null, bearer: own ? 'account' : 'relay' }; }
+      if (res.status === 401 && own && attempt === 0) continue;
+      let body = null;
+      try { body = await res.json(); } catch (_) { /* below */ }
+      return { status: res.status, body: body && typeof body === 'object' ? body : null, bearer: own ? 'account' : 'relay' };
+    }
+    return { status: 401, body: { error: 'invalid_token' }, bearer: 'account' };
+  }
+
+  // GET /oauth/melodica/me -> {ok, username, chosen, suggested, notice, status, error, bearer}.
+  async me(relayToken = '') {
+    const r = await this.melodicaCall('me', relayToken);
+    const b = r.body || {};
+    if (r.status === 200 && typeof b.username === 'string' && b.username) {
+      this.name = b.username;
+      return {
+        ok: true, status: 200, bearer: r.bearer, username: b.username, chosen: b.username_chosen === true,
+        suggested: typeof b.suggested === 'string' ? b.suggested : '',
+        notice: typeof b.notice === 'string' ? b.notice : '',
+      };
+    }
+    return { ok: false, status: r.status, bearer: r.bearer, error: typeof b.error === 'string' ? b.error : '' };
+  }
+
+  // POST /oauth/melodica/username -> {ok, username} or {ok:false, status, error, message}.
+  async setUsername(name, relayToken = '') {
+    const r = await this.melodicaCall('username', relayToken, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: name }),
+    });
+    const b = r.body || {};
+    if (r.status === 200 && typeof b.username === 'string' && b.username) {
+      this.name = b.username;
+      return { ok: true, status: 200, bearer: r.bearer, username: b.username };
+    }
+    const message = typeof b.error_description === 'string' && b.error_description ? b.error_description
+      : r.status === 0 ? 'The username service is unavailable; try again.'
+        : r.status === 401 || r.status === 404 ? 'Your melodica session has ended; log in again.'
+          : `The username was not saved (HTTP ${r.status}).`;
+    return { ok: false, status: r.status, bearer: r.bearer, error: typeof b.error === 'string' ? b.error : '', message };
+  }
 
   // Forget the tokens here and revoke the refresh token.
   async signOut() {

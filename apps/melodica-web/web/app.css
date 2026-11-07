@@ -330,6 +330,14 @@ button.round:disabled { opacity: 0.4; }
 .confirm { width: min(100% - 2rem, 24rem); }
 .confirm-text { font-size: 1.02rem; line-height: 1.45; overflow-wrap: anywhere; }
 .confirm-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; }
+/* username: the "Pick a username" sheet and the field in the account menu */
+.username-sheet { width: min(100% - 2rem, 25rem); }
+.username-sheet h3 { margin-bottom: 0.4rem; }
+.username-sheet input { width: 100%; margin-top: 0.3rem; }
+.username-change { padding: 0.35rem 0.8rem 0.4rem; border-bottom: 1px solid var(--line-2); margin-bottom: 0.25rem; }
+.username-row { display: flex; gap: 0.4rem; margin-top: 0.3rem; }
+.username-row input { flex: 1; min-width: 0; }
+.username-change .message { font-size: 0.8rem; margin-top: 0.25rem; }
 button.primary.danger { background: var(--err); border-color: var(--err); color: var(--ink); }
 button.primary.danger:hover { background: var(--warn); border-color: var(--warn); }
 

@@ -12,7 +12,7 @@ import { createHash } from 'node:crypto';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = resolve(process.env.MELODICA_DIST || resolve(here, '..', 'dist'));
-const { Account, ACCOUNT_KEY, PENDING_KEY, pkceChallenge } = await import(pathToFileURL(resolve(dist, 'account.js')).href);
+const { Account, ACCOUNT_KEY, PENDING_KEY, pkceChallenge, USERNAME_RE, normalizeUsername } = await import(pathToFileURL(resolve(dist, 'account.js')).href);
 const log = (...a) => console.log('[account-unit]', ...a);
 
 const ORIGIN = 'https://spacegho.st';
@@ -26,7 +26,7 @@ function server(routes) {
   const calls = [];
   const fetchImpl = async (url, init = {}) => {
     const u = new URL(url);
-    const call = { path: u.pathname, method: init.method || 'GET', auth: (init.headers || {}).authorization || '', body: init.body ? new URLSearchParams(init.body) : null };
+    const call = { path: u.pathname, method: init.method || 'GET', auth: (init.headers || {}).authorization || '', body: init.body ? new URLSearchParams(init.body) : null, raw: init.body || '' };
     calls.push(call);
     const h = routes[u.pathname];
     if (!h) return json({ error: 'not_found' }, 404);
@@ -77,7 +77,7 @@ const srv = server({
     return json({ access_token: `A${issued}`, token_type: 'Bearer', expires_in: 3600, refresh_token: `R${issued}`, scope: 'openid profile' });
   },
   '/oauth/melodica/policy': (c) => (c.auth === `Bearer A${issued}` ? json({ playback: { plus: true }, display: { name: 'pal' } }) : json({ error: 'invalid_token' }, 401)),
-  '/oauth/userinfo': () => json({ sub: 'u1', name: 'pal', email: 'pal@example.com', email_verified: true }),
+  '/oauth/userinfo': () => json({ sub: 'u1', name: 'pal', preferred_username: 'pal' }),
   '/oauth/revoke': () => json({}),
 });
 let clock = 1_800_000_000_000;
@@ -141,8 +141,7 @@ const pending = {};
   store.set(ACCOUNT_KEY, JSON.stringify({ ...JSON.parse(store.get(ACCOUNT_KEY)), access: 'STALE' }));
   assert.deepEqual(await acct.policy(), { inserts: false });
   assert.equal(srv.calls.filter((c) => c.path === '/oauth/melodica/policy').at(-1).auth, `Bearer A${issued}`);
-  await acct.profile();
-  assert.equal(acct.email, 'pal@example.com');
+  assert.deepEqual(await acct.profile(), { name: 'pal' }, 'the username only; no email is read');
   assert.equal(acct.label, 'pal');
   log('policy and refresh ok');
 }
@@ -162,11 +161,11 @@ const pending = {};
   assert.deepEqual(await a.policy(), { inserts: true });
   assert.equal(s.get(ACCOUNT_KEY), null, 'invalid_grant: tokens forgotten');
   assert.equal(a.signedIn, false);
-  // Labels: display name, else email, else a neutral word.
+  // Labels: the username, else a neutral word (never an email).
   const l = new Account({ origin: ORIGIN, store: mem(), session: mem(), fetch: srv.fetch });
   assert.equal(l.label, 'spacegho.st account');
-  l.email = 'x@example.com';
-  assert.equal(l.label, 'x@example.com');
+  l.name = 'pal';
+  assert.equal(l.label, 'pal');
   log('failure handling ok');
 }
 
@@ -205,5 +204,48 @@ const pending = {};
   await b.policy('mat.good');
   assert.equal(calls.at(-1), 'Bearer OWN');
   log('relay-token policy ok');
+}
+// --- usernames: /oauth/melodica/me and /username (docs/ACCOUNT.md) -------------------------
+{
+  for (const ok of ['abc', 'night_owl', 'a-1', 'x'.repeat(24)]) assert.ok(USERNAME_RE.test(ok), ok);
+  for (const bad of ['ab', '_abc', 'abc-', 'Abc', 'a b c', 'x'.repeat(25), 'é-ok']) assert.ok(!USERNAME_RE.test(bad), bad);
+  assert.equal(normalizeUsername('  Night_Owl '), 'night_owl');
+  const calls = [];
+  const taken = new Set(['night_owl']);
+  let me = { username: 'listener-7f3a2c', username_chosen: false, github: null, scrobbling: true, suggested: 'octocat' };
+  const srv = server({
+    '/.well-known/openid-configuration': discovery,
+    '/oauth/melodica/me': (c) => { calls.push(['me', c.auth]); return c.auth === 'Bearer mat.good' ? json(me) : c.auth === 'Bearer mat.gone' ? json({ error: 'unknown_user' }, 404) : json({ error: 'invalid_token' }, 401); },
+    '/oauth/melodica/username': (c) => {
+      const name = JSON.parse(c.raw).username;
+      calls.push(['username', c.auth, name]);
+      if (c.auth !== 'Bearer mat.good') return json({ error: 'invalid_token' }, 401);
+      if (taken.has(name)) return json({ error: 'username_taken', error_description: 'That username is taken.' }, 409);
+      if (name === 'admin') return json({ error: 'username_invalid', reason: 'reserved', error_description: 'That username is reserved.' }, 422);
+      me = { ...me, username: name, username_chosen: true };
+      return json({ username: name, username_chosen: true });
+    },
+  });
+  const a = new Account({ origin: ORIGIN, store: mem(), session: mem(), fetch: srv.fetch });
+  assert.deepEqual(await a.me('mat.good'), { ok: true, status: 200, bearer: 'relay', username: 'listener-7f3a2c', chosen: false, suggested: 'octocat', notice: '' });
+  assert.equal(a.name, 'listener-7f3a2c');
+  assert.deepEqual(await a.me('mat.old'), { ok: false, status: 401, bearer: 'relay', error: 'invalid_token' }, 'a relay token is not retried');
+  assert.deepEqual(await a.me('mat.gone'), { ok: false, status: 404, bearer: 'relay', error: 'unknown_user' });
+  assert.deepEqual(await a.me(''), { ok: false, status: 0, bearer: '', error: '' }, 'no token: no request');
+  assert.deepEqual(await a.setUsername('night_owl', 'mat.good'), { ok: false, status: 409, bearer: 'relay', error: 'username_taken', message: 'That username is taken.' });
+  assert.deepEqual(await a.setUsername('admin', 'mat.good'), { ok: false, status: 422, bearer: 'relay', error: 'username_invalid', message: 'That username is reserved.' });
+  assert.deepEqual(await a.setUsername('moonlit', 'mat.good'), { ok: true, status: 200, bearer: 'relay', username: 'moonlit' });
+  assert.equal(a.name, 'moonlit');
+  assert.equal((await a.setUsername('x1y', 'mat.old')).message, 'Your melodica session has ended; log in again.');
+  assert.deepEqual(calls.filter((c) => c[0] === 'username').map((c) => c[2]), ['night_owl', 'admin', 'moonlit', 'x1y']);
+  // Signed in to spacegho.st: the account's token is the bearer, refreshed once on a 401.
+  const s2 = mem();
+  s2.set(ACCOUNT_KEY, JSON.stringify({ access: 'OWN', refresh: 'R', expiresAt: Date.now() + 3600_000 }));
+  const b = new Account({ origin: ORIGIN, store: s2, session: mem(), fetch: srv.fetch });
+  const r = await b.me('mat.good');
+  assert.equal(r.bearer, 'account');
+  assert.equal(r.status, 0, '401, then the refresh failed: nothing known');
+  assert.deepEqual(calls.filter((c) => c[0] === 'me').slice(-1)[0], ['me', 'Bearer OWN'], 'the account token, never the relay token, when signed in');
+  log('usernames ok');
 }
 log('ALL OK');

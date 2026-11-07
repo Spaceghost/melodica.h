@@ -13,9 +13,8 @@ Hosted copy: <https://spacegho.st/melodica/app/>
 The spacegho.st relay can run open (anyone may log in) or by allow-list
 (`docs/ACCOUNT.md`, "Relay"); the page handles both. The page side is in `web/piano.js`:
 
-- In allow-list mode, `auth.userLogin` for an email that is not on the list fails with HTTP 403 and
-  the relay's message ("melodica access is by allow-list. Your request has been
-  sent."), shown as is under the login form; Pandora is not contacted.
+- In allow-list mode, `auth.userLogin` for a login that is not on the list fails with HTTP 403 and
+  the relay's message, shown as is under the login form; Pandora is not contacted.
 - When it is on the list and Pandora accepts the login, the relay's answer
   carries `x-melodica-access: <token>`. The page keeps it in memory and sends
   it as `x-melodica-access` on every later relay call (not on `auth.*`).
@@ -54,10 +53,43 @@ is `docs/ACCOUNT.md`, the page side is `web/account.js`:
   answer, so the policy is known before anything plays.
 - The login card shows "spacegho.st: *name* · sign out" and the account menu
   "spacegho.st *name*" with "Sign out of spacegho.st". The name is the
-  account's display name (from the policy or userinfo), else its email.
-  Signing out forgets the tokens and revokes the refresh token.
+  account's username (from `/oauth/melodica/me`, the policy or userinfo); no
+  email is read or shown. Signing out forgets the tokens and revokes the
+  refresh token.
 
 The page shows no text about the policy.
+
+## Usernames
+
+After each Pandora login the page asks `GET /oauth/melodica/me`
+(`docs/ACCOUNT.md`, "Usernames") with the spacegho.st account's token when one
+is signed in, else the relay's access token. The page side is
+`web/account.js` (`me`, `setUsername`) and the username section of
+`web/app.js`:
+
+- The account chip shows "Signed in" until the answer comes, then the
+  username: a generated `listener-…` until one is chosen. Never the email;
+  names are set as text, never as HTML.
+- While `username_chosen` is false a "Pick a username" sheet opens once per
+  login, prefilled with `suggested` (the GitHub login) when there is one, and
+  with the `renamed_github` notice when the server sends it. "Not now" (or
+  Escape) keeps it closed for the rest of the browser session.
+- The account menu has a "Change username" field.
+- Both check the format first (3 to 24 of `a-z 0-9 - _`, starting and ending
+  with a letter or digit) and otherwise show the server's `error_description`
+  (409 taken, 422 reserved or blocked, 423 locked, 429 too many changes) next
+  to the field.
+- A 401 `invalid_token` or 404 `unknown_user` forgets a spacegho.st account's
+  tokens; with the relay's token it ends the Pandora login and the login card
+  says "Your melodica session has ended; log in again."
+- In remote mode the extension's account is the extension's; the page shows
+  no username controls.
+
+`tests/account-unit.mjs` covers the calls; `tests/smoke-playback.spec.mjs`
+("usernames through the relay") runs them in Chromium against the fake account
+server: the generated name and the sheet with 409, 422 and format errors, a
+chosen name changed from the account menu, "Not now" and the notice, and a
+revoked relay token.
 
 ## Design
 
@@ -447,8 +479,9 @@ Node on a workstation reach the relay fine; if real users ever see
 
 Your Pandora email and password are encrypted by the wasm module (Blowfish,
 as Pandora's API requires) and sent only to Pandora, through the relay or
-directly through the melodica browser extension. The relay forwards and
-stores nothing; the login screen says so under the form. The page keeps your email in
+directly through the melodica browser extension. The relay never keeps the
+password; what spacegho.st records about a login is listed in
+`docs/ACCOUNT.md`. The page keeps your email in
 `localStorage`; your password is stored there only if you tick "remember
 password on this device", and the form says so in plain words. An optional
 spacegho.st sign-in (see "spacegho.st account") adds its tokens to

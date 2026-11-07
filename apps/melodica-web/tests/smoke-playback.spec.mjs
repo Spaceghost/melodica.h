@@ -17,13 +17,23 @@
 //      its message, the email is recorded as a request, Pandora sees no login.
 // 1-3 also check that every relay call after the login carried x-melodica-access.
 //
+// Usernames (docs/ACCOUNT.md, /oauth/melodica/me and /username with the relay token):
+//   5. a generated name: listener-… in the account chip (never the email), "Pick a
+//      username" prefilled with the suggestion; 409, 422 and a format error shown in
+//      the sheet; the chosen name then in the chip.
+//   6. a chosen name: no prompt; "Change username" in the account menu (409 inline,
+//      then saved).
+//   7. "Not now" keeps the sheet closed for the session; the renamed_github notice.
+//   8. a revoked relay token: the page logs out and says the session ended.
+//
 // The tuner comes from TUNER_HTTPS_URL / TUNER_HTTP_URL / TUNER_USER /
 // TUNER_PASSWORD (the Spaceghost/melodica-tuner action) or MELODICA_TUNER_DIR
 // (a checkout; the test starts it). Its `ads` setting is changed at runtime
 // through POST /__tuner/config. Without a tuner the tests are skipped.
 //
 // Artifacts: tests/artifacts/smoke-playback.json (what the tuner saw),
-// smoke-web-ad.png (an ad in the now-playing card), smoke-web-not-listed.png.
+// smoke-web-ad.png (an ad in the now-playing card), smoke-web-not-listed.png,
+// username-pick.png, username-change.png.
 
 import { test, expect } from '@playwright/test';
 import http from 'node:http';
@@ -174,6 +184,7 @@ function expectRelayTokens() {
 async function begin(page, { ads, accountInserts, listedInserts = true }) {
   relay.seen.length = 0;
   account.allow(tuner.user, { inserts: listedInserts });
+  account.setPerson(tuner.user, { username: 'tuner_listener', chosen: true, notice: '' }); // no "Pick a username" over the stations
   await postJson(`${tuner.http}/__tuner/reset`, {});
   const cfg = await postJson(`${tuner.http}/__tuner/config`, { ads });
   expect(cfg.ok, `POST /__tuner/config {ads: ${ads}}`).toBe(true);
@@ -356,6 +367,112 @@ test.describe.serial('playback against melodica-tuner', () => {
     expect(relay.seen.find((e) => e.method === 'auth.userLogin'), 'the relay refused the login').toMatchObject({ status: 403, email });
     expect(account.requests, 'the email was recorded as a request').toContain(email);
     expect(await logins(), 'no auth.userLogin reached Pandora').toBe(loginsBefore);
+    expect(errors).toEqual([]);
+  });
+});
+
+// Logs in through the relay (no station started) and waits for the player.
+async function loginRelay(page) {
+  account.allow(tuner.user, { inserts: true });
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await page.goto(appUrl);
+  await expect(page.locator('#app')).toHaveAttribute('data-view', 'login', { timeout: 30_000 });
+  await page.fill('#login-email', tuner.user);
+  await page.fill('#login-password', tuner.password);
+  await page.click('#login-button');
+  await expect(page.locator('#app')).toHaveAttribute('data-view', 'player', { timeout: 30_000 });
+  return errors;
+}
+
+test.describe.serial('usernames through the relay', () => {
+  test('a generated name: listener in the chip, Pick a username with 409 and 422 inline, then the chosen name', async ({ page }) => {
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    account.setPerson(tuner.user, { username: 'listener-1a2b3c', chosen: false, suggested: 'octocat', notice: '', changes: 0 });
+    account.claimName('night_owl');
+    const errors = await loginRelay(page);
+    await expect(page.locator('#signed-in')).toHaveText('listener-1a2b3c', { timeout: 10_000 });
+    const sheet = page.locator('#username-pick');
+    await expect(sheet).toBeVisible();
+    await expect(page.locator('#username-pick-current')).toHaveText('listener-1a2b3c');
+    await expect(page.locator('#username-pick-input')).toHaveValue('octocat');
+    await expect(page.locator('#username-pick-notice')).toBeHidden();
+    const input = page.locator('#username-pick-input');
+    const msg = page.locator('#username-pick-message');
+    await input.fill('Night-0wl');
+    await page.click('#username-pick-save');
+    await expect(msg).toHaveText('That username is taken.');
+    await input.fill('admin');
+    await page.click('#username-pick-save');
+    await expect(msg).toHaveText('That username is reserved.');
+    await input.fill('a!');
+    await page.click('#username-pick-save');
+    await expect(msg).toHaveText(/^Use 3 to 24 letters/);
+    await input.fill('Moonlit');
+    await page.screenshot({ path: resolve(ARTIFACTS, 'username-pick.png') });
+    await page.click('#username-pick-save');
+    await expect(sheet).toBeHidden();
+    await expect(page.locator('#signed-in')).toHaveText('moonlit');
+    expect(account.person(tuner.user)).toMatchObject({ username: 'moonlit', chosen: true });
+    await expect(page.locator('header')).not.toContainText('@');
+    expect(errors).toEqual([]);
+  });
+
+  test('a chosen name: no prompt, and Change username in the account menu', async ({ page }) => {
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    account.setPerson(tuner.user, { username: 'moonlit', chosen: true, suggested: '', notice: '', changes: 0 });
+    account.claimName('claimed_one');
+    const errors = await loginRelay(page);
+    await expect(page.locator('#signed-in')).toHaveText('moonlit', { timeout: 10_000 });
+    await page.waitForTimeout(500);
+    await expect(page.locator('#username-pick')).toBeHidden();
+    await page.click('#account summary');
+    await expect(page.locator('#signed-in-full')).toHaveText('Signed in as moonlit');
+    const input = page.locator('#username-change-input');
+    await expect(input).toHaveValue('moonlit');
+    await input.fill('claimed_one');
+    await page.click('#username-change-save');
+    await expect(page.locator('#username-change-message')).toHaveText('That username is taken.');
+    await input.fill('stargazer');
+    await page.click('#username-change-save');
+    await expect(page.locator('#username-change-message')).toHaveText('Saved.');
+    await expect(page.locator('#signed-in')).toHaveText('stargazer');
+    await page.screenshot({ path: resolve(ARTIFACTS, 'username-change.png') });
+    expect(account.person(tuner.user).username).toBe('stargazer');
+    expect(errors).toEqual([]);
+  });
+
+  test('Not now keeps the sheet closed for the session; the renamed_github notice shows', async ({ page }) => {
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    account.setPerson(tuner.user, { username: 'listener-9f9f9f', chosen: false, suggested: '', notice: 'renamed_github', changes: 0 });
+    const errors = await loginRelay(page);
+    await expect(page.locator('#username-pick')).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('#username-pick-notice')).toBeVisible();
+    await expect(page.locator('#username-pick-input')).toHaveValue('');
+    await page.click('#username-pick-later');
+    await expect(page.locator('#username-pick')).toBeHidden();
+    await page.click('#account summary');
+    await page.click('#logout');
+    await expect(page.locator('#app')).toHaveAttribute('data-view', 'login');
+    await page.fill('#login-password', tuner.password);
+    await page.click('#login-button');
+    await expect(page.locator('#signed-in')).toHaveText('listener-9f9f9f', { timeout: 30_000 });
+    await page.waitForTimeout(500);
+    await expect(page.locator('#username-pick')).toBeHidden();
+    expect(errors).toEqual([]);
+  });
+
+  test('a revoked relay token: the page logs out and says the session ended', async ({ page }) => {
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    account.setPerson(tuner.user, { username: 'stargazer', chosen: true, notice: '', changes: 0 });
+    const errors = await loginRelay(page);
+    await expect(page.locator('#signed-in')).toHaveText('stargazer', { timeout: 10_000 });
+    account.revokeAccess();
+    await page.click('#account summary');
+    await page.fill('#username-change-input', 'nightjar');
+    await page.click('#username-change-save');
+    await expect(page.locator('#app')).toHaveAttribute('data-view', 'login', { timeout: 10_000 });
+    await expect(page.locator('#login-message')).toHaveText('Your melodica session has ended; log in again.');
     expect(errors).toEqual([]);
   });
 });
