@@ -39,13 +39,12 @@ jobs:
         run: node tests/node-smoke.mjs
         env:
           MELODICA_SMOKE_ALLOW_RELAY_BLOCK: '1'
-          MELODICA_RELAY_TOKEN: ${{ secrets.MELODICA_RELAY_TOKEN }}
       - name: Node unit test (canned Pandora responses)
         run: node tests/node-unit.mjs
       - name: Bridge unit test (fake window, no network)
         run: node tests/bridge-unit.mjs
-      - name: Gate unit test (token handling, no network)
-        run: node tests/gate-unit.mjs
+      - name: Account unit test (PKCE, tokens, policy; no network)
+        run: node tests/account-unit.mjs
       - name: Ads unit test (canned ad answers, no network)
         run: node tests/ads-unit.mjs
       - name: Package
@@ -63,13 +62,12 @@ jobs:
             echo
             echo "With the melodica browser extension 0.3.0 or later installed, the extension plays in the background and this page is a view of it and a remote for it (no tab needed for playback); without it the page plays by itself as before."
             echo
-            echo "The hosted copy and its relay require signing in with GitHub (identity only, no scopes, nothing stored server-side); the player says so on its sign-in screen."
             echo
             echo "[melodica.h](https://github.com/Spaceghost/melodica.h)'s portable libpiano-compatible C implementation is compiled to WebAssembly; it speaks Pandora's JSON API (including the Blowfish-encrypted request bodies) while the browser does the HTTP through a small relay and plays the audio with an \`<audio>\` element. No framework, no bundler, no external scripts; it works under a strict CSP (\`script-src 'self' 'wasm-unsafe-eval'\`)."
             echo
             echo "## Assets"
             echo
-            echo "- \`melodica-web-$v.tar.gz\`: the built site. Unpacks to \`dist/\` (index.html, app.js, piano.js, bridge.js, gate.js, app.css, melodica.js, melodica.wasm, licenses)."
+            echo "- \`melodica-web-$v.tar.gz\`: the built site. Unpacks to \`dist/\` (index.html, app.js, piano.js, bridge.js, account.js, app.css, melodica.js, melodica.wasm, licenses)."
             echo "- \`melodica-web-$v-src.tar.gz\`: source tree including the vendored melodica.h."
             echo "- \`SHA256SUMS\`"
             echo
@@ -132,6 +130,22 @@ jobs:
           TUNER_HTTP_URL: ${{ steps.tuner.outputs.http-url }}
           TUNER_USER: ${{ steps.tuner.outputs.user }}
           TUNER_PASSWORD: ${{ steps.tuner.outputs.password }}
+      - name: Audio ads smoke test (built dist, melodica-tuner ads, account policy)
+        run: npx playwright test tests/smoke-ads.spec.mjs
+        env:
+          TUNER_HTTPS_URL: ${{ steps.tuner.outputs.https-url }}
+          TUNER_HTTP_URL: ${{ steps.tuner.outputs.http-url }}
+          TUNER_USER: ${{ steps.tuner.outputs.user }}
+          TUNER_PASSWORD: ${{ steps.tuner.outputs.password }}
+      - name: Tuner report (the ad steps must be in the tuner's log)
+        run: |
+          # The tuner repository is private; use the copy the runner fetched for the action.
+          cd "$RUNNER_WORKSPACE/../_actions/Spaceghost/melodica-tuner/v1"
+          python3 -m tuner.report --platform web --ok --summary "melodica-web audio ads against melodica-tuner" \
+            --from-log "${{ steps.tuner.outputs.log-url }}" \
+            --require "ad.getAdMetadata ok" --require "ad audio fetched" --require "ad.registerAd ok" \
+            --out "$GITHUB_WORKSPACE/tests/artifacts/smoke-web-ads-report.json"
+          cat "$GITHUB_WORKSPACE/tests/artifacts/smoke-web-ads-report.json"
       - name: Show the report
         if: always()
         run: cat tests/artifacts/smoke-web.json || true

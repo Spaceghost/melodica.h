@@ -8,54 +8,58 @@ no external scripts.
 
 Hosted copy: <https://spacegho.st/melodica/app/>
 
-## GitHub sign-in
+## Access through the spacegho.st relay
 
-The hosted player and the relay it needs require signing in with GitHub, and
-only allowed accounts may use them (the Worker in
-[melodica-site](https://github.com/Spaceghost/melodica-site) runs the check;
-this page only carries the token). GitHub is used for identity only: the OAuth
-request asks for **no scopes**, nothing is stored server-side, and the sign-in
-screen says so.
+melodica access through the spacegho.st relay is by allow-list, keyed on the
+Pandora login email (`docs/ACCOUNT.md`, "Relay"). The login card says so:
+"melodica access is by allow-list; signing in sends your email to the admin as
+an access request." The page side is in `web/piano.js`:
 
-What the page does, in order (`web/gate.js`):
+- `auth.userLogin` for an email that is not on the list fails with HTTP 403 and
+  the relay's message ("melodica access is by allow-list. Your request has been
+  sent."), shown as is under the login form; Pandora is not contacted.
+- When it is on the list and Pandora accepts the login, the relay's answer
+  carries `x-melodica-access: <token>`. The page keeps it in memory and sends
+  it as `x-melodica-access` on every later relay call (not on `auth.*`).
+- A 401 from the relay (token missing or expired, 12 h) is handled like an
+  expired Pandora session: log in again with the remembered credentials, which
+  gets a new token, and retry the call once.
+- After each new token the page asks `/oauth/melodica/policy` with it as the
+  bearer (unless a spacegho.st account is signed in, whose own token is used)
+  and obeys `playback.ads`. A login waits for that answer.
 
-1. If the URL fragment carries `#melodica_token=<token>` (the Worker put it
-   there after the GitHub round trip), the token is stored in `localStorage`
-   under `melodica.github` and the fragment is removed with `replaceState`.
-   `#melodica_error=<code>` (GitHub refused, or the exchange failed) is shown
-   on the GitHub screen instead.
-2. `GET ../auth/me` (`/melodica/auth/me` for the hosted page) with
-   `Authorization: Bearer <token>` when there is one.
-   - **503** (`auth not configured`): the gate is off; the Pandora login shows.
-   - **200, allowed**: the Pandora login shows, with a small
-     "GitHub: *login* · sign out of GitHub" line. A refreshed `token` in the
-     answer replaces the stored one.
-   - **200, not allowed**: the GitHub screen says "melodica is not available
-     for your GitHub account (*login*)." with a "Sign out of GitHub" button.
-   - **401** (no token, or a rejected one, which is then forgotten): the
-     GitHub screen with a "Sign in with GitHub" link to
-     `../auth/start?return_to=<this page>`.
-   - anything else (unreachable, 404 on a self-host without the Worker): the
-     Pandora login shows and the relay decides.
-3. Every relay request carries `Authorization: Bearer <token>`. A **401** from
-   the relay (`{"stat":"fail","code":-1,"message":"melodica is not available
-   for this account: sign in with GitHub"}`) sends the user back to the GitHub
-   screen with that message. The extension bridge does not carry the token: the
-   extension gates itself.
+The extension bridge does not go through the relay; the extension does its own
+check (`docs/ACCOUNT.md`, "Access check").
 
-With `?api=` in the page URL (local development, the tuner smoke test in CI)
-the GitHub screen is skipped; a stored token is still sent to the relay.
+## spacegho.st account (optional)
 
-The token is an HMAC-signed statement from the Worker (`{sub: login, id,
-friend, iat, exp (7 days), chk}`; `friend` is the Worker's name for the
-allowed flag and is read as `allowed` here); it lives in this browser's
-`localStorage` until "sign out of GitHub" removes it. The downloadable apps on
-<https://spacegho.st/melodica/> are not affected.
+A small "Sign in with spacegho.st" link under the Pandora login connects an
+optional spacegho.st account; it is not needed to use melodica. The contract
+is `docs/ACCOUNT.md`, the page side is `web/account.js`:
 
-Until the Worker's secrets exist, `/auth/me` answers 503 and the relay is
-open as before; see melodica-site's README for the `wrangler secret put`
-steps. The real GitHub round trip has not been exercised yet for that reason:
-the tests below prove the page against a fake `/auth/me`.
+- The account server is the page's own origin. On spacegho.st (and on
+  `localhost`, for development and the tests) the page reads
+  `/.well-known/openid-configuration`; anywhere else, or when that fails, no
+  link is shown and nothing is probed.
+- The link starts an OAuth 2.1 authorization code flow with PKCE (S256) as
+  the public client `melodica-web`, scope `openid profile`, redirect
+  `<origin>/melodica/app/`. On the way back the page checks `state` and
+  `iss`, exchanges the code, removes `code`/`state`/`iss` from the address
+  bar and keeps `{access, refresh, expiresAt}` in `localStorage` under
+  `melodica.account`. Access tokens are refreshed before they expire; refresh
+  tokens rotate; `invalid_grant` forgets them.
+- At start, after a sign-in and after each Pandora login the page asks
+  `/oauth/melodica/policy` with the account's access token and obeys
+  `playback.ads` (see "Audio ads"); a 401 is refreshed and retried once. With
+  no account the relay's access token is the bearer (see above); no token, or
+  any failure, means the default policy. A Pandora sign-in waits for this
+  answer, so the policy is known before anything plays.
+- The login card shows "spacegho.st: *name* · sign out" and the account menu
+  "spacegho.st *name*" with "Sign out of spacegho.st". The name is the
+  account's display name (from the policy or userinfo), else its email.
+  Signing out forgets the tokens and revokes the refresh token.
+
+The page shows no text about the policy.
 
 ## Design
 
@@ -105,8 +109,8 @@ browser                                   relay                     Pandora
   content script can carry the API calls straight to tuner.pandora.com
   instead of the relay (see "Extension bridge" below), and since extension
   0.3.0 play in the background with this page as its remote ("Remote mode").
-- `web/gate.js` is the client side of the GitHub sign-in gate (see above):
-  token in, `/auth/me`, token out.
+- `web/account.js` is the optional spacegho.st account (see above): PKCE
+  sign-in, tokens, the playback policy.
 
 ### Exported C API (`dist/melodica.js`, `createMelodica()`)
 
@@ -148,7 +152,7 @@ scripts/check.sh        # parses the modules, checks relative URLs / no inline s
 (`bak`/`melodica-emsdk` by default), builds and tests there and pulls `dist/`
 back, so nothing is compiled on the workstation.
 
-`dist/` then holds `index.html`, `app.js`, `piano.js`, `bridge.js`, `gate.js`, `app.css`,
+`dist/` then holds `index.html`, `app.js`, `piano.js`, `bridge.js`, `account.js`, `app.css`,
 `melodica.js`, `melodica.wasm`, `LICENSE`, `LICENSE.libpiano`,
 `THIRD_PARTY_NOTICES.md`, `VERSION`.
 
@@ -158,7 +162,8 @@ back, so nothing is compiled on the workstation.
 node tests/node-smoke.mjs
 node tests/node-unit.mjs
 node tests/bridge-unit.mjs
-node tests/gate-unit.mjs
+node tests/account-unit.mjs
+node tests/ads-unit.mjs
 ```
 
 Runs the compiled module in Node against the live relay. Without an account
@@ -169,22 +174,19 @@ fetches a playlist and HEADs the first audio URL. `MELODICA_API` overrides
 the relay URL. `node-unit.mjs` needs no network: it feeds canned
 Pandora-shaped responses (a `syncTime` produced by `tests/tools/synctime.c`
 with the partner key) to the module and checks request building, result
-serialisation, error mapping and the automatic re-login. `bridge-unit.mjs`
+serialisation, error mapping, the automatic re-login, and the relay access
+token (sent after `auth.userLogin`, not on `auth.*`, renewed by a re-login on
+401, the 403 message passed through). `bridge-unit.mjs`
 needs no network either: a fake window plays the extension's content script
 and checks the hello/ready handshake, the message filter, request/response
 pairing by id, the timeout with fallback to the relay, HTTP errors through
 the bridge and the `?api=` / bridge / relay precedence in `PianoClient.post`.
-`gate-unit.mjs` needs no network: it checks fragment parsing, taking the token
-off the URL into storage, every `/auth/me` outcome (503, 401, allowed,
-denied, refreshed token, unreachable), sign-out, the `Authorization` header
-on relay requests, and a 401 from the relay or the bridge becoming a
-`PianoError` of kind `auth` that fires `onUnauthorized`.
-
-The smoke test calls the live relay. Once the relay is gated it needs an
-access token in `MELODICA_RELAY_TOKEN` (minted with melodica-site's
-`scripts/mint-token.mjs`; the repository secret of the same name feeds CI).
-Without it, a 401 ends the test with a clear "not provable here" log line
-instead of a failure.
+`account-unit.mjs` needs no network: it checks discovery (same-origin
+endpoints only), the authorize URL (PKCE S256 against RFC 7636's example,
+state), the way back (state and issuer checked, code exchanged, the address
+bar cleaned), refresh with rotation, a 401 refreshed and retried, every
+failure giving the default policy, `invalid_grant`, the account label,
+sign-out with revocation, and the policy asked with the relay's access token. `ads-unit.mjs` is described under "Audio ads".
 
 GitHub Actions runners are answered by a Cloudflare challenge page instead of
 the relay, so in CI the smoke test runs with
@@ -205,41 +207,40 @@ MELODICA_APP_URL=https://spacegho.st/melodica/app/ npx playwright test   # the h
 `#app[data-view="login"]` (set only after `melodica.wasm` instantiated and
 `mw_init` returned 0), checks the login form, records console messages, page
 errors, failed requests and `securitypolicyviolation` events, then submits
-`nobody@example.invalid` / `wrong`. Without an account the correct outcome is
-Pandora's code 1002 on `auth.userLogin`, which libpiano maps to "Wrong email
-address or password." in the form; that proves wasm → Blowfish body → relay →
-Pandora → parsed error. The local variant serves `dist/` under
+`nobody@example.invalid` / `wrong`. The spacegho.st relay checks the email
+against its allow-list first, so the correct outcome there is HTTP 403 on
+`auth.userLogin` with "melodica access is by allow-list. Your request has been
+sent." in the form; that proves wasm → Blowfish body → relay (which decrypts
+it to read the email) → the relay's answer in the UI. Each run therefore
+records an access request for that address on spacegho.st. A relay without
+an allow-list gives Pandora's code 1002 instead, which libpiano maps to "Wrong
+email address or password."; both are accepted. The local variant serves `dist/` under
 `/melodica/app/` with the site worker's CSP (plus the relay origin in
 `connect-src`) and `?api=` pointing at `MELODICA_API`. Screenshots land in
 `tests/artifacts/login-screen.png` and `login-error.png`;
 `hosted-login-*.png` there are from a run against the hosted 0.1.1 on
 2026-11-05 (Chromium 156 in a bak container: no Cloudflare challenge, no
 console errors, no CSP violations, both relay calls HTTP 200, "Wrong email
-address or password." in the form).
+address or password." in the form). That run predates the allow-list.
 `MELODICA_BROWSER_ALLOW_RELAY_BLOCK=1` turns the challenge-page outcome into
-a skipped test, as the smoke test does. `MELODICA_RELAY_TOKEN` (see above) is
-put in `localStorage` before the page loads so the gated relay accepts the
-calls; the hosted variant then adds `?api=` so the GitHub screen is skipped.
-Without the token a 401 from the relay skips the login-error test with a log
-line. A hosted-only test opens the page without a token and reports
-what it sees: the GitHub screen with the live `/auth/start` link, or the
-Pandora login when `/auth/me` says 503 (not configured yet); screenshot
-`hosted-gate.png`.
+a skipped test, as the smoke test does.
 
-`tests/gate.spec.mjs` is the GitHub sign-in gate in Chromium against a fake
-Worker (a local server playing `/melodica/auth/me`, `/melodica/auth/logout`
-and `/melodica/api/`, no network): 503 shows the Pandora login directly; no
-token shows the GitHub screen with the start link and the explanation;
-`#melodica_error=` is shown and cleaned; an allowed account's `#melodica_token=`
-is stored, the fragment removed, the Pandora login shows with the GitHub line and
-`/auth/me` saw the bearer header; a refreshed token replaces the stored one; a
-not-allowed account sees the exact "not available for your GitHub account"
-sentence and can sign out
-(token gone, `POST /auth/logout` seen); a 401 from the relay routes back to
-the GitHub screen with the relay's message and the relay saw the bearer
-header; with `?api=` the screen is skipped and the token still reaches the
-relay. Screenshots: `gate-anonymous.png`, `gate-denied.png`,
-`gate-relay-401.png`.
+`tests/account.spec.mjs` is the spacegho.st sign-in in Chromium against an
+account server on the page's origin (a local server on `localhost`, so the
+session cookies behave as on spacegho.st): `tests/tools/fake-account.mjs`,
+which implements the contract with the same routes, pages and cookies as the
+real Worker, or, with `SPACEGHOST_AUTH_DIR=<spaceghost-auth checkout>`, that
+Worker's own `handle()` over its test harness (D1 on `node:sqlite` with its
+migrations, a fake GitHub bridge, a recording email binding; only test data
+differs: the issuer is the local origin and the redirect URI is registered for
+it). It covers: an invite accepted, then "Sign in with spacegho.st" with the
+invite's session, tokens, and the policy fetched with the bearer token, for an
+email-only account (shown by its name, no GitHub wording); the same account
+returning in a fresh browser through the emailed sign-in link; a
+GitHub-linked account through "Continue with GitHub" (GitHub's authorize page
+answered by the test); a per-account policy change seen on the next start;
+sign-out with revocation; no link without an account server. Screenshots:
+`account-email.png`, `account-github.png`.
 
 `tests/remote.spec.mjs` is remote mode in Chromium against a fake extension
 (a page-world script answering hello with `ready` + `player: true`, subscribe
@@ -257,8 +258,7 @@ login). Screenshots: `remote-player.png`, `remote-signed-out.png`.
 
 `tests/bridge.spec.mjs` injects a fake content script into the page world
 (it answers `hello` with `ready` and proxies each bridge `request` to the
-relay with `fetch`, sending `MELODICA_RELAY_TOKEN` as the real extension sends
-its own token; its local server answers `/melodica/auth/me` with 503), then asserts the status line says
+relay with `fetch`), then asserts the status line says
 "direct via melodica extension 0.1.0", that the sign-in round trips were
 carried by the bridge (the script logs each request's method, id and body
 length), and that a page opened with `?api=` never sends `hello` and reports
@@ -317,7 +317,9 @@ compilation works.
 The client needs a relay that accepts `POST <relay>/?<query>` with the raw
 request body (`content-type: text/plain`), forwards it to
 `https://tuner.pandora.com/services/json/?<query>` and returns the response
-unchanged with `access-control-allow-origin: *` (and answers `OPTIONS`). The
+unchanged with `access-control-allow-origin: *` (and answers `OPTIONS`). An
+allow-list as on spacegho.st is optional: the page sends `x-melodica-access`
+only after a login answer carried one. The
 relay must run from a place Pandora serves, i.e. the US. The relay URL is:
 
 1. `?api=https://host/path/` in the page URL (same origin only, or on a
@@ -330,12 +332,9 @@ relay must run from a place Pandora serves, i.e. the US. The relay URL is:
 The footer status line names the active transport: "via spacegho.st relay"
 or "direct via melodica extension 0.1.0".
 
-A self-hosted copy without the melodica-site Worker gets a 404 from
-`../auth/me` and goes straight to the Pandora login; its own relay decides
-who may use it. The "Sign in with GitHub" link points at `../auth/start`
-relative to the page, and the Worker only accepts
-`https://spacegho.st/melodica/app/` as `return_to`, so a self-host that wants
-the gate runs its own Worker.
+A self-hosted copy has no account server on its origin, so it shows no
+"Sign in with spacegho.st" link or allow-list note (unless its relay is
+spacegho.st's) and uses the default policy.
 
 ### Extension bridge
 
@@ -383,9 +382,27 @@ and the ad is left out of the play log. `ad.registerAd` is sent once the ad's
 audio has started. An ad without audio, or whose metadata request fails, is
 passed over.
 
-Whether ads are played is decided only by the policy value `ads` (default
-`true`), kept in `localStorage` under `melodica.policy` as `{"ads": …}`.
+Whether ads are played is decided only by the policy value `ads`:
+`playback.ads` from the policy endpoint, asked with the account's token or the
+relay's access token, else `true` (see "Access through the spacegho.st relay");
+nothing is cached between page loads.
 `tests/ads-unit.mjs` checks the C side against canned answers.
+`tests/smoke-ads.spec.mjs` runs the built page against melodica-tuner 0.2+
+with its `ads` setting on (one ad item after every song), logging in through a
+fake relay (`tests/tools/fake-relay.mjs`, the allow-list contract) in front of
+the tuner: with no account and an allow-list entry with `ads: true` an
+ad's metadata is fetched, it plays in the now-playing card with skip and
+rating disabled, stays out of the play log and is registered with the
+tracking tokens the tuner issued for that station, all checked in the tuner's
+log and state; signed in to an account whose policy is `ads: false` (the
+contract fake), or with no account and an entry with `ads: false` (read with
+the relay's token), no ad request, ad audio or registration happens while the
+tuner serves ads. Each of these checks that every relay call after the login
+carried `x-melodica-access`. A fourth case logs in with an email not on the
+list: the login card shows the relay's message, the email is recorded as a
+request, and the tuner sees no `auth.userLogin`. In CI `python3 -m tuner.report --from-log … --require
+"ad.getAdMetadata ok" --require "ad audio fetched" --require "ad.registerAd ok"`
+then checks the tuner's log.
 
 ### Remote mode (extension 0.3.0+)
 
@@ -406,9 +423,9 @@ in `web/bridge.js` (`subscribe`, `command`) and `web/app.js` ("remote mode"):
   for the controls and keyboard shortcuts: `play` (with `station: {token,
   name}`), `toggle`, `next`, `love`, `ban`, `tired`, `volume` (`value`),
   `quality` (`value`), `stations`. Failed `result`s are shown as messages.
-- There is no local `<audio>`, no relay request and no Pandora or GitHub
-  sign-in on the page in remote mode: the extension holds both sessions and
-  gates itself. When it has no Pandora session the page says to sign in in the
+- There is no local `<audio>`, no relay request and no Pandora or
+  spacegho.st sign-in on the page in remote mode: the extension holds its
+  own sessions. When it has no Pandora session the page says to sign in in the
   extension.
 - Not available remotely (the protocol has no command for them): "why this
   song?", station search/creation, station deletion, and rating earlier songs
@@ -448,10 +465,10 @@ as Pandora's API requires) and sent only to Pandora, through the relay or
 directly through the melodica browser extension. The relay forwards and
 stores nothing; the login screen says so under the form. The page keeps your email in
 `localStorage`; your password is stored there only if you tick "remember
-password on this device", and the form says so in plain words. The GitHub
-sign-in (see "GitHub sign-in") adds one more item to `localStorage`: the
-signed token naming your GitHub login, until you sign out of GitHub on the
-page. Nothing else leaves the browser.
+password on this device", and the form says so in plain words. An optional
+spacegho.st sign-in (see "spacegho.st account") adds its tokens to
+`localStorage` until you sign out of it on the page. Nothing else leaves the
+browser.
 
 ## License
 

@@ -23,33 +23,16 @@
       </summary>
       <div class="account-menu">
         <p class="account-line"><span class="muted">Signed in as</span> <b id="signed-in-full"></b></p>
+        <p id="account-menu-line" class="account-line" hidden><span class="muted">spacegho.st</span> <b id="account-menu-name"></b></p>
         <button id="shortcuts-open" type="button" class="menu-item">Keyboard shortcuts <kbd>?</kbd></button>
         <button id="logout" type="button" class="menu-item">Sign out</button>
+        <button id="account-menu-signout" type="button" class="menu-item" hidden>Sign out of spacegho.st</button>
       </div>
     </details>
   </div>
 </header>
 
 <main id="app" class="app" data-view="loading">
-
-  <section id="view-github" class="view login" hidden>
-    <div class="card login-card">
-      <div class="mark" aria-hidden="true">
-        <svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="54"/><circle cx="60" cy="60" r="38"/><circle cx="60" cy="60" r="22"/><circle class="dot" cx="60" cy="60" r="7"/></svg>
-      </div>
-      <p class="eyebrow">melodica web</p>
-      <h2>Sign in with GitHub</h2>
-      <p class="intro">Sign in with GitHub to use melodica web, then sign in to Pandora as usual.</p>
-      <a id="github-button" class="button primary" href="#" rel="noopener">Sign in with GitHub</a>
-      <div id="github-denied" class="denied" hidden>
-        <p id="github-denied-text" class="message error" role="alert"></p>
-        <button id="github-signout" type="button" class="quiet">Sign out of GitHub</button>
-      </div>
-      <p id="github-message" class="message" role="status"></p>
-      <p class="fine">GitHub sign-in is used for identity only; nothing is stored. The sign-in token stays in this
-        browser's local storage until you sign out.</p>
-    </div>
-  </section>
 
   <section id="view-login" class="view login" hidden>
     <form id="login-form" class="card login-card" autocomplete="on">
@@ -74,10 +57,14 @@
       </p>
       <button id="login-button" type="submit" class="primary">Sign in</button>
       <p id="login-message" class="message" role="status"></p>
-      <p id="github-line" class="fine github-line" hidden>GitHub: <b id="github-login"></b> ·
-        <button id="github-signout-2" type="button" class="link">sign out of GitHub</button></p>
+      <p id="access-note" class="fine" hidden>melodica access is by allow-list; signing in sends your email to the admin as an access request.</p>
+      <p id="account-line" class="fine account-line-login" hidden>
+        <a id="account-signin" href="#">Sign in with spacegho.st</a>
+        <span id="account-signed" hidden>spacegho.st: <b id="account-name"></b> ·
+          <button id="account-signout" type="button" class="link">sign out</button></span>
+      </p>
       <p class="fine">Sign-in and API calls pass through the spacegho.st relay (it forwards them
-        unchanged and keeps no logs); audio streams straight from Pandora. Add <code>?api=&lt;url&gt;</code>
+        unchanged); audio streams straight from Pandora. Add <code>?api=&lt;url&gt;</code>
         to use your own relay, or install the
         <a href="https://spacegho.st/melodica/#melodica-extension" rel="noopener">melodica browser extension</a>
         to talk to Pandora directly.</p>

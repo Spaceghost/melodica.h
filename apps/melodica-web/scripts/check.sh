@@ -4,7 +4,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 test -d dist || { echo "run scripts/build.sh first" >&2; exit 1; }
-for f in dist/app.js dist/piano.js dist/bridge.js dist/gate.js dist/melodica.js; do
+for f in dist/app.js dist/piano.js dist/bridge.js dist/account.js dist/melodica.js; do
     node --check "$f" && echo "parse ok: $f"
 done
 # Loaded resources (script src, stylesheet href) must be relative; <a href>
@@ -21,7 +21,7 @@ fi
 if grep -nE ' on[a-z]+="' dist/index.html; then
     echo "index.html contains inline event handlers" >&2; exit 1
 fi
-for f in index.html app.js piano.js bridge.js gate.js app.css melodica.js melodica.wasm LICENSE LICENSE.libpiano THIRD_PARTY_NOTICES.md; do
+for f in index.html app.js piano.js bridge.js account.js app.css melodica.js melodica.wasm LICENSE LICENSE.libpiano THIRD_PARTY_NOTICES.md; do
     test -s "dist/$f" || { echo "missing dist/$f" >&2; exit 1; }
 done
 size=$(wc -c < dist/melodica.wasm)

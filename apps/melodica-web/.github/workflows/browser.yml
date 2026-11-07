@@ -57,15 +57,12 @@ jobs:
         run: npx playwright test tests/browser.spec.mjs
         env:
           MELODICA_BROWSER_ALLOW_RELAY_BLOCK: '1'
-          # Access token for the gated relay (melodica-site/scripts/mint-token.mjs); absent = skip with a log line.
-          MELODICA_RELAY_TOKEN: ${{ secrets.MELODICA_RELAY_TOKEN }}
       - name: Browser test (extension bridge with a fake content script)
         run: npx playwright test tests/bridge.spec.mjs
         env:
           MELODICA_BROWSER_ALLOW_RELAY_BLOCK: '1'
-          MELODICA_RELAY_TOKEN: ${{ secrets.MELODICA_RELAY_TOKEN }}
-      - name: Browser test (GitHub sign-in gate against a fake Worker, no network)
-        run: npx playwright test tests/gate.spec.mjs
+      - name: Browser test (spacegho.st sign-in against a local account server, no network)
+        run: npx playwright test tests/account.spec.mjs
       - name: Browser test (remote mode against a fake background player, no network)
         run: npx playwright test tests/remote.spec.mjs
       - name: Design screenshots (every view at 390x844 and 1280x800, one centered column)
@@ -117,6 +114,22 @@ jobs:
           TUNER_HTTP_URL: ${{ steps.tuner.outputs.http-url }}
           TUNER_USER: ${{ steps.tuner.outputs.user }}
           TUNER_PASSWORD: ${{ steps.tuner.outputs.password }}
+      - name: Audio ads smoke test (local dist, melodica-tuner ads, account policy)
+        run: npx playwright test tests/smoke-ads.spec.mjs
+        env:
+          TUNER_HTTPS_URL: ${{ steps.tuner.outputs.https-url }}
+          TUNER_HTTP_URL: ${{ steps.tuner.outputs.http-url }}
+          TUNER_USER: ${{ steps.tuner.outputs.user }}
+          TUNER_PASSWORD: ${{ steps.tuner.outputs.password }}
+      - name: Tuner report (the ad steps must be in the tuner's log)
+        run: |
+          # The tuner repository is private; use the copy the runner fetched for the action.
+          cd "$RUNNER_WORKSPACE/../_actions/Spaceghost/melodica-tuner/v1"
+          python3 -m tuner.report --platform web --ok --summary "melodica-web audio ads against melodica-tuner" \
+            --from-log "${{ steps.tuner.outputs.log-url }}" \
+            --require "ad.getAdMetadata ok" --require "ad audio fetched" --require "ad.registerAd ok" \
+            --out "$GITHUB_WORKSPACE/tests/artifacts/smoke-web-ads-report.json"
+          cat "$GITHUB_WORKSPACE/tests/artifacts/smoke-web-ads-report.json"
       - name: Show the report
         if: always()
         run: cat tests/artifacts/smoke-web.json || true
@@ -126,6 +139,8 @@ jobs:
           name: smoke-web
           path: |
             tests/artifacts/smoke-web.json
+            tests/artifacts/smoke-ads.json
+            tests/artifacts/smoke-web-*.json
             tests/artifacts/smoke-web-*.png
             tests/artifacts/playwright/
           if-no-files-found: ignore
@@ -153,7 +168,6 @@ jobs:
         env:
           MELODICA_APP_URL: https://spacegho.st/melodica/app/
           MELODICA_BROWSER_ALLOW_RELAY_BLOCK: '1'
-          MELODICA_RELAY_TOKEN: ${{ secrets.MELODICA_RELAY_TOKEN }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

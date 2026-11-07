@@ -2,17 +2,61 @@
 
 # spacegho.st accounts: client contract
 
-How a spacegho.st app (melodica-web, melodica-extension, the Safari/iOS build) signs a
-user in with a spacegho.st account and reads its playback policy. Signing in is
-**optional**: without an account the app works normally.
+How melodica clients (melodica-web, melodica-extension, the Safari/iOS build) check
+access, and optionally sign a user in with a spacegho.st account to read the playback
+policy.
 
-## Summary
+**melodica access is by allow-list.** The iden## Summary
 
-1. No account (the default): go straight to the Pandora login. Treat the policy as
-   `{"playback":{"ads":true}}`.
-2. Optional "Sign in with spacegho.st": OAuth 2.1 authorization code + PKCE (S256) against
-   `https://spacegho.st`. Public client, no client secret.
-3. With an access token, `GET https://spacegho.st/oauth/melodica/policy` and obey
+1. **Web player (relay).** Log in to Pandora through the relay as before. The relay checks
+   the login email: if it is not allowed, `auth.userLogin` fails with HTTP 403 and
+   `{"stat":"fail","code":-1,"message":"melodica access is by allow-list. Your request has been sent."}`
+   (Pandora is not contacted). If it is allowed and Pandora accepts the login, the
+   response has a header `x-melodica-access: <token>`. Send that header on **every**
+   later relay call; without it the relay answers HTTP 401 with
+   `{"stat":"fail","code":-1,"message":"melodica access is by allow-list; signing in sends your email to the admin as an access request."}`.
+   The token lasts 12 hours; when a call gets that 401, log in again (`auth.partnerLogin`
+   + `auth.userLogin`) to get a new one.
+2. **Extension (direct to Pandora).** Before `auth.userLogin`, `POST /oauth/melodica/access`
+   with the same email string. If `allowed` is false, do not log in; show the
+   allow-list wording above (the request has been sent).
+3. **Ads.** Obey `ads` from `/oauth/melodica/access`, or from `/oauth/melodica/policy`.
+   The web player gets it from the policy endpoint using the `x-melodica-access` token as
+   the bearer. Anything unexpected means `ads: true`.
+4. **Optional spacegho.st sign-in** (OAuth 2.1 code + PKCE, below). It is not needed to
+   use melodica. With an access token, send it as the bearer to `/oauth/melodica/access`
+   and `/oauth/melodica/policy`.
+
+## Access check (extension)
+
+```
+POST https://spacegho.st/oauth/melodica/access
+Content-Type: application/json
+Authorization: Bearer <spacegho.st access token>     (optional)
+
+{"email":"<exactly what the user typed as the Pandora username>","client":"extension"}
+```
+
+`client` is `"extension"`, `"ios"` or `"web"`.
+
+- 200 `{"allowed":true,"ads":false|true,"token":"<jwt>"}`: log in to Pandora.
+  `token` is a melodica access token (12 h) usable as the bearer for `/oauth/melodica/policy`.
+- 200 `{"allowed":false,"ads":true,"message":"…"}`: do not log in; show `message`.
+- 400 `{"error":"invalid_request"}`: not an email address.
+- Network error or 5xx: do not log in; say the access check is unavailable and to try again.
+- Emails are compared lowercased and trimmed.
+
+## Relay (web)
+
+- `POST https://spacegho.st/melodica/api/?method=…` with the body melodica.h built, as before.
+- `auth.partnerLogin` and `test.checkLicensing` need no token.
+- `auth.userLogin`: 403 (not allowed, shape above) or Pandora's answer; on `stat: "ok"`
+  read `x-melodica-access` from the response headers (exposed via CORS
+  `Access-Control-Expose-Headers`).
+- Everything else: send `x-melodica-access: <token>`; 401 without a valid one.
+- An `Authorization` header is ignored by the relay.
+
+token, `GET https://spacegho.st/oauth/melodica/policy` and obey
    `playback.ads`. Anything other than a 200 with that shape means `ads: true`.
 4. The Pandora login is still required in every case; the spacegho.st account only
    changes the policy.
@@ -30,8 +74,9 @@ Discovery: `https://spacegho.st/.well-known/openid-configuration` (issuer `https
 | revoke (refresh tokens) | `https://spacegho.st/oauth/revoke` |
 | logout | `https://spacegho.st/oauth/logout` |
 | melodica policy | `https://spacegho.st/oauth/melodica/policy` |
+| melodica access check | `https://spacegho.st/oauth/melodica/access` |
 
-CORS: `token`, `userinfo`, `revoke`, `policy`, `jwks` and discovery answer
+CORS: `token`, `userinfo`, `revoke`, `policy`, `access`, `jwks` and discovery answer
 `Access-Control-Allow-Origin: *` (no cookies are involved).
 
 ## Registered clients
@@ -62,7 +107,7 @@ shows an error and never redirects.
 
    `prompt=none` returns `error=login_required` at once when there is no spacegho.st
    session (useful for a silent check). Other `prompt` values are ignored.
-3. The user signs in on spacegho.st (GitHub or email). The browser comes back to
+3. The user signs in on spacegho.st (GitHub). The browser comes back to
    `redirect_uri?code=…&state=…&iss=https%3A%2F%2Fspacegho.st`, or
    `?error=…&state=…&iss=…`. Check `state` and `iss`. Remove `code` from the address bar
    (`history.replaceState`).
@@ -92,7 +137,7 @@ shows an error and never redirects.
 
 ```
 GET https://spacegho.st/oauth/melodica/policy
-Authorization: Bearer <access_token>
+Authorization: Bearer <OAuth access token, or a melodica access token>
 ```
 
 ```json
@@ -105,6 +150,7 @@ Authorization: Bearer <access_token>
 - No `Authorization` header: 200 `{"playback":{"ads":true},"display":{"name":null}}`.
 - Invalid or expired token: 401 `{"error":"invalid_token"}`; refresh and retry once, else
   treat as `ads: true`.
+- With a melodica access token, `display.name` is null.
 - Network errors, 5xx, or an unexpected body: `ads: true`.
 - Ask again at app start and after every token refresh. The answer can change.
 - Show no text about this flag. In particular, do not tell users that it exists, what it
@@ -132,7 +178,8 @@ tokens or codes.
 
 ## Older clients
 
-Clients up to v0.4.x call `https://spacegho.st/melodica/auth/*`. Those routes still answer:
-`/auth/me` returns 503 without a token (go to the Pandora login) and 200 (allowed)
-for any valid old token. The relay `POST /melodica/api/` needs no token and
-ignores an `Authorization` header. New clients should drop the `/melodica/auth/*` flow.
+Clients up to v0.4.x call `https://spacegho.st/melodica/auth/*`; `/auth/me` answers 503
+without a token (go to the Pandora login) and 200 for a valid old token. They do not send
+`x-melodica-access`, so after login the relay answers 401: the hosted web player must ship
+the relay changes above. Old extension builds are not checked (they talk to Pandora
+directly).
