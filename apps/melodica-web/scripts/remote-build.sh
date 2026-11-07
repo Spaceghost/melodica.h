@@ -12,7 +12,7 @@ tar cf - --exclude=dist --exclude=.git --exclude='vendor/melodica.h/.git' --excl
   | ssh "$HOST" "incus --project ${MW_PROJECT:-default} exec $CONTAINER -- bash -c 'mkdir -p $DEST && cd $DEST && tar xf - && \
       export PATH=/opt/emsdk/upstream/emscripten:\$(echo /opt/emsdk/node/*/bin):\$PATH && \
       MELODICA_WEB_VERSION=${MELODICA_WEB_VERSION:-} scripts/build.sh && scripts/check.sh && \
-      PANDORA_USER=\"${PANDORA_USER:-}\" PANDORA_PASSWORD=\"${PANDORA_PASSWORD:-}\" node tests/node-smoke.mjs && node tests/node-unit.mjs && node tests/bridge-unit.mjs && node tests/gate-unit.mjs && node tests/inserts-unit.mjs'"
+      PANDORA_USER=\"${PANDORA_USER:-}\" PANDORA_PASSWORD=\"${PANDORA_PASSWORD:-}\" node tests/node-smoke.mjs && node tests/node-unit.mjs && node tests/bridge-unit.mjs && node tests/account-unit.mjs && node tests/inserts-unit.mjs'"
 rm -rf dist
 ssh "$HOST" "incus --project ${MW_PROJECT:-default} exec $CONTAINER -- bash -c 'cd $DEST && tar cf - dist'" | tar xf -
 ls -l dist

@@ -10,11 +10,7 @@
 // Env (as tests/browser.spec.mjs): MELODICA_API (relay the fake script forwards
 // to, default https://spacegho.st/melodica/api/), MELODICA_DIST,
 // MELODICA_BROWSER_ALLOW_RELAY_BLOCK=1 (a Cloudflare challenge answered to the
-// fake script skips the credentials check instead of failing it),
-// MELODICA_RELAY_TOKEN (the fake script sends it as Authorization: Bearer, as the
-// real extension sends its own; without it a 401 from the gated relay skips the
-// credentials check with a log line). The local server answers /melodica/auth/me
-// with 503 (gate not configured) so the Pandora login shows directly.
+// fake script skips the credentials check instead of failing it).
 //
 // Artifacts: tests/artifacts/bridge-login-screen.png, bridge-login-error.png.
 
@@ -29,7 +25,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const DIST = resolve(process.env.MELODICA_DIST || resolve(here, '..', 'dist'));
 const RELAY = process.env.MELODICA_API || 'https://spacegho.st/melodica/api/';
 const ALLOW_RELAY_BLOCK = process.env.MELODICA_BROWSER_ALLOW_RELAY_BLOCK === '1';
-const TOKEN = process.env.MELODICA_RELAY_TOKEN || '';
 const ARTIFACTS = resolve(here, 'artifacts');
 const APP_PATH = '/melodica/app/';
 const EXT = { name: 'melodica extension', version: '0.1.0' };
@@ -53,10 +48,6 @@ test.beforeAll(async () => {
   await mkdir(ARTIFACTS, { recursive: true });
   server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
-    if (url.pathname === '/melodica/auth/me') {
-      // The gate is the Worker's; this fake has none, so the page goes straight to the Pandora login.
-      res.writeHead(503, { 'content-type': 'application/json' }); res.end('{"error":"auth not configured"}'); return;
-    }
     if (!url.pathname.startsWith(APP_PATH)) { res.writeHead(404); res.end('not found'); return; }
     let rel = url.pathname.slice(APP_PATH.length);
     if (rel === '' || rel.endsWith('/')) rel += 'index.html';
@@ -74,26 +65,15 @@ test.beforeAll(async () => {
   });
   await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
   base = `http://127.0.0.1:${server.address().port}${APP_PATH}`;
-  if (!TOKEN) console.log('MELODICA_RELAY_TOKEN is not set: if the relay is gated (GitHub sign-in), the credentials step is skipped.');
 });
 
 test.afterAll(async () => {
   if (server) await new Promise((ok) => server.close(ok));
 });
 
-// Chromium logs "Failed to load resource" for every non-2xx answer, including the
-// ones the gate handles on purpose (/auth/me 503/401, the relay's 401). Those are
-// not errors of the page; everything else is kept.
-function expectedResourceError(msg) {
-  if (msg.type() !== 'error' || !/Failed to load resource/.test(msg.text())) return false;
-  const url = (msg.location() && msg.location().url) || '';
-  return /\/melodica\/auth\//.test(url) || (/status of 401/.test(msg.text()) && /\/melodica\/api\//.test(url));
-}
-
 // The fake content script. Runs in the page world before app.js; `relay` is
-// where it forwards requests, `token` the access token it sends (the real
-// extension holds its own). window.__bridgeLog records what it saw.
-function fakeContentScript({ relay, ext, token }) {
+// where it forwards requests. window.__bridgeLog records what it saw.
+function fakeContentScript({ relay, ext }) {
   window.__bridgeLog = [];
   window.addEventListener('message', async (ev) => {
     if (ev.source !== window || ev.origin !== location.origin) return;
@@ -109,9 +89,7 @@ function fakeContentScript({ relay, ext, token }) {
     window.__bridgeLog.push(`request ${method} id=${d.id} body=${d.body instanceof Uint8Array ? d.body.length : typeof d.body}`);
     let reply;
     try {
-      const headers = { 'content-type': 'text/plain' };
-      if (token) headers.authorization = `Bearer ${token}`;
-      const res = await fetch(relay + d.search, { method: 'POST', headers, body: d.body });
+      const res = await fetch(relay + d.search, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: d.body });
       reply = { ok: res.ok, status: res.status, body: new Uint8Array(await res.arrayBuffer()) };
       window.__bridgeLog.push(`response ${method} ${res.status}`);
     } catch (err) {
@@ -130,8 +108,8 @@ async function openApp(page, url) {
       window.__cspViolations.push({ directive: ev.violatedDirective, blocked: ev.blockedURI, source: ev.sourceFile, line: ev.lineNumber });
     });
   });
-  await page.addInitScript(fakeContentScript, { relay: RELAY, ext: EXT, token: TOKEN });
-  page.on('console', (msg) => { if (!expectedResourceError(msg)) evidence.console.push(`[${msg.type()}] ${msg.text()}`); });
+  await page.addInitScript(fakeContentScript, { relay: RELAY, ext: EXT });
+  page.on('console', (msg) => evidence.console.push(`[${msg.type()}] ${msg.text()}`));
   page.on('pageerror', (err) => evidence.errors.push(String(err && err.stack || err)));
   page.on('requestfailed', (req) => evidence.failed.push(`${req.method()} ${req.url()} ${req.failure()?.errorText}`));
   page.on('response', (res) => {
@@ -201,17 +179,14 @@ test.describe.serial('extension bridge', () => {
         console.log('WARNING: the relay answered HTTP 403 (Cloudflare challenge) to the fake content script; the error was reported through the bridge but the credentials path could not be exercised here.');
         test.skip(true, 'relay blocked by Cloudflare from this network (MELODICA_BROWSER_ALLOW_RELAY_BLOCK=1)');
       }
-      const relayGated = evidence.relay.some((r) => r.status === 401);
-      if (relayGated && !TOKEN) {
-        console.log('WARNING: the relay answered HTTP 401 (GitHub sign-in gate) to the fake content script and MELODICA_RELAY_TOKEN is not set; the 401 travelled through the bridge, but the credentials path could not be exercised here.');
-        await expect(page.locator('#app')).toHaveAttribute('data-view', 'github');
-        test.skip(true, 'relay gated (GitHub sign-in) and no MELODICA_RELAY_TOKEN');
-      }
-      expect(relayGated, 'the relay rejected MELODICA_RELAY_TOKEN (401)').toBe(false);
-      expect(text, 'login message').toMatch(/wrong email address or password|invalid (username|password|credentials)/i);
+      // The fake content script forwards to the spacegho.st relay, whose allow-list
+      // answers first for this address (a real extension goes to Pandora directly).
+      const allowList = text === 'melodica access is by allow-list. Your request has been sent.';
+      if (!allowList) expect(text, 'login message').toMatch(/wrong email address or password|invalid (username|password|credentials)/i);
       expect(log.some((l) => l.startsWith('request auth.userLogin ')), 'userLogin went through the bridge').toBe(true);
       expect(evidence.errors, 'uncaught page errors').toEqual([]);
-      expect(evidence.console.filter((l) => l.startsWith('[error]')), 'console errors').toEqual([]);
+      const expected403 = (l) => allowList && /status of 403/.test(l);
+      expect(evidence.console.filter((l) => l.startsWith('[error]') && !expected403(l)), 'console errors').toEqual([]);
       await expect(page.locator('#app')).toHaveAttribute('data-view', 'login');
     } finally {
       await finish(page, evidence, info);

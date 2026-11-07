@@ -6,7 +6,7 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: 'tests',
-  testMatch: ['browser.spec.mjs', 'bridge.spec.mjs', 'gate.spec.mjs', 'remote.spec.mjs', 'design.spec.mjs', 'smoke-tuner.spec.mjs'],
+  testMatch: ['browser.spec.mjs', 'bridge.spec.mjs', 'remote.spec.mjs', 'design.spec.mjs', 'account.spec.mjs', 'smoke-tuner.spec.mjs', 'smoke-playback.spec.mjs'],
   outputDir: 'tests/artifacts/playwright',
   timeout: 90_000,
   expect: { timeout: 20_000 },

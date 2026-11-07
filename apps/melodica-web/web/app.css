@@ -149,8 +149,8 @@ a.button {
   border-radius: 10px; font-weight: 600; background: var(--gold); color: var(--on-accent); border: 1px solid var(--gold-2);
 }
 a.button:hover, a.button:focus-visible { background: var(--gold-2); text-decoration: none; }
-.denied { display: flex; flex-direction: column; gap: 0.8rem; }
-.github-line .link { min-height: 0; padding: 0; }
+.account-line-login { text-align: center; }
+.account-line-login .link { min-height: 0; padding: 0; }
 .login-card { width: min(100%, 26rem); display: flex; flex-direction: column; gap: 0.8rem; margin: 2rem 0; }
 .mark { display: grid; place-items: center; margin: -0.3rem 0 0.2rem; }
 .mark svg { width: 84px; height: 84px; stroke: var(--gold); stroke-width: 1.2; }

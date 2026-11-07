@@ -3,8 +3,8 @@
 // what each view looks like. DESIGN_CHECK_COLUMN=1 also asserts a one-column
 // layout (content at most 520 px wide and centered); the responsive layout
 // does not use that, so it is off by default.
-// Views: GitHub sign-in, Pandora login, player (remote mode against a fake
-// extension with a track playing), stations sheet. No network.
+// Views: Pandora login, player (remote mode against a fake extension with a
+// track playing). No network.
 // Output: tests/artifacts/design-<view>-<w>x<h>.png (DESIGN_TAG prefixes the name).
 import { test, expect } from '@playwright/test';
 import http from 'node:http';
@@ -24,16 +24,11 @@ const SIZES = [[390, 844], [1280, 800]];
 const SCHEME = process.env.DESIGN_SCHEME === 'dark' ? 'dark' : 'light';
 let server = null;
 let base = '';
-let gate = 'anonymous';
 
 test.beforeAll(async () => {
   await mkdir(ARTIFACTS, { recursive: true });
   server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
-    if (url.pathname === '/melodica/auth/me') {
-      const [s, b] = gate === 'off' ? [503, { error: 'auth not configured' }] : [401, { error: 'missing token' }];
-      res.writeHead(s, { 'content-type': 'application/json' }); res.end(JSON.stringify(b)); return;
-    }
     if (!url.pathname.startsWith(APP_PATH)) { res.writeHead(404); res.end(); return; }
     let rel = url.pathname.slice(APP_PATH.length) || 'index.html';
     if (rel.endsWith('/')) rel += 'index.html';
@@ -96,16 +91,7 @@ for (const [w, h] of SIZES) {
   test.describe(`${w}x${h}`, () => {
     test.use({ viewport: { width: w, height: h }, colorScheme: SCHEME });
 
-    test('GitHub sign-in', async ({ page }) => {
-      gate = 'anonymous';
-      await page.goto(base);
-      await expect(page.locator('#app')).toHaveAttribute('data-view', 'github', { timeout: 30_000 });
-      await shot(page, 'github', w, h);
-      expectColumn(await column(page));
-    });
-
     test('Pandora login', async ({ page }) => {
-      gate = 'off';
       await page.goto(base);
       await expect(page.locator('#app')).toHaveAttribute('data-view', 'login', { timeout: 30_000 });
       await shot(page, 'login', w, h);
@@ -113,7 +99,6 @@ for (const [w, h] of SIZES) {
     });
 
     test('player (remote mode)', async ({ page }) => {
-      gate = 'off';
       await page.addInitScript(fakeExtension);
       await page.goto(base);
       await expect(page.locator('#app')).toHaveAttribute('data-view', 'player', { timeout: 30_000 });

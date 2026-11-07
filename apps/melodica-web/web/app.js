@@ -3,7 +3,7 @@
 
 import { PianoClient, PianoError, resolveApiBase } from './piano.js';
 import { BridgeTransport } from './bridge.js';
-import { GithubGate } from './gate.js';
+import { Account } from './account.js';
 
 const VERSION = '__MELODICA_WEB_VERSION__';
 const STORAGE = {
@@ -13,7 +13,6 @@ const STORAGE = {
   quality: 'melodica.quality',
   station: 'melodica.station',
   shortcuts: 'melodica.shortcuts',
-  policy: 'melodica.policy',
 };
 // localStorage may throw (blocked cookies, sandboxed frame): degrade to session-only settings.
 const store = {
@@ -47,9 +46,10 @@ const $ = (id) => document.getElementById(id);
 const el = {
   app: $('app'), status: $('status'),
   viewLogin: $('view-login'), viewPlayer: $('view-player'), viewError: $('view-error'),
-  viewGithub: $('view-github'), githubButton: $('github-button'), githubMessage: $('github-message'),
-  githubDenied: $('github-denied'), githubDeniedText: $('github-denied-text'), githubSignout: $('github-signout'),
-  githubLine: $('github-line'), githubLogin: $('github-login'), githubSignout2: $('github-signout-2'),
+  accessNote: $('access-note'),
+  accountLine: $('account-line'), accountSignin: $('account-signin'), accountSigned: $('account-signed'),
+  accountName: $('account-name'), accountSignout: $('account-signout'),
+  accountMenuLine: $('account-menu-line'), accountMenuName: $('account-menu-name'), accountMenuSignout: $('account-menu-signout'),
   loginForm: $('login-form'), email: $('login-email'), password: $('login-password'),
   remember: $('login-remember'), rememberWarning: $('remember-warning'),
   loginButton: $('login-button'), loginMessage: $('login-message'), fatal: $('fatal-message'),
@@ -91,24 +91,18 @@ function readQuality() {
 const lowerQuality = (q) => QUALITIES[Math.min(QUALITIES.indexOf(q) + 1, QUALITIES.length - 1)];
 
 // Playback compatibility state is read before loading a playlist.
-// playlist are played; it defaults to true and is replaced by what the
-// account's policy endpoint answers (stored under melodica.policy).
-function readPolicy() {
-  try {
-    const p = JSON.parse(store.get(STORAGE.policy) || 'null');
-    return { inserts: !(p && p.inserts === false) };
-  } catch (_) {
-    return { inserts: true };
-  }
-}
+// Defaults apply until a valid account response is available.
+// (refreshPolicy). Nothing is cached between page loads.
+function readPolicy() { return { inserts: true }; }
 
 const state = {
   client: null,
   bridge: null,       // BridgeTransport when the page may use the extension bridge
-  gate: null,         // GithubGate (GitHub sign-in gate)
+  account: null,      // Account (optional spacegho.st sign-in)
+  accountReady: Promise.resolve(), // the policy is known once this settles
+  policyReady: Promise.resolve(),  // the latest policy request
   remote: false,      // true when the melodica extension plays and this page is its view
   remoteState: null,  // last state pushed by the extension
-  gateStatus: null,   // last GithubGate.check() result
   apiBase: '',
   apiFromQuery: false,
   stations: [],
@@ -130,7 +124,7 @@ const state = {
 // ---------------------------------------------------------------- helpers
 
 function show(view) {
-  for (const v of [el.viewGithub, el.viewLogin, el.viewPlayer, el.viewError]) v.hidden = v !== view;
+  for (const v of [el.viewLogin, el.viewPlayer, el.viewError]) v.hidden = v !== view;
   el.app.dataset.view = view.id.replace('view-', '');
   el.account.hidden = view !== el.viewPlayer;
   el.account.open = false;
@@ -980,7 +974,7 @@ function renderRemote(rs) {
   const gateMode = rs.gate && rs.gate.mode;
   if (rs.loggedIn === false || (gateMode && gateMode !== 'allowed' && gateMode !== 'off')) {
     el.hint.textContent = gateMode && gateMode !== 'allowed' && gateMode !== 'off'
-      ? 'Sign in with GitHub in the melodica extension, then come back.'
+      ? 'Sign in in the melodica extension, then come back.'
       : 'Sign in to Pandora in the melodica extension, then come back.';
   } else if (!state.song) {
     updateHint();
@@ -1009,62 +1003,63 @@ function enterRemote(first) {
   visibleStationButton()?.focus();
 }
 
-// ---------------------------------------------------------------- GitHub gate
+// ---------------------------------------------------------------- spacegho.st account
+// Optional. The policy endpoint is asked with the account's token when signed in,
+// else with the relay's access token from the Pandora login; without either the
+// policy is the default (web/account.js, docs/ACCOUNT.md). No text explains it.
 
-// Where GitHub sends the browser back: the hosted app's address (the Worker accepts
-// exactly https://spacegho.st/melodica/app/, so a self-host needs its own Worker).
-const RETURN_TO = location.origin + '/melodica/app/';
+// The relay's host name ('' when the address is unusable).
+function relayHost() {
+  try { return new URL(state.apiBase, location.href).hostname; } catch (_) { return ''; }
+}
 
-// The GitHub sign-in screen. `gate` is a GithubGate.check() result; `note` is an extra
-// line (a relay 401's own message, or a GitHub-side error code).
-function showGithub(gate, note = '') {
-  el.audio.pause();
-  playerMessage('');
-  show(el.viewGithub);
-  const denied = gate && gate.status === 'denied' && gate.login;
-  el.githubDenied.hidden = !denied;
-  el.githubButton.hidden = !!denied;
-  if (denied) {
-    el.githubDeniedText.textContent = `melodica is not available for your GitHub account (${gate.login}).`;
-  } else {
-    el.githubDeniedText.textContent = '';
-    el.githubButton.href = state.gate ? state.gate.startUrl(RETURN_TO) : '#';
+// Re-read the policy (after a login, a renewed relay token, sign-in or sign-out).
+function refreshPolicy() {
+  const a = state.account;
+  state.policyReady = (a ? a.policy(state.client.accessToken) : Promise.resolve({ inserts: true }))
+    .then((p) => { state.policy = p; }, () => { state.policy = { inserts: true }; });
+  return state.policyReady;
+}
+
+// The account line on the login card and the entries in the account menu.
+function updateAccountLine() {
+  const a = state.account;
+  const available = !!(a && a.config);
+  el.accessNote.hidden = !(available || relayHost() === 'spacegho.st');
+  el.accountLine.hidden = !available;
+  const signedIn = available && a.signedIn;
+  el.accountSignin.hidden = signedIn;
+  el.accountSigned.hidden = !signedIn;
+  el.accountName.textContent = signedIn ? a.label : '';
+  el.accountMenuLine.hidden = !signedIn;
+  el.accountMenuName.textContent = signedIn ? a.label : '';
+  el.accountMenuSignout.hidden = !signedIn;
+}
+
+// Discovery, a finished sign-in round trip, the policy and the profile.
+async function setupAccount() {
+  const a = state.account;
+  if (!(await a.discover())) return;
+  const back = await a.finishRedirect(location, history);
+  if (back.error) loginMessage(`spacegho.st sign-in did not complete (${back.error}).`, 'error');
+  await refreshPolicy();
+  if (a.signedIn) await a.profile();
+  updateAccountLine();
+}
+
+async function accountSignIn(ev) {
+  ev.preventDefault();
+  try {
+    location.assign(await state.account.startUrl());
+  } catch (err) {
+    loginMessage(describeError(err), 'error');
   }
-  message(el.githubMessage, note, note ? 'error' : 'info', 0);
-  (denied ? el.githubSignout : el.githubButton).focus();
 }
 
-// A relay 401 (token missing or not allowed): back to the GitHub screen with the relay's message.
-let routing = null;
-function onUnauthorized(err) {
-  if (routing) return;
-  stopPlayback();
-  state.client.credentials = null;
-  routing = (state.gate ? state.gate.check() : Promise.resolve({ status: 'anonymous' }))
-    .then((gate) => {
-      state.gateStatus = gate;
-      state.client.authToken = state.gate ? state.gate.token : '';
-      showGithub(gate, describeError(err));
-    })
-    .finally(() => { routing = null; });
-}
-
-async function githubSignOut() {
-  if (!state.gate) return;
-  await state.gate.signOut();
-  state.client.authToken = '';
-  state.gateStatus = { status: 'anonymous', token: '', login: '', allowed: false };
-  stopPlayback();
-  state.client.logout();
-  showGithub(state.gateStatus);
-}
-
-// The small "GitHub: <login> · sign out" line on the Pandora login card.
-function updateGithubLine() {
-  const g = state.gateStatus;
-  const signedIn = !!(g && g.login && (g.status === 'allowed' || g.status === 'denied'));
-  el.githubLine.hidden = !signedIn;
-  el.githubLogin.textContent = signedIn ? g.login : '';
+async function accountSignOut() {
+  await state.account.signOut();
+  await refreshPolicy();
+  updateAccountLine();
 }
 
 // ---------------------------------------------------------------- login
@@ -1073,7 +1068,7 @@ function showLogin() {
   el.audio.pause();
   playerMessage('');
   show(el.viewLogin);
-  updateGithubLine();
+  updateAccountLine();
   el.email.value = store.get(STORAGE.email) || '';
   const saved = store.get(STORAGE.password);
   el.password.value = saved || '';
@@ -1086,7 +1081,9 @@ async function login(email, password) {
   el.loginButton.disabled = true;
   loginMessage('Signing in…', 'info');
   try {
+    await state.accountReady; // the playback policy is known before anything plays
     await state.client.login(email, password);
+    await state.policyReady; // asked with the relay's new access token (onAccess)
     if (store.get(STORAGE.email) !== email) {
       // A different account: its predecessor's play log (and rate tokens) must not carry over.
       state.history = [];
@@ -1156,8 +1153,9 @@ function installEvents() {
     store.set(STORAGE.shortcuts, state.shortcutsOn ? '1' : '0');
   });
   el.logout.addEventListener('click', logout);
-  el.githubSignout.addEventListener('click', githubSignOut);
-  el.githubSignout2.addEventListener('click', githubSignOut);
+  el.accountSignin.addEventListener('click', accountSignIn);
+  el.accountSignout.addEventListener('click', accountSignOut);
+  el.accountMenuSignout.addEventListener('click', () => { el.account.open = false; accountSignOut(); });
   el.refreshStations.addEventListener('click', () => {
     if (state.remote) { remoteCommand('stations'); return; }
     loadStations().catch((e) => playerMessage(describeError(e), 'error'));
@@ -1306,17 +1304,16 @@ async function main() {
   state.apiBase = api.apiBase;
   state.apiFromQuery = api.fromQuery;
   const log = (m) => console.debug('[piano]', m);
-  state.client = new PianoClient({ apiBase: api.apiBase, log, onUnauthorized });
-  // The GitHub sign-in gate: the token arrives in the fragment after the GitHub round
-  // trip and lives in localStorage. With ?api= (local dev, the tuner smoke) the GitHub
-  // screen is skipped; the stored token, if any, is still sent to the relay.
-  const authBase = resolveApiBase('../auth/', location.href);
-  state.gate = new GithubGate({ authBase, store, log: (m) => console.debug('[gate]', m) });
-  const arrived = state.gate.takeTokenFromHash(location, history);
-  state.client.authToken = state.gate.token;
-  const gateCheck = api.fromQuery
-    ? Promise.resolve({ status: 'off', token: state.gate.token, login: '', allowed: false, reason: '?api=' })
-    : state.gate.check().catch((err) => ({ status: 'unknown', token: state.gate.token, login: '', allowed: false, reason: describeError(err) }));
+  state.client = new PianoClient({ apiBase: api.apiBase, log, onAccess: () => { refreshPolicy(); } });
+  // The optional spacegho.st account: finishes a sign-in round trip and reads the
+  // policy while the wasm loads; logins wait for it so the policy is known first.
+  const session = {
+    get(k) { try { return sessionStorage.getItem(k); } catch (_) { return null; } },
+    set(k, v) { try { sessionStorage.setItem(k, v); } catch (_) { /* unavailable */ } },
+    remove(k) { try { sessionStorage.removeItem(k); } catch (_) { /* unavailable */ } },
+  };
+  state.account = new Account({ origin: location.origin, store, session, log: (m) => console.debug('[account]', m) });
+  state.accountReady = setupAccount().catch((err) => console.debug('[account]', describeError(err)));
   // The extension bridge: say hello now so a content script can answer while
   // the wasm loads. An explicit ?api= wins over it (the CI smoke relies on that).
   if (!api.fromQuery) {
@@ -1341,15 +1338,9 @@ async function main() {
     return;
   }
   updateStatus();
-  const gate = await gateCheck;
-  state.gateStatus = gate;
-  state.client.authToken = state.gate.token; // /auth/me may have refreshed it
-  if (gate.reason) console.debug('[gate]', `${gate.status} (${gate.reason})`);
-  if (gate.status === 'anonymous' || gate.status === 'denied') {
-    showGithub(gate, arrived.error ? `GitHub sign-in did not complete (${arrived.error}). Try again.` : '');
-    return;
-  }
   showLogin();
+  await state.accountReady;
+  updateAccountLine();
   if (el.email.value && el.password.value) login(el.email.value, el.password.value);
 }
 

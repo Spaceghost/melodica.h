@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = resolve(process.env.MELODICA_DIST || resolve(here, '..', 'dist'));
-const { PianoClient, PianoError } = await import(pathToFileURL(resolve(dist, 'piano.js')).href);
+const { PianoClient, PianoError, relayMethod } = await import(pathToFileURL(resolve(dist, 'piano.js')).href);
 
 const log = (...a) => console.log('[unit]', ...a);
 const client = new PianoClient({ apiBase: 'https://relay.example/api/', fetch: () => { throw new Error('no network in unit test'); } });
@@ -194,6 +194,62 @@ const list = await fake.stations();        // first answer is 1001 -> relogin ->
 assert.equal(list.length, 3);
 assert.equal(calls, 6, `expected relogin round trips, got ${calls}`);
 log('client re-login on 1001 ok');
+
+// --- relay access token (docs/ACCOUNT.md): x-melodica-access after userLogin -------------
+{
+  const seen = [];
+  let tokenN = 0;
+  let expireNext = false;
+  let heard = [];
+  const relayed = new PianoClient({ apiBase: 'https://relay.example/api/', onAccess: (t) => heard.push(t), fetch: async (url, init) => {
+    const method = new URL(url).searchParams.get('method');
+    const token = init.headers['x-melodica-access'] || '';
+    seen.push({ method, token });
+    if (method === 'auth.partnerLogin') return new Response(partnerBody);
+    if (method === 'auth.userLogin') {
+      tokenN += 1;
+      return new Response(JSON.stringify({ stat: 'ok', result: { userId: 'U2', userAuthToken: 'T2' } }), { headers: { 'x-melodica-access': `tok${tokenN}` } });
+    }
+    if (expireNext || token !== `tok${tokenN}`) {
+      expireNext = false;
+      return new Response(JSON.stringify({ stat: 'fail', code: -1, message: 'melodica access is by allow-list; signing in sends your email to the admin as an access request.' }), { status: 401 });
+    }
+    if (method === 'user.getStationList') return new Response(JSON.stringify(stationsBody));
+    throw new Error(`unexpected ${method}`);
+  } });
+  await relayed.load();
+  await relayed.login('a@b.c', 'pw');
+  assert.equal(relayed.accessToken, 'tok1');
+  assert.deepEqual(heard, ['tok1'], 'onAccess hears the new token');
+  assert.deepEqual(seen.map((c) => [c.method, c.token]), [['auth.partnerLogin', ''], ['auth.userLogin', '']], 'auth.* calls carry no token');
+  seen.length = 0;
+  assert.equal((await relayed.stations()).length, 3);
+  assert.deepEqual(seen.map((c) => [c.method, c.token]), [['user.getStationList', 'tok1']], 'later calls carry the token');
+  // Expired token (401): log in again, get a new token, retry once.
+  seen.length = 0;
+  expireNext = true;
+  assert.equal((await relayed.stations()).length, 3);
+  assert.deepEqual(seen.map((c) => [c.method, c.token]), [
+    ['user.getStationList', 'tok1'], ['auth.partnerLogin', ''], ['auth.userLogin', ''],
+    ['user.getStationList', 'tok2'],
+  ], '401 -> re-login -> retry with the new token');
+  assert.deepEqual(heard, ['tok1', 'tok2']);
+  relayed.logout();
+  assert.equal(relayed.accessToken, '', 'logout forgets the token');
+
+  // Not on the allow-list: 403 with the relay's message, shown as is; no token.
+  const refused = new PianoClient({ apiBase: 'https://relay.example/api/', fetch: async (url) => {
+    const method = new URL(url).searchParams.get('method');
+    if (method === 'auth.partnerLogin') return new Response(partnerBody);
+    return new Response(JSON.stringify({ stat: 'fail', code: -1, message: 'melodica access is by allow-list. Your request has been sent.' }), { status: 403 });
+  } });
+  await refused.load();
+  await assert.rejects(refused.login('x@y.z', 'pw'), (err) => err.message === 'melodica access is by allow-list. Your request has been sent.' && err.kind === 'access');
+  assert.equal(refused.accessToken, '');
+  assert.equal(relayMethod('/services/json/?method=auth.userLogin&partner_id=1'), 'auth.userLogin');
+  assert.equal(relayMethod('/x?a=1'), '');
+  log('relay access token ok');
+}
 
 // --- churn: no crash across many cycles (memory growth sanity) -------------
 for (let i = 0; i < 300; i++) {

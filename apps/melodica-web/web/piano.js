@@ -59,7 +59,9 @@ export class PianoError extends Error {
     }
     return reply.error || 'Unknown error.';
   }
-  get needsRelogin() { return this.code === 1001; }
+  // 1001: Pandora session expired. 'access-expired': the relay's access token
+  // (x-melodica-access, 12 h) is missing or expired; a fresh login renews it.
+  get needsRelogin() { return this.code === 1001 || this.kind === 'access-expired'; }
   get badCredentials() { return this.status === 5 || this.code === 1011 || this.code === 1012; }
 }
 
@@ -69,11 +71,10 @@ export class PianoClient {
     this.bridge = options.bridge || null;    // BridgeTransport; used while it is active
     this.fetch = options.fetch || globalThis.fetch.bind(globalThis);
     this.log = options.log || (() => {});
-    // The GitHub sign-in token (see gate.js) sent as Authorization: Bearer to the
-    // relay; the extension bridge never needs it (the extension gates itself).
-    this.authToken = options.authToken || '';
-    // Called with the PianoError when the relay answers 401 (no token, or one that is not allowed).
-    this.onUnauthorized = options.onUnauthorized || null;
+    // The relay's access token from the last auth.userLogin (docs/ACCOUNT.md); sent as
+    // x-melodica-access on every later relay call. onAccess(token) hears each new one.
+    this.accessToken = '';
+    this.onAccess = options.onAccess || null;
     this.module = null;
     this.credentials = null;
     this.busy = Promise.resolve();
@@ -156,7 +157,7 @@ export class PianoClient {
     const res = await this.bridge.request(search, new TextEncoder().encode(req.postData));
     if (!res.status && !res.ok) throw new BridgeError(res.error || 'the extension reported a failure without a status');
     const text = bodyToText(res.body);
-    if (res.status === 401) throw this.unauthorized(text, `the ${this.bridge.label}`);
+    if (res.status === 401 || res.status === 403) accessFailure(res.status, text, this);
     if (!res.ok && !text.startsWith('{')) {
       throw new PianoError({ status: 0, code: null, error: (res.error || text).slice(0, 200) }, {
         kind: 'relay',
@@ -168,9 +169,12 @@ export class PianoClient {
 
   async postRelay(req) {
     const url = this.relayUrl(req.urlPath);
-    let res;
+    const method = relayMethod(req.urlPath);
     const headers = { 'content-type': 'text/plain' };
-    if (this.authToken) headers.authorization = `Bearer ${this.authToken}`;
+    if (this.accessToken && !method.startsWith('auth.') && method !== 'test.checkLicensing') {
+      headers['x-melodica-access'] = this.accessToken;
+    }
+    let res;
     try {
       res = await this.fetch(url, { method: 'POST', headers, body: req.postData });
     } catch (err) {
@@ -180,30 +184,23 @@ export class PianoClient {
       });
     }
     const text = await res.text();
-    if (res.status === 401) throw this.unauthorized(text, `the relay at ${this.apiBase}`);
+    if (res.status === 401 || res.status === 403) accessFailure(res.status, text, this);
     if (!res.ok && !text.startsWith('{')) {
       throw new PianoError({ status: 0, code: null, error: text.slice(0, 200) }, {
         kind: 'relay',
         message: `The relay at ${this.apiBase} answered HTTP ${res.status}.`,
       });
     }
-    return text;
-  }
-
-  // A 401 from the relay (access gate; body {"stat":"fail","code":-1,"message":…}):
-  // a PianoError of kind 'auth' carrying the relay's own words, and onUnauthorized fires
-  // so the UI can send the user to the GitHub screen.
-  unauthorized(text, where) {
-    let message = '';
-    try { message = String(JSON.parse(text).message || ''); } catch (_) { /* not JSON */ }
-    const err = new PianoError({ status: 0, code: null, error: text.slice(0, 200) }, {
-      kind: 'auth',
-      message: message || `${where} requires signing in with GitHub (HTTP 401).`,
-    });
-    if (this.onUnauthorized) {
-      try { this.onUnauthorized(err); } catch (_) { /* the UI's problem */ }
+    if (method === 'auth.userLogin' && res.ok) {
+      const token = res.headers && res.headers.get ? res.headers.get('x-melodica-access') : null;
+      if (token) {
+        this.accessToken = token;
+        if (this.onAccess) {
+          try { this.onAccess(token); } catch (_) { /* a listener must not break the login */ }
+        }
+      }
     }
-    return err;
+    return text;
   }
 
   // One libpiano request/response cycle, including the two-step login.
@@ -251,6 +248,7 @@ export class PianoClient {
   }
   logout() {
     this.credentials = null;
+    this.accessToken = '';
     this.fn.init();
   }
   stations() { return this.call({ action: 'stations' }).then((r) => r.stations); }
@@ -284,6 +282,26 @@ export class PianoClient {
   deleteStation(stationId) {
     return this.call({ action: 'deleteStation', stationId }).then((r) => r.stations);
   }
+}
+
+// The relay's allow-list answers (docs/ACCOUNT.md: HTTP 401/403 with
+// {"stat":"fail","code":-1,"message":…}) throw with that message, shown as is.
+// Other 401/403 bodies return and are handled as before.
+function accessFailure(status, text, client) {
+  let body = null;
+  try { body = JSON.parse(text); } catch (_) { return; }
+  if (!body || body.stat !== 'fail' || body.code !== -1 || typeof body.message !== 'string') return;
+  if (status === 401) client.accessToken = '';
+  throw new PianoError({ status: 0, code: null, error: body.message }, {
+    kind: status === 401 ? 'access-expired' : 'access',
+    message: body.message,
+  });
+}
+
+// The Pandora method of a libpiano URL path ('auth.userLogin', ...), or ''.
+export function relayMethod(urlPath) {
+  const m = /[?&]method=([^&]*)/.exec(urlPath || '');
+  return m ? decodeURIComponent(m[1]) : '';
 }
 
 // Resolve the relay base URL: explicit value, else `../api/` relative to the
