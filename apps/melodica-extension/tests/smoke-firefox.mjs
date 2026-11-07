@@ -10,8 +10,10 @@
 //      allowed token is left in place so part 2 reaches the Pandora login;
 //   1. against melodica-tuner, like the Chromium and Brave smokes: the options
 //      page points the extension at the tuner, the popup (opened as a tab)
-//      signs in, lists the fixture's stations, starts one; the player tab opens
-//      and its <audio> element plays;
+//      signs in, lists the fixture's stations, starts one; no tab opens, the
+//      background page plays it, and after 45 s with no extension page open
+//      at all the state must still be playing with the position advanced; the
+//      optional player tab shows the same track and closing it stops nothing;
 //   2. against the real tuner.pandora.com, with no account: the endpoint is
 //      reset to Pandora and bogus credentials are submitted. Pandora answers
 //      auth.userLogin with code 1002 when the request framing (auth_token
@@ -28,7 +30,7 @@
 // start a checkout here; MELODICA_EXT_DIST (default dist/firefox);
 // MELODICA_FIREFOX (binary, default: firefox on PATH); GECKODRIVER (default: geckodriver on PATH); MELODICA_HEADLESS=0 for
 // a window; MELODICA_SKIP_REAL=1 skips part 2.
-// Output: tests/artifacts/smoke-firefox.json and smoke-firefox-{login,stations,playing,real-pandora}.png
+// Output: tests/artifacts/smoke-firefox.json and smoke-firefox-{gate,gate-denied,login,stations,playing,popup-playing,player-tab,real-pandora}.png
 import { Builder, By, until } from 'selenium-webdriver';
 import { startFakeAuth, makeToken, parseClaims } from './fake-auth.mjs';
 import firefox from 'selenium-webdriver/firefox.js';
@@ -330,40 +332,76 @@ try {
   step('stations listed');
   await screenshot(driver, 'stations');
 
-  // 3. Start a station: the player tab opens and plays.
-  const popupHandle = await driver.getWindowHandle();
+  // 3. Start a station from the popup. No tab opens: the background page holds
+  //    the <audio> element (Firefox has no offscreen documents) and the popup is
+  //    a view of its state.
   const before = await driver.getAllWindowHandles();
   const first = (await driver.findElements(By.css('#station-list button.station')))[0];
   const chosen = (await first.getText()).trim();
   await first.click();
-  const handles = await waitFor(driver, async () => { const h = await driver.getAllWindowHandles(); return h.length > before.length ? h : null; }, 'player tab');
-  const playerHandle = handles.find((h) => !before.includes(h));
-  await driver.switchTo().window(playerHandle);
-  await waitFor(driver, async () => (await driver.getCurrentUrl()).startsWith(`${ext}/player.html`) ? true : null, 'player url');
-  await waitFor(driver, async () => {
-    const t = await driver.executeScript(() => document.getElementById('np-title')?.textContent || '');
-    return t && !/^(Pick a station)?$/.test(t.trim()) ? t : null;
-  }, 'now playing title');
+  await waitFor(driver, async () => (await driver.executeScript(() => document.getElementById('app')?.dataset.status || '')) === 'playing' ? true : null, 'playing status in the popup', 45_000);
   const now = await driver.executeScript(() => ({
     title: document.getElementById('np-title')?.textContent.trim(),
     artist: document.getElementById('np-artist')?.textContent.trim(),
     station: document.getElementById('np-station')?.textContent.trim(),
   }));
-  check(now.station.includes(chosen), `player shows the chosen station (${now.station} vs ${chosen})`);
+  check(now.title && !/^Pick a station$/.test(now.title), `popup shows a track (${now.title})`);
+  check(now.station.includes(chosen), `popup shows the chosen station (${now.station} vs ${chosen})`);
   console.log(`now playing: ${now.title} – ${now.artist} on ${now.station}`);
-  await waitFor(driver, async () => driver.executeScript(() => { const a = document.getElementById('audio'); return a && (a.readyState >= 2 || a.error) ? true : null; }), 'audio ready');
-  await waitFor(driver, async () => driver.executeScript(() => { const a = document.getElementById('audio'); return a && (a.currentTime > 0.5 || a.error) ? true : null; }), 'audio progress', 15_000).catch(() => {});
-  const audio = await driver.executeScript(() => { const a = document.getElementById('audio'); return { src: a.src, readyState: a.readyState, paused: a.paused, currentTime: a.currentTime, duration: a.duration, error: a.error ? a.error.code : null }; });
-  report.audio = { ...audio, ...now, station: chosen };
-  console.log(`audio: ${JSON.stringify(audio)}`);
+  check((await driver.getAllWindowHandles()).length === before.length, 'no tab opened by starting a station');
+  const playerState = async () => { const r = await ask(driver, { type: 'player-get' }); if (!r || !r.ok) throw new Error(`player-get: ${r && r.error}`); return r.state; };
+  const st1 = await playerState();
+  check(st1.status === 'playing', `background state playing (${st1.status} ${st1.error})`);
+  check(st1.track && st1.track.title === now.title, 'background state names the shown track');
+  check(st1.track && /\/audio\//.test(st1.track.audioUrl), 'the track came from the tuner');
   await screenshot(driver, 'playing');
-  check(audio.error === null, `audio element error ${audio.error}`);
-  check(audio.src.includes('/audio/'), 'audio src from the tuner');
-  check(audio.readyState >= 2, `HTMLMediaElement.readyState ${audio.readyState}`);
-  check(audio.paused === false, 'audio playing');
-  step('playing');
+  step('playing without a tab');
+
+  // Leave the extension entirely: this tab goes to about:blank, so no extension page
+  // exists for 45 s (longer than Firefox's 30 s event-page idle timeout). Back in a
+  // popup, the background must still be playing and the position must have advanced
+  // by about that long (or the track ended and the next one is playing).
+  const NO_PAGE_MS = 45_000;
+  await driver.get('about:blank');
+  await sleep(NO_PAGE_MS);
+  await goExt(driver, `${ext}/popup.html`);
+  const st2 = await playerState();
+  const advanced = st2.track && st1.track && st2.track.trackToken === st1.track.trackToken
+    ? st2.position - st1.position
+    : null;
+  console.log(`after ${NO_PAGE_MS / 1000}s with no page: ${JSON.stringify({ status: st2.status, position: st2.position, title: st2.track && st2.track.title, advanced, history: (st2.history || []).length })}`);
+  check(st2.status === 'playing', `still playing with no page open (${st2.status} ${st2.error})`);
+  check(advanced === null ? (st2.history || []).length > (st1.history || []).length : advanced >= NO_PAGE_MS / 1000 - 8, `position advanced with no page open (${advanced === null ? 'next track' : advanced.toFixed(1) + 's'})`);
+  await waitFor(driver, async () => (await driver.executeScript(() => document.getElementById('np-title')?.textContent.trim() || '')) === (st2.track && st2.track.title) ? true : null, 'popup shows the current track');
+  await screenshot(driver, 'popup-playing');
+  report.audio = { ...now, engine: 'background page', noPage: { seconds: NO_PAGE_MS / 1000, before: { status: st1.status, position: st1.position, title: st1.track.title }, after: { status: st2.status, position: st2.position, title: st2.track && st2.track.title }, advanced } };
+  step('plays 45 s with no page open');
+
+  // The player tab is optional: opened from the popup it shows the same track and holds
+  // no <audio>; closing it stops nothing.
+  const popupHandle = await driver.getWindowHandle();
+  const handlesBefore = await driver.getAllWindowHandles();
+  await driver.findElement(By.css('#open-player')).click();
+  const handles = await waitFor(driver, async () => { const h = await driver.getAllWindowHandles(); return h.length > handlesBefore.length ? h : null; }, 'player tab');
+  const playerHandle = handles.find((h) => !handlesBefore.includes(h));
+  await driver.switchTo().window(playerHandle);
+  await waitFor(driver, async () => (await driver.getCurrentUrl()).startsWith(`${ext}/player.html`) ? true : null, 'player url');
+  const st3 = await playerState();
+  await waitFor(driver, async () => (await driver.executeScript(() => document.getElementById('np-title')?.textContent.trim() || '')) === (st3.track && st3.track.title) ? true : null, 'player tab shows the current track');
+  const tabView = await driver.executeScript(() => ({ status: document.getElementById('player-status')?.textContent || '', audio: document.querySelectorAll('#audio').length, progress: Number(document.getElementById('np-progress')?.value || 0) }));
+  check(/Playing in the background/.test(tabView.status), `player tab says the music plays in the background (${tabView.status})`);
+  check(tabView.audio === 0, 'no audio element in the player tab');
+  await waitFor(driver, async () => (await driver.executeScript(() => Number(document.getElementById('np-progress')?.value || 0))) > tabView.progress + 1 ? true : null, 'progress advancing in the player tab', 15_000);
+  await screenshot(driver, 'player-tab');
   await driver.close();
   await driver.switchTo().window(popupHandle);
+  const st4 = await playerState();
+  await sleep(3000);
+  const st5 = await playerState();
+  check(st5.status === 'playing', `still playing after the player tab closed (${st5.status})`);
+  check(st5.track.trackToken !== st4.track.trackToken || st5.position > st4.position + 1, 'position advanced after the player tab closed');
+  report.audio.playerTab = { title: st3.track && st3.track.title, afterClose: { status: st5.status, position: st5.position } };
+  step('player tab optional');
 
   // 4. The real tuner.pandora.com without an account (the Firefox-only part of the proof).
   if (process.env.MELODICA_SKIP_REAL === '1') {
@@ -401,7 +439,7 @@ try {
   }
 
   report.ok = true;
-  report.summary = `${report.browser}: temporary add-on ${GECKO_ID} with host permission ${origins.join(' ')}; GitHub gate screen shown, allowed/denied/503/401/expired tokens handled against the fake /auth/me; signed in to the tuner (${tuner.version}), listed ${names.length} stations, played "${now.title}" (readyState ${audio.readyState}); ` +
+  report.summary = `${report.browser}: temporary add-on ${GECKO_ID} with host permission ${origins.join(' ')}; GitHub gate screen shown, allowed/denied/503/401/expired tokens handled against the fake /auth/me; signed in to the tuner (${tuner.version}), listed ${names.length} stations, played "${now.title}" in the background page with no tab (still playing after ${NO_PAGE_MS / 1000}s with no extension page open; the optional player tab showed it and its closing changed nothing); ` +
     (report.realPandora.skipped ? 'real Pandora probe skipped' : `real tuner.pandora.com with bogus credentials -> auth.userLogin code ${report.realPandora.code} ("${report.realPandora.message}")`);
 } catch (e) {
   report.ok = false;

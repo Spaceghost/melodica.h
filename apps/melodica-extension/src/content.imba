@@ -1,11 +1,19 @@
-# Bridge content script for https://spacegho.st/melodica/app/*: lets the web
-# client skip its relay by routing Pandora calls through the extension.
+# Bridge content script for https://spacegho.st/melodica/app/*. Two layers
+# (docs/BRIDGE.md): the relay, which lets the web client route its own Pandora
+# calls through the extension, and since 0.3.0 the remote control, which lets a
+# page that sends `subscribe` show and steer the extension's own background
+# playback instead of running its own loop. A page that never subscribes gets
+# the relay exactly as before.
 #
 # Protocol (window.postMessage, same window, same origin, data.melodica === 1):
 #   page -> {melodica:1, type:'hello'}
-#   ext  -> {melodica:1, type:'ready', name:'melodica-extension', version}
+#   ext  -> {melodica:1, type:'ready', name:'melodica-extension', version, player:true}
 #   page -> {melodica:1, type:'request', id, search:'?method=…', body:Uint8Array}
 #   ext  -> {melodica:1, type:'response', id, ok, status, body:Uint8Array, error}
+#   page -> {melodica:1, type:'subscribe'} | {type:'unsubscribe'}
+#   ext  -> {melodica:1, type:'state', state}            (on subscribe and on every change)
+#   page -> {melodica:1, type:'command', id, action, …}  (play/pause/toggle/next/love/ban/tired/stop/volume/quality/stations)
+#   ext  -> {melodica:1, type:'result', id, ok, error, state}
 # The extension also announces 'ready' once when it loads. Only searches whose
 # method matches /^[a-z]+\.[A-Za-z]+$/ are forwarded; the background POSTs the
 # body to <endpoint><search> with content-type text/plain and no cookies.
@@ -16,8 +24,59 @@ const NAME = 'melodica-extension'
 const VERSION = browser.runtime.getManifest().version
 const METHOD = /^[a-z]+\.[A-Za-z]+$/
 
+let subscribed = no
+
 def announce
-	window.postMessage({melodica: 1, type: 'ready', name: NAME, version: VERSION}, location.origin)
+	window.postMessage({melodica: 1, type: 'ready', name: NAME, version: VERSION, player: yes}, location.origin)
+
+# The page never sees audio URLs (the track's or the play log's).
+def strip song
+	return song unless song
+	const t = Object.assign({}, song)
+	delete t.audioUrl
+	t
+
+def publicState state
+	return state unless state and typeof state === 'object'
+	Object.assign({}, state, {track: strip(state.track), history: Array.isArray(state.history) ? state.history.map(strip) : []})
+
+def pushState state
+	window.postMessage({melodica: 1, type: 'state', state: publicState(state)}, location.origin)
+
+def subscribe
+	subscribed = yes
+	try
+		const r = await browser.runtime.sendMessage({type: 'player-subscribe', on: yes})
+		pushState(r and r.ok ? r.state : {status: 'error', error: r and r.error or 'the extension did not answer'})
+	catch e
+		pushState({status: 'error', error: String(e and e.message or e)})
+
+def handleCommand data
+	const id = String(data.id)
+	const reply = do(fields)
+		window.postMessage(Object.assign({melodica: 1, type: 'result', id}, fields), location.origin)
+	try
+		const action = String(data.action or '')
+		let r
+		if action === 'stations'
+			r = await browser.runtime.sendMessage({type: 'stations'})
+			return reply({ok: no, error: r and r.error or 'extension error'}) unless r and r.ok
+			r = await browser.runtime.sendMessage({type: 'player-get'})
+		else
+			const msg = {type: 'player', action}
+			msg.station = {token: String(data.station.token), name: String(data.station.name or '')} if data.station and data.station.token
+			msg.value = data.value if data.value !== undefined
+			r = await browser.runtime.sendMessage(msg)
+		return reply({ok: no, error: 'the extension did not answer'}) unless r
+		return reply({ok: no, error: r.error or 'extension error', kind: r.kind}) unless r.ok
+		reply({ok: yes, state: publicState(r.state)})
+	catch e
+		reply({ok: no, error: String(e and e.message or e)})
+
+# State pushes from the background reach a subscribed page.
+browser.runtime.onMessage.addListener do(msg)
+	pushState(msg.state) if subscribed and msg and msg.type === 'player-state'
+	no
 
 def methodOf search
 	return null unless typeof search === 'string' and search.startsWith('?') and search.length < 4096
@@ -56,5 +115,12 @@ window.addEventListener 'message', do(event)
 		announce()
 	elif data.type === 'request'
 		handleRequest(data)
+	elif data.type === 'subscribe'
+		subscribe()
+	elif data.type === 'unsubscribe'
+		subscribed = no
+		browser.runtime.sendMessage({type: 'player-subscribe', on: no}).catch(do(e) null)
+	elif data.type === 'command'
+		handleCommand(data)
 
 announce()

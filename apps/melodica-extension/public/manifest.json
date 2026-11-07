@@ -61,5 +61,19 @@
       "id": "melodica-extension@spacegho.st",
       "strict_min_version": "128.0"
     }
+  },
+  "commands": {
+    "toggle-play": {
+      "suggested_key": {
+        "default": "Alt+Shift+P"
+      },
+      "description": "melodica: play / pause"
+    },
+    "next-song": {
+      "suggested_key": {
+        "default": "Alt+Shift+N"
+      },
+      "description": "melodica: next song"
+    }
   }
 }
