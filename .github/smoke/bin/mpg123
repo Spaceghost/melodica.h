@@ -1,0 +1,10 @@
+#!/bin/sh
+# Release smoke test player shim. pydora runs `mpg123 -q -R --ignore-mime .` and
+# talks the remote-control protocol over stdin/stdout. This shim records what
+# pydora sends and what mpg123 answers, then runs the real mpg123 with the
+# dummy output module so the stream is fetched and decoded without a sound card.
+log="${PYDORA_SMOKE_PLAYER_LOG:?PYDORA_SMOKE_PLAYER_LOG is unset}"
+real="${PYDORA_SMOKE_REAL_MPG123:-/usr/bin/mpg123}"
+printf 'argv: %s %s\n' "$real" "$*" >>"$log.argv"
+exec 2>>"$log.stderr"
+tee -a "$log.in" | "$real" -o dummy "$@" | tee -a "$log.out"
