@@ -1,0 +1,94 @@
+﻿using Dalamud.Plugin;
+using System.Reflection;
+using Umbra.Drawing;
+using Umbra.Windows.Settings.Components;
+using Una.Drawing.Clipping;
+
+namespace Umbra;
+
+/// <summary>
+/// Serves as a bridge between Umbra & Una.Drawing.
+/// </summary>
+internal static class UmbraDrawing
+{
+    public static void Initialize(IDalamudPluginInterface plugin)
+    {
+        DrawingLib.Setup(plugin);
+
+        UdtLoader.RegisterAttributeValueParser(new I18NAttributeValueParser());
+        UdtLoader.RegisterDirectiveParser(new ImageSourceDirectiveParser());
+
+        foreach (var assembly in Framework.Assemblies) {
+            UdtLoader.AddAssembly(assembly);
+        }
+
+        UdtDocument doc = UdtLoader.Load("umbra.globals.xml");
+
+        StylesheetRegistry.Register("globals", doc.Stylesheet!);
+
+        ElementRegistry.Register<ButtonNode>();
+        ElementRegistry.Register<CheckboxNode>();
+        ElementRegistry.Register<ColorInputNode>();
+        ElementRegistry.Register<FaIconInputNode>();
+        ElementRegistry.Register<FloatInputNode>();
+        ElementRegistry.Register<HorizontalSlideNode>();
+        ElementRegistry.Register<GameIconInputNode>();
+        ElementRegistry.Register<IntegerInputNode>();
+        ElementRegistry.Register<ProgressBarNode>();
+        ElementRegistry.Register<SelectNode>();
+        ElementRegistry.Register<StringInputNode>();
+        ElementRegistry.Register<VerticalSliderNode>();
+        ElementRegistry.Register<GameGlyphInputNode>();
+        ElementRegistry.Register<SimpleColorPickerNode>();
+        ElementRegistry.Register<SimpleColorThemeEditor>();
+        ElementRegistry.Register<RepositoryInstallerNode>();
+    }
+
+    public static void Dispose()
+    {
+        DrawingLib.Dispose();
+    }
+
+    /// <summary>
+    /// Deprecated. Use <see cref="UdtLoader.Load"/> instead.
+    /// </summary>
+    internal static UdtDocument DocumentFrom(string resourceName)
+    {
+        return UdtLoader.Load(resourceName);
+    }
+
+    /// <summary>
+    /// Sets the image bytes of a node from an embedded resource.
+    /// </summary>
+    /// <param name="node"></param>
+    /// <param name="resourceName"></param>
+    /// <exception cref="InvalidOperationException"></exception>
+    public static void SetImageFromResource(this Node node, string resourceName)
+    {
+        resourceName = resourceName.ToLowerInvariant();
+
+        foreach (var asm in Framework.Assemblies) {
+            foreach (var name in asm.GetManifestResourceNames()) {
+                if (name.ToLowerInvariant().EndsWith(resourceName)) {
+                    using var stream = asm.GetManifestResourceStream(name);
+                    if (stream == null) continue;
+
+                    var imageData = new byte[stream.Length];
+                    int _         = stream.Read(imageData, 0, imageData.Length);
+
+                    node.Style.ImageBytes = imageData;
+                    return;
+                }
+            }
+        }
+
+        throw new InvalidOperationException($"Failed to load embedded texture \"{resourceName}\".");
+    }
+
+    [Service]
+    private class DrawHandler
+    {
+        [OnDraw(Int32.MaxValue)]
+        private void OnDraw() => ClipRectProvider.UpdateRects();
+    }
+}

@@ -1,0 +1,14 @@
+{
+  "Author": "Una",
+  "Name": "Umbra XIV",
+  "Description": "Consolidates common UI elements and actions into a single uniform interface in the form of a set of highly customizable toolbars.",
+  "InternalName": "Umbra",
+  "Punchline":  "Adds fully customizable toolbars and 3D world markers to the game.",
+  "RepoUrl": "https://github.com/una-xiv/umbra",
+  "Tags": [
+    "ui",
+	"marker",
+	"markers",
+	"toolbar"
+  ]
+}
