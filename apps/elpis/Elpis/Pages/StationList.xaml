@@ -1,0 +1,105 @@
+﻿<UserControl x:Class="Elpis.StationList" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             Foreground="{DynamicResource MaterialDesignBody}"
+             TextElement.FontWeight="Medium"
+             TextElement.FontSize="14"
+             FontFamily="pack://application:,,,/MaterialDesignThemes.Wpf;component/Resources/Roboto/#Roboto"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" xmlns:local="clr-namespace:GUI.Converters"
+             xmlns:Controls="clr-namespace:Elpis.Controls" mc:Ignorable="d" d:DesignHeight="500" d:DesignWidth="440"
+             Unloaded="StationList_Unloaded" Loaded="StationList_Loaded">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/Elpis;component/Styles/ScrollBars.xaml" />
+                <ResourceDictionary Source="/Elpis;component/Styles/ImageButton.xaml" />
+                <ResourceDictionary Source="/Elpis;component/Styles/Misc.xaml" />
+                <ResourceDictionary Source="/Elpis;component/Styles/Brushes.xaml" />
+                <ResourceDictionary Source="/Elpis;component/Styles/BaseControls.xaml" />
+                <ResourceDictionary Source="/Elpis;component/Styles/Images.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+            <local:BinaryImageConverter x:Key="imgConverter" />
+            <ContextMenu x:Key="StationMenu" Closed="StationMenu_Closed">
+                <MenuItem Name="mnuRename" Click="mnuRename_Click" Header="Rename"/>
+                <MenuItem Name="mnuDelete" Click="mnuDelete_Click" Header="Delete"/>
+                <MenuItem Name="mnuEditQuickMix" Click="mnuEditQuickMix_Click" Header="Edit QuickMix"/>
+                <MenuItem Name="mnuAddVariety" Click="mnuAddVariety_Click" Header="Add Variety"/>
+                <MenuItem Name="mnuInfo" Click="mnuInfo_Click" Header="Station Info"/>
+                <MenuItem Name="mnuMakeShortcut" Click="mnuMakeShortcut_Click" Header="Create Shortcut" ToolTip="Create Station Shortcut on Desktop"/>
+            </ContextMenu>
+        </ResourceDictionary>
+    </UserControl.Resources>
+    <Grid Background="{x:Null}" Margin="10,0,5,10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <TextBlock Name="lblNoStations"
+                   Margin="15"
+                   FontSize="22"
+                   TextWrapping="Wrap"
+                   TextAlignment="Center"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   Visibility="Visible">
+            Looks like you have no stations!
+            <LineBreak/>
+            Click on the Plus button above to add your favorite artist or songs and start listening.
+        </TextBlock>
+        <ScrollViewer Name="scrollMain" Grid.Row="0" VerticalScrollBarVisibility="Auto" 
+                  HorizontalScrollBarVisibility="Disabled" Style="{StaticResource for_scrollviewer}">
+
+            <ItemsControl Name="StationItems" HorizontalContentAlignment="Stretch">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <ContentControl Name="StationItem">
+                            <Grid Name="StationGrid" Margin="0,0,0,5">
+                                <Grid Margin="0" HorizontalAlignment="Stretch"
+                      MouseLeftButtonUp="StationItem_MouseLeftButtonUp">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Image Grid.Column="0"
+                         Source="{Binding Path=ArtImage, 
+                                                                    Converter={StaticResource imgConverter}, 
+                                                                    ConverterParameter={StaticResource Image_UnknownArt}}"
+                         Height="64" Width="64" />
+                                    <Grid Grid.Column="1">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <Controls:ImageButton Width="25" Height="25" x:Name="btnMenu" Grid.Column="0"
+                                        ToolTip="Show Station Menu"
+                                        ActiveImageUri="{StaticResource Image_MenuRightHover}" InactiveImageUri="{StaticResource Image_MenuRight}"
+                                        VerticalAlignment="Center" HorizontalAlignment="Center" Click="btnMenu_Click" Visibility="Visible" />
+
+                                        <TextBlock Grid.Column="1" Grid.ColumnSpan="2" Name="txtStationName" Text="{Binding Path=Name}" FontSize="18"
+                               Margin="3" TextAlignment="Left" HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                               Controls:TextBlockUtils.AutoTooltip="True"
+                               Controls:TextBlockUtils.AutoTooltipFontSize="12" />
+                                        <TextBox Visibility="Hidden" Name="txtRename" Grid.Column="1"
+                                   FontSize="18" Margin="3" TextAlignment="Center" HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                                   KeyUp="TextBox_KeyUp" />
+                                        <Controls:ImageButton Width="25" Height="25" Margin="4,2"
+                                                Grid.Column="2" x:Name="btnSaveRename" ActiveImageUri="{StaticResource Image_CheckHover}"
+                                                ToolTip="Save"
+                                                InactiveImageUri="{StaticResource Image_Check}" Click="btnSaveRename_Click" VerticalAlignment="Center"
+                                                HorizontalAlignment="Center" Visibility="Hidden" />
+                                    </Grid>
+                                </Grid>
+                            </Grid>
+                        </ContentControl>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+        <Border Name="WaitScreen" BorderBrush="{DynamicResource MaterialDesignDivider}" BorderThickness="0"
+            Background="{x:Null}" Visibility="Collapsed">
+            <Grid x:Name="Spinner" Background="{x:Null}">
+                <Controls:ContentSpinner Margin="10" Width="190" ContentScale="1" />
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>
