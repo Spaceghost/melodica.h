@@ -57,6 +57,28 @@ open as before; see melodica-site's README for the `wrangler secret put`
 steps. The real GitHub round trip has not been exercised yet for that reason:
 the tests below prove the page against a fake `/auth/me`.
 
+## Design
+
+One centered column of cards at every width: what the page looks like on a
+phone is what it looks like on a desktop (at most 500 px of content,
+centered). Cream paper and ink-brown type by default, an ink variant under
+`prefers-color-scheme: dark`; the concentric-rings mark, mono small caps,
+large serif headings, a full-width brown primary button and a mono footer.
+Every view is a card: GitHub sign-in, Pandora login, and the player, which
+is one "now playing" card (art, title/artist/album, progress, transport,
+volume and quality) with "Up next" and "Play log" cards below it. The
+station list is a sheet (`<dialog id="stations-sheet" class="drawer">`)
+opened from the "Stations" button in the header or the `s` / `/` keys; it
+opens by itself when the player has nothing to play yet, and closes when a
+station is picked. Remote mode uses the same layout.
+
+The stylesheet is `web/app.css`; its header comment lists the shared tokens
+and component classes, and melodica-extension copies it for its popup,
+player tab and options page. Screenshots of every view at 390x844 and
+1280x800 come from `tests/design.spec.mjs` (it also checks that the content
+column is at most 520 px wide and centered); the before/after set for the
+0.5.0 redesign is in `docs/design/`.
+
 ## How it works
 
 ```
