@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+	<PropertyGroup>
+		<OutputPath>..\out\$(Configuration)\</OutputPath>
+		<Use_DalamudPackager>false</Use_DalamudPackager>
+	</PropertyGroup>
+
+	<PropertyGroup>
+		<Authors>Una</Authors>
+		<Company></Company>
+		<Version>1.0.0.0</Version>
+		<Description>Umbra Common Library</Description>
+		<Copyright></Copyright>
+		<PackageProjectUrl>https://github.com/una-xiv/umbra</PackageProjectUrl>
+		<PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
+		<IsPackable>false</IsPackable>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<Reference Include="Microsoft.Extensions.ObjectPool" Private="false" />
+	</ItemGroup>
+</Project>
