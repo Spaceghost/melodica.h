@@ -1,0 +1,260 @@
+name: Release
+on:
+  push:
+    tags: ['1.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (empty: build artifacts only, no release)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: v
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            tag="${{ github.ref_name }}"
+          else
+            tag="${{ github.event.inputs.tag }}"
+          fi
+          if [ -n "$tag" ]; then
+            version="$tag"
+          else
+            version="$(git describe --tags --always --match '1.*' 2>/dev/null || git rev-parse --short HEAD)"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "version=$version tag=$tag"
+
+  source:
+    name: Source tarball
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Archive tracked files (including vendor/melodica.h)
+        run: |
+          git ls-files --recurse-submodules -z \
+            | tar --null -T - --transform "s,^,pithos-$VERSION/," \
+                  --owner=0 --group=0 --mtime='@0' -czf "pithos-$VERSION-src.tar.gz"
+          ls -l "pithos-$VERSION-src.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source
+          path: pithos-${{ env.VERSION }}-src.tar.gz
+          if-no-files-found: error
+
+  flatpak:
+    name: Flatpak bundle (x86_64)
+    needs: version
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: pithos-${{ needs.version.outputs.version }}-melodica.flatpak
+          manifest-path: flatpak/io.github.Pithos.json
+          arch: x86_64
+          run-tests: "true"
+          upload-artifact: false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak
+          path: pithos-${{ needs.version.outputs.version }}-melodica.flatpak
+          if-no-files-found: error
+
+  meson:
+    name: Meson install tarball (bak)
+    needs: version
+    runs-on: [self-hosted, linux, x64, bak]
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install build dependencies
+        run: |
+          pkgs="build-essential meson ninja-build gettext python3 libglib2.0-dev-bin libglib2.0-bin desktop-file-utils appstream"
+          if dpkg -s $pkgs >/dev/null 2>&1; then
+            echo "build dependencies already installed"
+            exit 0
+          fi
+          # The bak runner container is shared by other repositories' jobs;
+          # retry while another apt-get holds the lists/dpkg locks.
+          for attempt in $(seq 1 40); do
+            if sudo apt-get -o DPkg::Lock::Timeout=300 update -q \
+               && sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y -q --no-install-recommends $pkgs; then
+              exit 0
+            fi
+            echo "apt attempt $attempt failed; retrying in 30s"
+            sleep 30
+          done
+          exit 1
+      - name: Build libmelodica.so
+        run: |
+          make -C vendor/melodica.h shared
+      - name: Build and install pithos
+        run: |
+          rm -rf build dest
+          meson setup build --prefix=/usr
+          ninja -C build
+          DESTDIR="$PWD/dest" ninja -C build install
+          install -Dm755 vendor/melodica.h/build/c/libmelodica.so dest/usr/lib/libmelodica.so
+          install -Dm644 vendor/melodica.h/include/melodica.h dest/usr/include/melodica.h
+          install -Dm644 vendor/melodica.h/LICENSE.libpiano dest/usr/share/licenses/melodica/LICENSE.libpiano
+          tar -C dest --owner=0 --group=0 -czf "pithos-$VERSION-linux-x86_64.tar.gz" usr
+          ls -l "pithos-$VERSION-linux-x86_64.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: meson
+          path: pithos-${{ env.VERSION }}-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  smoke:
+    # Installs the bundle just built on a plain runner (no container), starts
+    # it under Xvfb and proves it opens to the login dialog. When a tuner URL
+    # is available (phase B, .github/smoke/tuner-phase.sh) it also logs in,
+    # lists stations and starts playback. Screenshots and the JSON report are
+    # attached to the release.
+    name: Smoke test (Flatpak on Xvfb)
+    needs: [version, flatpak]
+    runs-on: ubuntu-latest
+    # Every wait in the smoke script is bounded; a hang here is a bug, not
+    # something to sit on for GitHub's 6 h default.
+    timeout-minutes: 40
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      SMOKE_OUT: ${{ github.workspace }}/smoke
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: flatpak
+          path: bundle
+      - name: Install flatpak, Xvfb and tools
+        run: |
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+            flatpak xvfb xdotool imagemagick at-spi2-core dbus-x11 \
+            gnome-keyring libsecret-tools python3-gi gir1.2-secret-1 jq
+          # Ubuntu 24.04 restricts unprivileged user namespaces; bwrap needs them.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - name: Install the GNOME 50 runtime and the bundle
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub org.gnome.Platform//50
+          flatpak install --user -y --noninteractive ./bundle/pithos-*.flatpak
+          flatpak info --user io.github.Pithos
+      # melodica-tuner stands in for tuner.pandora.com: hosts-override points
+      # the Pandora hostnames at 127.0.0.1 (the sandbox shares /etc/hosts)
+      # and the tuner listens on 443/80. See .github/smoke/tuner-phase.sh.
+      - uses: Spaceghost/melodica-tuner@v1
+        id: tuner
+        with:
+          user: ci@example.com
+          password: ci-secret
+          hosts-override: true
+          install-ca: true
+      - name: Run the smoke test
+        env:
+          TUNER_HTTPS_URL: ${{ steps.tuner.outputs.https-url }}
+          TUNER_HTTP_URL: ${{ steps.tuner.outputs.http-url }}
+          TUNER_CA_PATH: ${{ steps.tuner.outputs.ca-path }}
+          TUNER_USER: ${{ steps.tuner.outputs.user }}
+          TUNER_PASSWORD: ${{ steps.tuner.outputs.password }}
+          TUNER_LOG_URL: ${{ steps.tuner.outputs.log-url }}
+        run: |
+          echo "tuner: $TUNER_HTTPS_URL / $TUNER_HTTP_URL (log $TUNER_LOG_URL)"
+          export XDG_RUNTIME_DIR=/tmp/xdg-runtime-$(id -u)
+          mkdir -p -m 700 "$XDG_RUNTIME_DIR"
+          xvfb-run -a -s "-screen 0 1280x800x24" \
+            dbus-run-session -- bash .github/smoke/smoke-linux.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke
+          path: |
+            smoke/smoke-linux*
+            smoke/*.log
+            smoke/*.txt
+            smoke/*.json
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [version, source, flatpak, meson, smoke]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd dist
+          # Every published asset (see the Publish step), smoke evidence included.
+          sha256sum pithos-* smoke-linux* > SHA256SUMS
+          cat SHA256SUMS
+      - name: Release notes
+        run: |
+          {
+            echo "Pithos $VERSION built from the melodica.h-integrated mirror (Spaceghost/pithos)."
+            echo "Pandora JSON serialization goes through the bundled melodica.h native library (https://github.com/Spaceghost/melodica.h)."
+            echo
+            echo "Install the Flatpak bundle:"
+            echo
+            echo '```'
+            echo "flatpak install --user pithos-$VERSION-melodica.flatpak"
+            echo '```'
+            echo
+            echo "Assets: Flatpak bundle (x86_64, GNOME 50 runtime), source tarball with vendor/melodica.h, meson install tree (Ubuntu 24.04 x86_64, DESTDIR tarball), SHA256SUMS."
+            echo
+            echo "Smoke test (smoke-linux.json, smoke-linux.txt, smoke-linux-*.png): the bundle was installed on a plain Ubuntu runner and started under Xvfb; see the JSON for what was observed."
+            echo '```'
+            cat dist/smoke-linux.json
+            echo '```'
+          } > notes.md
+      - name: Publish
+        if: env.TAG != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: Pithos ${{ env.VERSION }} (melodica.h)
+          body_path: notes.md
+          files: |
+            dist/pithos-*
+            dist/SHA256SUMS
+            dist/smoke-linux.json
+            dist/smoke-linux.txt
+            dist/smoke-linux-*.png
+          fail_on_unmatched_files: true
+      - name: Skipped release
+        if: env.TAG == ''
+        run: echo "No tag given; artifacts built but no release published."
