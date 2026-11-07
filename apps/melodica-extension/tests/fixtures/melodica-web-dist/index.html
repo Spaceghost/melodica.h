@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="dark light">
+<title>melodica — Pandora in the browser</title>
+<link rel="stylesheet" href="app.css">
+<link rel="icon" href="data:,">
+</head>
+<body>
+<header class="top">
+  <h1 class="brand">melodica <span class="brand-tag">web</span></h1>
+  <div class="top-right">
+    <details id="account" class="account" hidden>
+      <summary class="account-summary" title="Account menu">
+        <span class="avatar" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+        </span>
+        <span class="sr">Account menu, signed in as </span>
+        <span id="signed-in" class="account-email"></span>
+      </summary>
+      <div class="account-menu">
+        <p class="account-line"><span class="muted">Signed in as</span> <b id="signed-in-full"></b></p>
+        <button id="shortcuts-open" type="button" class="menu-item">Keyboard shortcuts <kbd>?</kbd></button>
+        <button id="logout" type="button" class="menu-item">Sign out</button>
+      </div>
+    </details>
+  </div>
+</header>
+
+<main id="app" class="app" data-view="loading">
+
+  <section id="view-login" class="view login" hidden>
+    <form id="login-form" class="card login-card" autocomplete="on">
+      <div class="mark" aria-hidden="true">
+        <svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="54"/><circle cx="60" cy="60" r="38"/><circle cx="60" cy="60" r="22"/><circle class="dot" cx="60" cy="60" r="7"/></svg>
+      </div>
+      <p class="eyebrow">Pandora · US accounts</p>
+      <h2>Sign in to Pandora</h2>
+      <label class="field">
+        <span>Email</span>
+        <input id="login-email" name="email" type="email" autocomplete="username" required>
+      </label>
+      <label class="field">
+        <span>Password</span>
+        <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+      </label>
+      <label class="check"><input id="login-remember" type="checkbox" aria-describedby="remember-warning">
+        <span>Remember password on this device</span></label>
+      <p id="remember-warning" class="warn" role="status" hidden>
+        The password will be stored unencrypted in this browser's local storage.
+        Anyone with access to this browser profile can read it.
+      </p>
+      <button id="login-button" type="submit" class="primary">Sign in</button>
+      <p id="login-message" class="message" role="status"></p>
+      <p class="fine">Your email and password go to Pandora through the relay
+        named at the foot of this page and nowhere else. The relay stores nothing.</p>
+    </form>
+  </section>
+
+  <section id="view-player" class="view player" hidden>
+    <section class="stage idle" aria-label="Now playing">
+      <img id="wash" class="wash" alt="" aria-hidden="true" src="data:,">
+      <figure class="art">
+        <img id="cover" class="cover" alt="" src="data:,">
+      </figure>
+      <div class="meta">
+        <p id="np-station" class="eyebrow station-name"></p>
+        <h2 id="np-title" class="title">Pick a station</h2>
+        <p id="np-artist" class="artist"></p>
+        <p id="np-album" class="album"></p>
+        <p id="np-hint" class="hint"></p>
+        <p class="line"><span id="np-quality" class="chip" hidden></span></p>
+      </div>
+      <div class="progress">
+        <span id="time-cur">0:00</span>
+        <progress id="progress" value="0" max="1" aria-label="Playback position"></progress>
+        <span id="time-len">0:00</span>
+      </div>
+    </section>
+
+    <div class="controls-bar">
+      <div class="mini" aria-hidden="true"><span id="mini-title"></span><span id="mini-artist"></span></div>
+      <div class="controls">
+        <button id="btn-love" type="button" class="round" aria-label="Love this song" aria-pressed="false" title="Love (+)">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+        </button>
+        <button id="btn-ban" type="button" class="round" aria-label="Ban this song" aria-pressed="false" title="Ban (-)">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/></svg>
+        </button>
+        <button id="btn-play" type="button" class="round big" aria-label="Play" title="Play / pause (space)" data-state="paused">
+          <svg class="ico-play" aria-hidden="true" viewBox="0 0 24 24"><path class="fill" d="M8 5v14l11-7z"/></svg>
+          <svg class="ico-pause" aria-hidden="true" viewBox="0 0 24 24"><path class="fill" d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
+        </button>
+        <button id="btn-next" type="button" class="round" aria-label="Next song" title="Next song (n)">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path class="fill" d="M5 5v14l10-7zM17 5h2v14h-2z"/></svg>
+        </button>
+        <button id="btn-tired" type="button" class="round" aria-label="Tired of this song" title="Tired of this song (t)">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </button>
+        <button id="btn-explain" type="button" class="round" aria-label="Why is this song playing?" title="Why this song? (e)">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.3 9.2a2.8 2.8 0 0 1 5.4 1c0 1.8-2.7 2.5-2.7 4"/><path d="M12 17.3h.01"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="deck">
+      <label class="deck-item" for="volume">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5.5a9 9 0 0 1 0 13"/></svg>
+        <span class="sr">Volume</span>
+        <input id="volume" type="range" min="0" max="100" value="80" aria-label="Volume">
+      </label>
+      <label class="deck-item" for="quality">
+        <span>Quality</span>
+        <select id="quality" aria-label="Audio quality">
+          <option value="high">high</option>
+          <option value="medium">medium</option>
+          <option value="low">low</option>
+        </select>
+      </label>
+    </div>
+
+    <aside class="rail" aria-label="Stations">
+      <div class="rail-head">
+        <h2>Stations <span id="station-count" class="count" aria-live="polite"></span></h2>
+        <button id="refresh-stations" type="button" class="icon" aria-label="Reload station list" title="Reload station list">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        </button>
+      </div>
+      <input id="station-filter" class="filter" type="search" placeholder="Filter stations  /" aria-label="Filter stations. Enter plays the first match, Escape clears." autocomplete="off">
+      <ul id="station-list" class="station-list"></ul>
+      <p id="station-empty" class="fine" hidden>No station matches.</p>
+      <form id="search-form" class="search">
+        <h3 class="rail-sub">New station</h3>
+        <div class="search-row">
+          <input id="search-input" type="search" placeholder="Artist or song" aria-label="Search Pandora for an artist or song" autocomplete="off">
+          <button type="submit" class="quiet">Search</button>
+        </div>
+      </form>
+      <ul id="search-results" class="search-results" hidden></ul>
+    </aside>
+
+    <section class="shelf">
+      <blockquote id="explain-panel" class="panel pull" hidden tabindex="-1" aria-labelledby="explain-head">
+        <p id="explain-text" class="pull-text"></p>
+        <footer class="pull-foot">
+          <span id="explain-head">Pandora, on why this song is playing</span>
+          <button id="explain-close" type="button" class="link" aria-label="Dismiss explanation">dismiss</button>
+        </footer>
+      </blockquote>
+      <section class="panel queue" aria-labelledby="upnext-head">
+        <div class="panel-head"><h3 id="upnext-head">Up next</h3><span id="up-next-count" class="fine nowrap"></span></div>
+        <ol id="up-next" class="up-next"></ol>
+        <p id="up-next-empty" class="fine">Nothing queued yet.</p>
+      </section>
+      <section class="panel recent" aria-labelledby="history-head">
+        <div class="panel-head"><h3 id="history-head">Play log</h3><span class="fine nowrap">this session</span></div>
+        <ol id="history" class="history"></ol>
+        <p id="history-empty" class="fine">Songs you hear will collect here, with their ratings.</p>
+      </section>
+    </section>
+  </section>
+
+  <section id="view-error" class="view error" hidden>
+    <div class="card">
+      <h2 tabindex="-1">melodica could not start</h2>
+      <p id="fatal-message" class="message error" role="alert"></p>
+    </div>
+  </section>
+</main>
+
+<p id="player-message" class="toast" role="status" aria-live="polite"></p>
+
+<dialog id="shortcuts" class="sheet" aria-labelledby="shortcuts-head">
+  <div class="panel-head">
+    <h3 id="shortcuts-head">Keyboard shortcuts</h3>
+    <button id="shortcuts-close" type="button" class="icon" aria-label="Close shortcuts">
+      <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </button>
+  </div>
+  <dl class="keys">
+    <dt><kbd>space</kbd></dt><dd>play / pause (or resume the last station)</dd>
+    <dt><kbd>n</kbd></dt><dd>next song</dd>
+    <dt><kbd>+</kbd></dt><dd>love</dd>
+    <dt><kbd>-</kbd></dt><dd>ban</dd>
+    <dt><kbd>t</kbd></dt><dd>tired of this song</dd>
+    <dt><kbd>e</kbd></dt><dd>explain why this song is playing</dd>
+    <dt><kbd>(</kbd> <kbd>)</kbd></dt><dd>volume down / up</dd>
+    <dt><kbd>s</kbd></dt><dd>focus the station list</dd>
+    <dt><kbd>/</kbd></dt><dd>filter stations (<kbd>enter</kbd> plays the first match)</dd>
+    <dt><kbd>?</kbd></dt><dd>this sheet</dd>
+  </dl>
+  <p class="fine">Pandora has no seeking and no previous track.</p>
+  <label class="check sheet-check"><input id="shortcuts-enabled" type="checkbox" checked>
+    <span>Single-key shortcuts are on</span></label>
+  <p class="fine">Turn them off if you use speech input or press keys by accident; the buttons
+    do everything the keys do, and <kbd>?</kbd> still opens this sheet.</p>
+</dialog>
+
+<dialog id="confirm" class="sheet confirm" aria-labelledby="confirm-text">
+  <form method="dialog">
+    <p id="confirm-text" class="confirm-text"></p>
+    <div class="confirm-actions">
+      <button id="confirm-no" type="submit" value="no" class="quiet" autofocus>Keep it</button>
+      <button id="confirm-yes" type="submit" value="yes" class="primary danger">Delete</button>
+    </div>
+  </form>
+</dialog>
+
+<audio id="audio" preload="auto"></audio>
+
+<footer class="foot">
+  <div id="status" class="status">loading…</div>
+  <span>melodica-web 0.2.0 ·
+    <a href="https://github.com/Spaceghost/melodica.h" rel="noopener">melodica.h</a> in WebAssembly ·
+    <a href="LICENSE">MIT</a> / <a href="LICENSE.libpiano">libpiano</a></span>
+</footer>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

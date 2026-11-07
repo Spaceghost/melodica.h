@@ -1,0 +1,8 @@
+node_modules/
+dist/
+build/
+tests/artifacts/
+*.zip
+*.tar.gz
+SHA256SUMS
+RELEASE_BODY.md

@@ -1,0 +1,167 @@
+name: ci
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  NELUA_REPO: https://github.com/Spaceghost/nelua-lang
+  NELUA_SHA: 7fe8132893f9f2bbce3a7b23247ad8bde2c216ed
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Version
+        id: v
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF_NAME#v}"; else v="0.0.0-$(git rev-parse --short HEAD)"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: Toolchain (clang + lld for wasm32, Jack's Nelua fork)
+        run: |
+          for i in 1 2 3 4 5; do sudo apt-get update -qq && sudo apt-get install -y -qq lld clang && break; sleep 20; done
+          clang --version | head -1; wasm-ld --version
+          git clone -q "$NELUA_REPO" "$RUNNER_TEMP/nelua-lang"
+          git -C "$RUNNER_TEMP/nelua-lang" checkout -q "$NELUA_SHA"
+          make -C "$RUNNER_TEMP/nelua-lang" -j"$(nproc)" >/dev/null
+          "$RUNNER_TEMP/nelua-lang/nelua" --version
+      - name: Build the wasm core (Nelua -> C -> clang wasm32)
+        run: scripts/build-core.sh
+        env:
+          NELUA: ${{ runner.temp }}/nelua-lang/nelua
+      - name: npm install
+        run: npm install --no-audit --no-fund
+      - name: Build the extension (Imba -> ES modules)
+        run: node scripts/build.mjs --version "${{ steps.v.outputs.version }}"
+      - name: Core unit test (libpiano vector, reference Blowfish, syncTime, envelope)
+        run: node core/test.mjs
+      - name: Firefox manifest lint (web-ext)
+        run: npx web-ext lint --source-dir dist/firefox --self-hosted
+      - name: Package
+        run: |
+          OUT="$PWD/release" scripts/package.sh "${{ steps.v.outputs.version }}"
+          v="${{ steps.v.outputs.version }}"
+          {
+            echo "melodica-extension $v: a Pandora WebExtension for Chrome and Firefox (Manifest V3)."
+            echo
+            echo "UI and extension scripts are written in [Imba](https://imba.io) and bundled to plain ES modules; the protocol core (Blowfish with Pandora's public partner keys, hex, syncTime, the JSON v5 request envelope) is freestanding [Nelua](https://github.com/Spaceghost/nelua-lang) compiled to WebAssembly with no imports. The extension talks to \`tuner.pandora.com\` directly through its host permission, so no relay sees the login, and it bridges the web client at https://spacegho.st/melodica/app/ so that page can skip its relay too."
+            echo
+            echo "## Assets"
+            echo
+            echo "- \`melodica-extension-$v-chrome.zip\`: unpacked extension for Chrome/Chromium. Unzip, then chrome://extensions → Developer mode → Load unpacked."
+            echo "- \`melodica-extension-$v-firefox.zip\`: the same build with \`browser_specific_settings\` for Firefox. Unzip, then about:debugging → This Firefox → Load Temporary Add-on (pick manifest.json), or \`web-ext run --source-dir\`."
+            echo "- \`melodica-extension-$v-src.tar.gz\`: source tree."
+            echo "- \`SHA256SUMS\`"
+            echo "- \`smoke-extension.json\`, \`smoke-extension-login.png\`, \`smoke-extension-stations.png\`, \`smoke-extension-playing.png\`, \`smoke-extension-bridge.png\`: the proof below."
+            echo
+            echo "## Proof"
+            echo
+            echo "The \`smoke\` job of this release's workflow loaded this exact Chrome build unpacked into Playwright's Chromium (headed under xvfb) against [melodica-tuner](https://github.com/Spaceghost/melodica-tuner), a stand-in tuner.pandora.com: set the endpoint on the options page, signed in from the popup, listed the fixture's stations, started a station (the player tab opened and the \`<audio>\` element played), and bridged an \`auth.partnerLogin\` for the melodica-web page served locally as https://spacegho.st. \`smoke-extension.json\` is the report. This proves the extension against the tuner, not against Pandora; the Firefox zip was linted with web-ext, not run. Nothing is published to the Chrome Web Store or AMO."
+          } > release/RELEASE_BODY.md
+          ls -l release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: melodica-extension-${{ steps.v.outputs.version }}
+          path: release/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ steps.v.outputs.version }}
+          path: dist/
+
+  # Real-browser proof against melodica-tuner: options, popup login, stations,
+  # playback in the player tab, and the bridge for the melodica-web page.
+  smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-${{ needs.build.outputs.version }}
+          path: dist
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Playwright
+        timeout-minutes: 15
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install chromium
+          for i in 1 2 3 4 5; do sudo apt-get update -qq && sudo apt-get install -y -qq xvfb && break; sleep 20; done
+      - uses: Spaceghost/melodica-tuner@v1
+        id: tuner
+        with:
+          user: ci@example.com
+          password: ci-secret
+          hosts-override: false
+          install-ca: false
+      - name: Browser smoke test (built extension, melodica-tuner)
+        run: xvfb-run -a --server-args="-screen 0 1280x800x24" npx playwright test
+        env:
+          TUNER_HTTPS_URL: ${{ steps.tuner.outputs.https-url }}
+          TUNER_HTTP_URL: ${{ steps.tuner.outputs.http-url }}
+          TUNER_USER: ${{ steps.tuner.outputs.user }}
+          TUNER_PASSWORD: ${{ steps.tuner.outputs.password }}
+          MELODICA_EXT_DIST: dist/chrome
+      - name: Show the report
+        if: always()
+        run: cat tests/artifacts/smoke-extension.json || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-extension
+          path: |
+            tests/artifacts/smoke-extension.json
+            tests/artifacts/smoke-extension-*.png
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: smoke-extension-playwright
+          path: tests/artifacts/playwright/
+          if-no-files-found: ignore
+
+  release:
+    needs: [build, smoke]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: melodica-extension-${{ needs.build.outputs.version }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: smoke-extension
+      - name: Check the proof and extend SHA256SUMS
+        run: |
+          node -e 'const r=require("./smoke-extension.json"); console.log(r.summary); if (r.ok!==true) { console.error("smoke-extension.json is not ok"); process.exit(1); }'
+          sha256sum smoke-extension.json smoke-extension-*.png >> SHA256SUMS
+          cat SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: melodica-extension ${{ needs.build.outputs.version }}
+          body_path: RELEASE_BODY.md
+          files: |
+            melodica-extension-${{ needs.build.outputs.version }}-chrome.zip
+            melodica-extension-${{ needs.build.outputs.version }}-firefox.zip
+            melodica-extension-${{ needs.build.outputs.version }}-src.tar.gz
+            SHA256SUMS
+            smoke-extension.json
+            smoke-extension-login.png
+            smoke-extension-stations.png
+            smoke-extension-playing.png
+            smoke-extension-bridge.png

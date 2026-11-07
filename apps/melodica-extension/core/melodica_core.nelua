@@ -1,0 +1,532 @@
+-- melodica-extension protocol core: Blowfish ECB with Pandora's public partner
+-- keys, hex, the syncTime handshake and the JSON v5 request envelope.
+--
+-- Freestanding Nelua (no libc, no GC, no entrypoint): compiled to C for
+-- wasm32-unknown-unknown and linked with clang/lld, -nostdlib. The host (the
+-- extension's JS) owns memory through the exported arena (mx_alloc/mx_free/
+-- mx_reset) and copies bytes in and out. JSON building/parsing and HTTP stay
+-- in JS; this module only does crypto and framing, as melodica.h's compat
+-- layer (blowfish.c, crypt.c, piano_base.inc) does for pianobar.
+--
+-- Exports (C ABI, codename mx_*): see README.md "Core (wasm)".
+
+## pragmas.freestanding = true
+## pragmas.nochecks = true
+
+require 'pi_hex'
+
+local VERSION: string <comptime> = "0.1.0"
+local ABI: uint32 <comptime> = 1
+
+-- Pandora's "android" partner, the identity pianobar ships (settings.c):
+-- requests are encrypted with the "out" key, syncTime is decrypted with "in".
+local ANDROID_ENCRYPT_KEY: string <comptime> = "6#26FRL$ZWD"
+local ANDROID_DECRYPT_KEY: string <comptime> = "R=U!LH$O2B#"
+
+------------------------------------------------------------------------------
+-- Blowfish (port of melodica.h compat/blowfish.c)
+
+local Blowfish = @record{
+  p: [18]uint32,
+  s: [4][256]uint32,
+}
+
+local function hex_nibble(c: byte): uint32 <inline>
+  if c >= 48 and c <= 57 then return (@uint32)(c - 48) end
+  if c >= 97 and c <= 102 then return 10_u32 + (@uint32)(c - 97) end
+  if c >= 65 and c <= 70 then return 10_u32 + (@uint32)(c - 65) end
+  return 0_u32
+end
+
+local function is_hex(c: byte): boolean <inline>
+  return (c >= 48 and c <= 57) or (c >= 97 and c <= 102) or (c >= 65 and c <= 70)
+end
+
+local function pi_word(word: usize): uint32
+  local p: *[0]byte
+  local local_word: usize
+  if word < 348 then
+    p = PI_HEX0.data
+    local_word = word
+  elseif word < 696 then
+    p = PI_HEX1.data
+    local_word = word - 348
+  else
+    p = PI_HEX2.data
+    local_word = word - 696
+  end
+  local base: usize = local_word * 8
+  local value: uint32 = 0
+  local i: usize = 0
+  while i < 8 do
+    value = (value << 4) | hex_nibble(p[base + i])
+    i = i + 1
+  end
+  return value
+end
+
+local function load_be32(p: *[0]byte, off: usize): uint32 <inline>
+  return ((@uint32)(p[off]) << 24) | ((@uint32)(p[off + 1]) << 16) |
+         ((@uint32)(p[off + 2]) << 8) | (@uint32)(p[off + 3])
+end
+
+local function store_be32(p: *[0]byte, off: usize, x: uint32): void <inline>
+  p[off] = (@byte)(x >> 24)
+  p[off + 1] = (@byte)(x >> 16)
+  p[off + 2] = (@byte)(x >> 8)
+  p[off + 3] = (@byte)(x)
+end
+
+local function bf_f(ctx: *Blowfish, x: uint32): uint32 <inline>
+  local a: usize = (@usize)(x >> 24)
+  local b: usize = (@usize)((x >> 16) & 0xff)
+  local c: usize = (@usize)((x >> 8) & 0xff)
+  local d: usize = (@usize)(x & 0xff)
+  return ((ctx.s[0][a] + ctx.s[1][b]) ~ ctx.s[2][c]) + ctx.s[3][d]
+end
+
+local function bf_encrypt_words(ctx: *Blowfish, left: *uint32, right: *uint32): void
+  local l: uint32 = $left
+  local r: uint32 = $right
+  local i: usize = 0
+  while i < 16 do
+    l = l ~ ctx.p[i]
+    r = r ~ bf_f(ctx, l)
+    local t: uint32 = l
+    l = r
+    r = t
+    i = i + 1
+  end
+  local t: uint32 = l
+  l = r
+  r = t
+  r = r ~ ctx.p[16]
+  l = l ~ ctx.p[17]
+  $left = l
+  $right = r
+end
+
+local function bf_decrypt_words(ctx: *Blowfish, left: *uint32, right: *uint32): void
+  local l: uint32 = $left
+  local r: uint32 = $right
+  local i: usize = 17
+  while i > 1 do
+    l = l ~ ctx.p[i]
+    r = r ~ bf_f(ctx, l)
+    local t: uint32 = l
+    l = r
+    r = t
+    i = i - 1
+  end
+  local t: uint32 = l
+  l = r
+  r = t
+  r = r ~ ctx.p[1]
+  l = l ~ ctx.p[0]
+  $left = l
+  $right = r
+end
+
+local function bf_init(ctx: *Blowfish, key: *[0]byte, key_len: usize): boolean
+  if key == nilptr or key_len == 0 or key_len > 56 then return false end
+  local word: usize = 0
+  local i: usize = 0
+  while i < 18 do
+    ctx.p[i] = pi_word(word)
+    word = word + 1
+    i = i + 1
+  end
+  local box: usize = 0
+  while box < 4 do
+    i = 0
+    while i < 256 do
+      ctx.s[box][i] = pi_word(word)
+      word = word + 1
+      i = i + 1
+    end
+    box = box + 1
+  end
+
+  local j: usize = 0
+  i = 0
+  while i < 18 do
+    local value: uint32 = 0
+    local k: usize = 0
+    while k < 4 do
+      value = (value << 8) | (@uint32)(key[j])
+      j = (j + 1) % key_len
+      k = k + 1
+    end
+    ctx.p[i] = ctx.p[i] ~ value
+    i = i + 1
+  end
+
+  local left: uint32 = 0
+  local right: uint32 = 0
+  i = 0
+  while i < 18 do
+    bf_encrypt_words(ctx, &left, &right)
+    ctx.p[i] = left
+    ctx.p[i + 1] = right
+    i = i + 2
+  end
+  box = 0
+  while box < 4 do
+    i = 0
+    while i < 256 do
+      bf_encrypt_words(ctx, &left, &right)
+      ctx.s[box][i] = left
+      ctx.s[box][i + 1] = right
+      i = i + 2
+    end
+    box = box + 1
+  end
+  return true
+end
+
+local function bf_encrypt_block(ctx: *Blowfish, p: *[0]byte, off: usize): void <inline>
+  local left: uint32 = load_be32(p, off)
+  local right: uint32 = load_be32(p, off + 4)
+  bf_encrypt_words(ctx, &left, &right)
+  store_be32(p, off, left)
+  store_be32(p, off + 4, right)
+end
+
+local function bf_decrypt_block(ctx: *Blowfish, p: *[0]byte, off: usize): void <inline>
+  local left: uint32 = load_be32(p, off)
+  local right: uint32 = load_be32(p, off + 4)
+  bf_decrypt_words(ctx, &left, &right)
+  store_be32(p, off, left)
+  store_be32(p, off + 4, right)
+end
+
+------------------------------------------------------------------------------
+-- State. Zero-initialised statics only: nothing runs before the host calls
+-- mx_init.
+
+local ARENA_SIZE: usize <comptime> = 262144
+
+local State = @record{
+  encrypt: Blowfish,
+  decrypt: Blowfish,
+  ready: boolean,
+  sync_offset: int32,     -- server seconds minus host seconds
+  arena_top: usize,
+  arena: [ARENA_SIZE]byte,
+}
+
+local st: State
+
+------------------------------------------------------------------------------
+-- Helpers
+
+local HEX_DIGITS: string <comptime> = "0123456789abcdef"
+
+local function hex_encode_into(src: *[0]byte, len: usize, dst: *[0]byte): void
+  local i: usize = 0
+  while i < len do
+    local b: byte = src[i]
+    dst[i * 2] = HEX_DIGITS.data[(@usize)(b >> 4)]
+    dst[i * 2 + 1] = HEX_DIGITS.data[(@usize)(b & 15)]
+    i = i + 1
+  end
+end
+
+-- Like libpiano: strtol per byte pair, so a non-hex character reads as zero.
+local function hex_decode_into(src: *[0]byte, len: usize, dst: *[0]byte): void
+  local i: usize = 0
+  while i + 1 < len do
+    dst[i // 2] = (@byte)((hex_nibble(src[i]) << 4) | hex_nibble(src[i + 1]))
+    i = i + 2
+  end
+end
+
+local function padded_len(n: usize): usize <inline>
+  if n % 8 == 0 then return n end
+  return n + (8 - n % 8)
+end
+
+local function decimal_len(v: uint32): usize
+  local n: usize = 1
+  local x: uint32 = v
+  while x >= 10 do
+    x = x // 10
+    n = n + 1
+  end
+  return n
+end
+
+local function write_decimal(dst: *[0]byte, off: usize, v: uint32): usize
+  local digits: [16]byte <noinit>
+  local count: usize = 0
+  local x: uint32 = v
+  repeat
+    digits[count] = 48_u8 + (@byte)(x % 10)
+    count = count + 1
+    x = x // 10
+  until x == 0
+  local out: usize = off
+  while count ~= 0 do
+    count = count - 1
+    dst[out] = digits[count]
+    out = out + 1
+  end
+  return out
+end
+
+-- Encrypt `len` bytes of `src` (padded with NUL to a multiple of 8, like
+-- melodica_piano_encrypt_string) into `dst` as lowercase hex. Returns the hex
+-- length required; writes only when `cap` is large enough.
+local function encrypt_hex(ctx: *Blowfish, src: *[0]byte, len: usize, dst: *[0]byte, cap: usize): usize
+  local plen: usize = padded_len(len)
+  local required: usize = plen * 2
+  if dst == nilptr or cap < required then return required end
+  if plen == 0 then return 0 end
+  -- Work in the output buffer's second half, then expand to hex in place from
+  -- the end so nothing is overwritten before it is read.
+  local scratch: *[0]byte = (@*[0]byte)(&dst[plen])
+  local i: usize = 0
+  while i < len do
+    scratch[i] = src[i]
+    i = i + 1
+  end
+  while i < plen do
+    scratch[i] = 0
+    i = i + 1
+  end
+  i = 0
+  while i < plen do
+    bf_encrypt_block(ctx, scratch, i)
+    i = i + 8
+  end
+  -- scratch occupies dst[plen .. 2*plen); the hex of byte k lands at
+  -- dst[2k], dst[2k+1]. Going forward, every position already written
+  -- (< 2k) is below the byte being read (plen + k, since k < plen), so the
+  -- expansion is safe in place.
+  local k: usize = 0
+  while k < plen do
+    local b: byte = scratch[k]
+    dst[k * 2] = HEX_DIGITS.data[(@usize)(b >> 4)]
+    dst[k * 2 + 1] = HEX_DIGITS.data[(@usize)(b & 15)]
+    k = k + 1
+  end
+  return required
+end
+
+------------------------------------------------------------------------------
+-- Exports
+
+local function mx_abi(): uint32 <cexport, codename 'mx_abi'>
+  return ABI
+end
+
+local function mx_version(): *[0]byte <cexport, codename 'mx_version'>
+  return VERSION.data
+end
+
+local function mx_version_len(): uint32 <cexport, codename 'mx_version_len'>
+  return (@uint32)(VERSION.size)
+end
+
+-- Arena: bump allocation from a static 256 KiB region. Allocations nest:
+-- mx_free(p) releases p and everything allocated after it (LIFO); mx_reset
+-- releases everything.
+local function mx_alloc(n: usize): *[0]byte <cexport, codename 'mx_alloc'>
+  local size: usize = n
+  if size == 0 then size = 1 end
+  size = (size + 7) & ~7_usize
+  if size > ARENA_SIZE - st.arena_top then return nilptr end
+  local start: usize = st.arena_top
+  st.arena_top = start + size
+  return (@*[0]byte)(&st.arena[start])
+end
+
+local function mx_free(p: *[0]byte): void <cexport, codename 'mx_free'>
+  if p == nilptr then return end
+  local base: usize = (@usize)((@pointer)(&st.arena[0]))
+  local addr: usize = (@usize)((@pointer)(p))
+  if addr < base then return end
+  local off: usize = addr - base
+  if off < st.arena_top then st.arena_top = off end
+end
+
+local function mx_reset(): void <cexport, codename 'mx_reset'>
+  st.arena_top = 0
+end
+
+local function mx_arena_capacity(): usize <cexport, codename 'mx_arena_capacity'>
+  return ARENA_SIZE
+end
+
+local function mx_arena_used(): usize <cexport, codename 'mx_arena_used'>
+  return st.arena_top
+end
+
+-- Key setup with an arbitrary partner pair (encrypt = partner "out" key,
+-- decrypt = partner "in" key). Returns true on success.
+local function mx_init_keys(enc: *[0]byte, enc_len: usize, dec: *[0]byte, dec_len: usize): boolean
+    <cexport, codename 'mx_init_keys'>
+  st.ready = false
+  if not bf_init(&st.encrypt, enc, enc_len) then return false end
+  if not bf_init(&st.decrypt, dec, dec_len) then return false end
+  st.sync_offset = 0
+  st.ready = true
+  return true
+end
+
+-- Key setup for the "android" partner (pianobar's identity).
+local function mx_init(): boolean <cexport, codename 'mx_init'>
+  return mx_init_keys(ANDROID_ENCRYPT_KEY.data, ANDROID_ENCRYPT_KEY.size,
+                      ANDROID_DECRYPT_KEY.data, ANDROID_DECRYPT_KEY.size)
+end
+
+local function mx_ready(): boolean <cexport, codename 'mx_ready'>
+  return st.ready
+end
+
+local function mx_hex_encode(src: *[0]byte, len: usize, dst: *[0]byte, cap: usize): usize
+    <cexport, codename 'mx_hex_encode'>
+  if src == nilptr then return 0 end
+  local required: usize = len * 2
+  if dst == nilptr or cap < required then return required end
+  hex_encode_into(src, len, dst)
+  return required
+end
+
+-- Strict hex decode: 0 for odd length or any non-hex character.
+local function mx_hex_decode(src: *[0]byte, len: usize, dst: *[0]byte, cap: usize): usize
+    <cexport, codename 'mx_hex_decode'>
+  if src == nilptr or len % 2 ~= 0 then return 0 end
+  local i: usize = 0
+  while i < len do
+    if not is_hex(src[i]) then return 0 end
+    i = i + 1
+  end
+  local required: usize = len // 2
+  if dst == nilptr or cap < required then return required end
+  hex_decode_into(src, len, dst)
+  return required
+end
+
+-- Blowfish-ECB encrypt `len` bytes with the partner's encrypt key -> lowercase
+-- hex. Returns the hex length required (padded to 16-char blocks); writes
+-- only when cap suffices. 0 when not initialised.
+local function mx_encrypt(src: *[0]byte, len: usize, dst: *[0]byte, cap: usize): usize
+    <cexport, codename 'mx_encrypt'>
+  if not st.ready or (src == nilptr and len ~= 0) then return 0 end
+  return encrypt_hex(&st.encrypt, src, len, dst, cap)
+end
+
+-- Decrypt a hex Blowfish-ECB string with the partner's decrypt key. The
+-- plaintext keeps its NUL padding (len/2 bytes); returns the required size,
+-- 0 when the hex length is not a multiple of 16 or not initialised.
+local function mx_decrypt_hex(src: *[0]byte, len: usize, dst: *[0]byte, cap: usize): usize
+    <cexport, codename 'mx_decrypt_hex'>
+  if not st.ready or src == nilptr or len == 0 or len % 16 ~= 0 then return 0 end
+  local required: usize = len // 2
+  if dst == nilptr or cap < required then return required end
+  hex_decode_into(src, len, dst)
+  local i: usize = 0
+  while i < required do
+    bf_decrypt_block(&st.decrypt, dst, i)
+    i = i + 8
+  end
+  return required
+end
+
+-- auth.partnerLogin's syncTime: decrypt the hex with the "in" key, skip the
+-- four junk bytes and read the decimal seconds (libpiano: strtoul(+4)).
+-- Records server - now as the offset and returns the server time; 0 on failure.
+local function mx_sync_parse(hex: *[0]byte, hex_len: usize, now: uint32): uint32
+    <cexport, codename 'mx_sync_parse'>
+  if not st.ready or hex == nilptr or hex_len == 0 or hex_len % 16 ~= 0 or hex_len > 128 then return 0 end
+  local buf: [64]byte <noinit>
+  local n: usize = hex_len // 2
+  hex_decode_into(hex, hex_len, &buf)
+  local i: usize = 0
+  while i < n do
+    bf_decrypt_block(&st.decrypt, &buf, i)
+    i = i + 8
+  end
+  if n <= 4 then return 0 end
+  i = 4
+  while i < n and (buf[i] == 32 or buf[i] == 9) do i = i + 1 end
+  local value: uint32 = 0
+  local digits: usize = 0
+  while i < n and buf[i] >= 48 and buf[i] <= 57 do
+    value = value * 10 + (@uint32)(buf[i] - 48)
+    digits = digits + 1
+    i = i + 1
+  end
+  if digits == 0 or digits > 10 then return 0 end
+  st.sync_offset = (@int32)((@int64)(value) - (@int64)(now))
+  return value
+end
+
+local function mx_sync_offset(): int32 <cexport, codename 'mx_sync_offset'>
+  return st.sync_offset
+end
+
+local function mx_set_sync_offset(offset: int32): void <cexport, codename 'mx_set_sync_offset'>
+  st.sync_offset = offset
+end
+
+-- Pandora's clock for a request sent at host time `now`.
+local function mx_sync_time(now: uint32): uint32 <cexport, codename 'mx_sync_time'>
+  return (@uint32)((@int64)(now) + (@int64)(st.sync_offset))
+end
+
+-- The JSON v5 request envelope: take a JSON object (UTF-8, ending in '}'),
+-- append "syncTime":<server time for now> and encrypt to hex. Returns the hex
+-- length required; writes only when cap suffices; 0 on a malformed object.
+local function mx_envelope(json: *[0]byte, len: usize, now: uint32, dst: *[0]byte, cap: usize): usize
+    <cexport, codename 'mx_envelope'>
+  if not st.ready or json == nilptr or len < 2 then return 0 end
+  local last: usize = len - 1
+  while last > 0 and (json[last] == 32 or json[last] == 10 or json[last] == 13 or json[last] == 9) do
+    last = last - 1
+  end
+  if json[last] ~= 125 then return 0 end -- '}'
+  local first: usize = 0
+  while first < last and (json[first] == 32 or json[first] == 10 or json[first] == 13 or json[first] == 9) do
+    first = first + 1
+  end
+  if json[first] ~= 123 then return 0 end -- '{'
+  local inner_end: usize = last
+  while inner_end > first + 1 and (json[inner_end - 1] == 32 or json[inner_end - 1] == 10 or
+                                   json[inner_end - 1] == 13 or json[inner_end - 1] == 9) do
+    inner_end = inner_end - 1
+  end
+  local empty: boolean = inner_end == first + 1
+  local sync: uint32 = mx_sync_time(now)
+  local KEY: string <comptime> = '"syncTime":'
+  local plain_len: usize = inner_end + KEY.size + decimal_len(sync) + 1
+  if not empty then plain_len = plain_len + 1 end
+  local required: usize = padded_len(plain_len) * 2
+  if dst == nilptr or cap < required then return required end
+  -- Build the plaintext in a scratch arena allocation, then encrypt into dst.
+  local mark: usize = st.arena_top
+  local tmp: *[0]byte = mx_alloc(plain_len)
+  if tmp == nilptr then return 0 end
+  local i: usize = 0
+  while i < inner_end do
+    tmp[i] = json[i]
+    i = i + 1
+  end
+  local out: usize = inner_end
+  if not empty then
+    tmp[out] = 44 -- ','
+    out = out + 1
+  end
+  local k: usize = 0
+  while k < KEY.size do
+    tmp[out] = KEY.data[k]
+    out = out + 1
+    k = k + 1
+  end
+  out = write_decimal(tmp, out, sync)
+  tmp[out] = 125
+  local written: usize = encrypt_hex(&st.encrypt, tmp, plain_len, dst, cap)
+  st.arena_top = mark
+  return written
+end

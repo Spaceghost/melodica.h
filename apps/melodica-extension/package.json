@@ -1,0 +1,21 @@
+{
+  "name": "melodica-extension",
+  "private": true,
+  "type": "module",
+  "description": "Pandora WebExtension (Chrome + Firefox, MV3): Imba UI, Nelua protocol core in WebAssembly",
+  "license": "MIT",
+  "scripts": {
+    "build:core": "scripts/build-core.sh",
+    "build": "node scripts/build.mjs",
+    "test:core": "node core/test.mjs",
+    "test:smoke": "playwright test",
+    "lint:firefox": "web-ext lint --source-dir dist/firefox --self-hosted",
+    "package": "scripts/package.sh"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "esbuild": "^0.25.0",
+    "imba": "^2.0.0-alpha.253",
+    "web-ext": "^8.0.0"
+  }
+}
