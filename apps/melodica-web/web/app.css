@@ -377,3 +377,7 @@ button.primary.danger:hover { background: var(--warn); border-color: var(--warn)
   .wash, .cover, .toast { transition: none; }
 }
 
+/* Remote mode: the extension has no Pandora session yet. */
+.remote-signin { margin-top: 12px; display: grid; gap: 8px; justify-items: start; }
+.remote-signin p { margin: 0; }
+.remote-signin[hidden] { display: none; }

@@ -10,12 +10,10 @@ Hosted copy: <https://spacegho.st/melodica/app/>
 
 ## Access through the spacegho.st relay
 
-melodica access through the spacegho.st relay is by allow-list, keyed on the
-Pandora login email (`docs/ACCOUNT.md`, "Relay"). The login card says so:
-"melodica access is by allow-list; signing in sends your email to the admin as
-an access request." The page side is in `web/piano.js`:
+The spacegho.st relay can run open (anyone may log in) or by allow-list
+(`docs/ACCOUNT.md`, "Relay"); the page handles both. The page side is in `web/piano.js`:
 
-- `auth.userLogin` for an email that is not on the list fails with HTTP 403 and
+- In allow-list mode, `auth.userLogin` for an email that is not on the list fails with HTTP 403 and
   the relay's message ("melodica access is by allow-list. Your request has been
   sent."), shown as is under the login form; Pandora is not contacted.
 - When it is on the list and Pandora accepts the login, the relay's answer
@@ -106,11 +104,10 @@ browser                                   relay                     Pandora
   when the queue runs out.
 - The relay only forwards bytes. Pandora's audio URLs are plain https CDN
   links that an `<audio>` element plays cross-origin without CORS.
-- `web/bridge.js` is the extension bridge: the
-  [melodica browser extension](https://spacegho.st/melodica/#melodica-extension)'s
-  content script can carry the API calls straight to tuner.pandora.com
-  instead of the relay (see "Extension bridge" below), and since extension
-  0.3.0 play in the background with this page as its remote ("Remote mode").
+- `web/bridge.js` is the link to the
+  [melodica browser extension](https://spacegho.st/melodica/#melodica-extension):
+  when it is installed it plays in the background and this page is its
+  remote ("The melodica extension", "Remote mode" below).
 - `web/account.js` is the optional spacegho.st account (see above): PKCE
   sign-in, tokens, the playback policy.
 
@@ -180,9 +177,11 @@ serialisation, error mapping, the automatic re-login, and the relay access
 token (sent after `auth.userLogin`, not on `auth.*`, renewed by a re-login on
 401, the 403 message passed through). `bridge-unit.mjs`
 needs no network either: a fake window plays the extension's content script
-and checks the hello/ready handshake, the message filter, request/response
-pairing by id, the timeout with fallback to the relay, HTTP errors through
-the bridge and the `?api=` / bridge / relay precedence in `PianoClient.post`.
+and checks the hello/ready handshake and its repeats, the message filter,
+`waitReady` (also for an extension that appears late), that a `ready` without
+`player: true` is not a remote, the subscribe repeated until the first state,
+and commands paired with results by id; and that the Pandora client has no
+extension transport.
 `account-unit.mjs` needs no network: it checks discovery (same-origin
 endpoints only), the authorize URL (PKCE S256 against RFC 7636's example,
 state), the way back (state and issuer checked, code exchanged, the address
@@ -209,14 +208,12 @@ MELODICA_APP_URL=https://spacegho.st/melodica/app/ npx playwright test   # the h
 `#app[data-view="login"]` (set only after `melodica.wasm` instantiated and
 `mw_init` returned 0), checks the login form, records console messages, page
 errors, failed requests and `securitypolicyviolation` events, then submits
-`nobody@example.invalid` / `wrong`. The spacegho.st relay checks the email
-against its allow-list first, so the correct outcome there is HTTP 403 on
-`auth.userLogin` with "melodica access is by allow-list. Your request has been
-sent." in the form; that proves wasm → Blowfish body → relay (which decrypts
-it to read the email) → the relay's answer in the UI. Each run therefore
-records an access request for that address on spacegho.st. A relay without
-an allow-list gives Pandora's code 1002 instead, which libpiano maps to "Wrong
-email address or password."; both are accepted. The local variant serves `dist/` under
+`nobody@example.invalid` / `wrong`. With the relay open, the correct outcome
+is Pandora's code 1002 on `auth.userLogin`, which libpiano maps to "Wrong
+email address or password." in the form; that proves wasm → Blowfish body →
+relay → Pandora → parsed error. With the relay in allow-list mode it is HTTP
+403 with "melodica access is by allow-list. Your request has been sent."
+instead; both are accepted. Either way the relay sees that address. The local variant serves `dist/` under
 `/melodica/app/` with the site worker's CSP (plus the relay origin in
 `connect-src`) and `?api=` pointing at `MELODICA_API`. Screenshots land in
 `tests/artifacts/login-screen.png` and `login-error.png`;
@@ -258,14 +255,11 @@ gets the "sign in in the extension" hint; an extension that ignores subscribe
 leaves the page in local mode (hello, subscribe, unsubscribe; then the Pandora
 login). Screenshots: `remote-player.png`, `remote-signed-out.png`.
 
-`tests/bridge.spec.mjs` injects a fake content script into the page world
-(it answers `hello` with `ready` and proxies each bridge `request` to the
-relay with `fetch`), then asserts the status line says
-"direct via melodica extension 0.1.0", that the sign-in round trips were
-carried by the bridge (the script logs each request's method, id and body
-length), and that a page opened with `?api=` never sends `hello` and reports
-"via … relay (?api=)". Screenshots: `bridge-login-screen.png`,
-`bridge-login-error.png`.
+`tests/bridge.spec.mjs` injects a fake content script of an extension before
+0.3.0 (it answers `hello` with `ready` without `player: true` and would proxy
+`request` messages) and asserts the page stays on the relay and posts it
+nothing but `hello`, and that a page opened with `?api=` never sends `hello`
+and reports "via … relay (?api=)". Screenshot: `bridge-login-screen.png`.
 
 ### Full flow against melodica-tuner
 
@@ -325,39 +319,36 @@ only after a login answer carried one. The
 relay must run from a place Pandora serves, i.e. the US. The relay URL is:
 
 1. `?api=https://host/path/` in the page URL (same origin only, or on a
-   local dev host; it also disables the extension bridge), else
-2. the extension bridge when a content script has answered `ready`, else
-3. `data-api="…"` on the `<script type="module" src="app.js">` tag, else
-4. `../api/` resolved against the page URL (so `/melodica/app/` talks to
+   local dev host; it also disables the extension), else
+2. `data-api="…"` on the `<script type="module" src="app.js">` tag, else
+3. `../api/` resolved against the page URL (so `/melodica/app/` talks to
    `/melodica/api/`).
 
-The footer status line names the active transport: "via spacegho.st relay"
-or "direct via melodica extension 0.1.0".
+The footer status line says "via spacegho.st relay", or "playing in melodica
+extension 0.5.0" when the extension is the player.
 
 A self-hosted copy has no account server on its origin, so it shows no
-"Sign in with spacegho.st" link or allow-list note (unless its relay is
-spacegho.st's) and uses the default policy.
+"Sign in with spacegho.st" link and uses the default policy.
 
-### Extension bridge
+### The melodica extension
 
-A WebExtension whose content script runs on the app's URL can offer a direct
-path to Pandora. The page side (`web/bridge.js`) speaks same-window
-`postMessage`, so it needs no `connect-src` change and no extension
-permission from the page:
+When the melodica extension is installed it is the player, and the page is
+only its view and remote (see "Remote mode" below). The page never plays
+through the extension on its own, and never uses it as a transport for
+Pandora calls: local playback happens only through the relay, when no
+extension (0.3.0+) answers. The page side is `web/bridge.js`, same-window
+`postMessage` (no `connect-src` change, no extension permission):
 
-- On startup the page posts `{melodica: 1, type: 'hello'}` to
-  `location.origin`.
-- The page accepts only `message` events with `event.source === window`,
+- The page posts `{melodica: 1, type: 'hello'}` to `location.origin` at
+  startup and again every 250 ms for 3 s, until `ready` arrives.
+- It accepts only `message` events with `event.source === window`,
   `event.origin === location.origin` and `event.data.melodica === 1`.
-- `{melodica: 1, type: 'ready', name, version}` switches the transport to
-  the bridge; it may also arrive unsolicited (the script loaded late).
-- Each API call is `{melodica: 1, type: 'request', id, search, body}` with
-  `search` the query string (`?method=…&…`) and `body` a `Uint8Array` of the
-  request body; the reply is `{melodica: 1, type: 'response', id, ok,
-  status, body: Uint8Array, error}`.
-- A request with no response after 20 s, or a response with no HTTP status
-  (`status: 0` plus `error`), falls back to the relay for that request. An
-  HTTP or Pandora answer through the bridge is final.
+- `{melodica: 1, type: 'ready', name, version, player: true}` (0.3.0+) puts
+  the page in remote mode, whenever it arrives: during startup, or later (the
+  content script loaded late, or the extension was installed while the page
+  was open). A page already playing on its own stops and switches without a
+  reload. A `ready` without `player: true` (before 0.3.0) is ignored.
+- An explicit `?api=` means that relay and no extension: no hello is sent.
 
 ### Playlist items
 
@@ -394,11 +385,12 @@ playback and a remote for it, instead of running its own loop. The protocol
 is melodica-extension's `docs/BRIDGE.md` ("Remote control"); the page side is
 in `web/bridge.js` (`subscribe`, `command`) and `web/app.js` ("remote mode"):
 
-- After the hello/ready handshake (within 1 s of startup) the page sends
-  `{melodica: 1, type: 'subscribe'}`. If a `state` arrives within 1 s the page
-  enters remote mode; otherwise it sends `unsubscribe` and plays locally as
-  before (no extension, or one older than 0.3.0). The wasm loads meanwhile, so
-  local mode is not slowed by more than that probe.
+- On `ready` the page shows the player view at once ("Connecting to the
+  melodica extension…") and sends `{melodica: 1, type: 'subscribe'}`, again
+  every second until the first `state` arrives (the extension's service worker
+  may need a while to start). There is no timeout to local playback.
+- Before anything is shown the page waits up to 1.5 s for an extension; a
+  remembered relay login waits the full 3 s window.
 - Remote mode shows the player view (`#app[data-mode="remote"]`) drawn from
   the pushed `state` (station list, now playing, position, play/pause, rating,
   volume, quality, queue length) and sends `{type: 'command', id, action, …}`
@@ -407,14 +399,25 @@ in `web/bridge.js` (`subscribe`, `command`) and `web/app.js` ("remote mode"):
   `quality` (`value`), `stations`. Failed `result`s are shown as messages.
 - There is no local `<audio>`, no relay request and no Pandora or
   spacegho.st sign-in on the page in remote mode: the extension holds its
-  own sessions. When it has no Pandora session the page says to sign in in the
-  extension.
+  own sessions. When it has no Pandora session the page shows "Sign in in the
+  melodica extension" and a button that sends the `open-login` command (the
+  extension opens its login); an extension that does not know the command gets
+  "Click the melodica icon in the browser's toolbar to sign in."
+- While the page is visible it also asks for the current state every second
+  (`subscribe` again), because released extensions (0.5.x) do not push every
+  change (not their login; a resume has been seen to arrive seconds late).
 - Not available remotely (the protocol has no command for them): "why this
   song?", station search/creation, station deletion, and rating earlier songs
   in the play log. The play log lists the songs seen while the page was open.
 - The footer reads "playing in melodica extension 0.3.0 · web …".
-- The decision is made once, at page load: an extension installed or updated
-  later takes effect on the next reload.
+- `tests/remote.spec.mjs` covers this with a fake extension (slow first state,
+  late extension, no session, extension before 0.3.0);
+  `tests/extension-real.spec.mjs` with the latest released extension (Chrome
+  build from spacegho.st/extensions, unpacked) against melodica-tuner: the
+  page shows the extension's track, play/pause, next, station and volume from
+  either side show on the other (timings in `tests/artifacts/extension-real.json`),
+  and the page has no `<audio>` source, fetches no audio and makes no relay
+  request.
 
 ### Content Security Policy
 

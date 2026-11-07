@@ -201,7 +201,6 @@ async function begin(page, { ads, accountInserts, listedInserts = true }) {
   });
   await page.goto(appUrl);
   await expect(page.locator('#app')).toHaveAttribute('data-view', 'login', { timeout: 30_000 });
-  await expect(page.locator('#access-note')).toBeVisible();
   await page.fill('#login-email', tuner.user);
   await page.fill('#login-password', tuner.password);
   await page.click('#login-button');
@@ -345,7 +344,7 @@ test.describe.serial('playback against melodica-tuner', () => {
     page.on('pageerror', (e) => errors.push(String(e)));
     await page.goto(appUrl);
     await expect(page.locator('#app')).toHaveAttribute('data-view', 'login', { timeout: 30_000 });
-    await expect(page.locator('#access-note')).toHaveText('melodica access is by allow-list; signing in sends your email to the admin as an access request.');
+    await expect(page.locator('#access-note')).toHaveCount(0);
     await page.fill('#login-email', email);
     await page.fill('#login-password', 'whatever');
     await page.click('#login-button');

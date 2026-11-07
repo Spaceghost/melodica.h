@@ -22,7 +22,7 @@
         <span id="signed-in" class="account-email"></span>
       </summary>
       <div class="account-menu">
-        <p class="account-line"><span class="muted">Signed in as</span> <b id="signed-in-full"></b></p>
+        <p class="account-line"><b id="signed-in-full"></b></p>
         <p id="account-menu-line" class="account-line" hidden><span class="muted">spacegho.st</span> <b id="account-menu-name"></b></p>
         <button id="shortcuts-open" type="button" class="menu-item">Keyboard shortcuts <kbd>?</kbd></button>
         <button id="logout" type="button" class="menu-item">Sign out</button>
@@ -57,7 +57,6 @@
       </p>
       <button id="login-button" type="submit" class="primary">Sign in</button>
       <p id="login-message" class="message" role="status"></p>
-      <p id="access-note" class="fine" hidden>melodica access is by allow-list; signing in sends your email to the admin as an access request.</p>
       <p id="account-line" class="fine account-line-login" hidden>
         <a id="account-signin" href="#">Sign in with spacegho.st</a>
         <span id="account-signed" hidden>spacegho.st: <b id="account-name"></b> ·
@@ -83,6 +82,11 @@
         <p id="np-artist" class="artist"></p>
         <p id="np-album" class="album"></p>
         <p id="np-hint" class="hint"></p>
+        <div id="remote-signin" class="remote-signin" hidden>
+          <p id="remote-signin-text">Sign in in the melodica extension</p>
+          <button id="remote-signin-open" type="button" class="primary">Open the extension's login</button>
+          <p id="remote-signin-help" class="fine" hidden>Click the melodica icon in the browser's toolbar to sign in.</p>
+        </div>
         <p class="line"><span id="np-quality" class="chip" hidden></span></p>
       </div>
       <div class="progress">

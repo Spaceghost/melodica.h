@@ -138,6 +138,10 @@ jobs:
             --require "ad.getAdMetadata ok" --require "ad audio fetched" --require "ad.registerAd ok" \
             --out "$GITHUB_WORKSPACE/tests/artifacts/smoke-web-playback-report.json"
           cat "$GITHUB_WORKSPACE/tests/artifacts/smoke-web-playback-report.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
       - name: Show the report
         if: always()
         run: cat tests/artifacts/smoke-web.json || true
@@ -150,6 +154,62 @@ jobs:
             tests/artifacts/smoke-playback.json
             tests/artifacts/smoke-web-*.json
             tests/artifacts/smoke-web-*.png
+            tests/artifacts/playwright/
+          if-no-files-found: ignore
+
+
+  # The real extension needs its released Chrome build. spacegho.st answers GitHub's
+  # hosted runners with a Cloudflare 403 and the extension's repository is private,
+  # so this job runs on the bak runner (gh-runners container), which can download
+  # https://spacegho.st/extensions/dl/… like any browser.
+  extension-real:
+    needs: smoke
+    runs-on: [self-hosted, linux, x64, bak]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Playwright
+        timeout-minutes: 15
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install chromium
+      - uses: Spaceghost/melodica-tuner@v1
+        id: tuner
+        with:
+          user: ci@example.com
+          password: ci-secret
+          hosts-override: false
+          install-ca: false
+          # The bak runner container is shared; 8443/8080 may be taken by another repo's job.
+          https-port: "28443"
+          http-port: "28080"
+      - name: The real melodica extension (latest release from spacegho.st/extensions), the page as its remote
+        run: |
+          ver=$(curl -fsSL https://spacegho.st/extensions/dl/melodica-extension/update.xml | grep -o '<updatecheck [^>]*' | grep -o 'version="[^"]*"' | cut -d'"' -f2)
+          echo "melodica-extension $ver"
+          rm -rf "$RUNNER_TEMP/ext" && mkdir -p "$RUNNER_TEMP/ext"
+          curl -fsSL -o "$RUNNER_TEMP/ext.zip" "https://spacegho.st/extensions/dl/melodica-extension/v$ver/melodica-extension-$ver-chrome.zip"
+          unzip -q "$RUNNER_TEMP/ext.zip" -d "$RUNNER_TEMP/ext"
+          MELODICA_EXT_DIR="$RUNNER_TEMP/ext" npx playwright test tests/extension-real.spec.mjs
+        env:
+          TUNER_HTTPS_URL: ${{ steps.tuner.outputs.https-url }}
+          TUNER_HTTP_URL: ${{ steps.tuner.outputs.http-url }}
+          TUNER_USER: ${{ steps.tuner.outputs.user }}
+          TUNER_PASSWORD: ${{ steps.tuner.outputs.password }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: extension-real
+          path: |
+            tests/artifacts/extension-real.json
+            tests/artifacts/extension-real-*.png
             tests/artifacts/playwright/
           if-no-files-found: ignore
 

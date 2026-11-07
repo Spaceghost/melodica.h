@@ -9,8 +9,10 @@
 // server serves dist/ with the site's CSP and answers /melodica/auth/me with 503;
 // any /melodica/api/ request is recorded (remote mode must make none).
 //
-// Also: an extension that answers ready with player: true but ignores subscribe
-// leaves the page in local mode (the Pandora login), after the 1 s probe.
+// Also: an extension without a Pandora session (the page says to sign in there and
+// offers to open its login), a slow first state (still remote, never local), an
+// extension that appears only after the page started on its own (the page switches
+// without a reload), and an extension before 0.3.0 (no remote: the page uses the relay).
 //
 // Artifacts: tests/artifacts/remote-player.png, remote-signed-out.png.
 
@@ -79,8 +81,11 @@ test.afterAll(async () => {
   if (server) await new Promise((ok) => server.close(ok));
 });
 
-// The fake extension. `opts.subscribe` false plays an extension that ignores
-// subscribe; `opts.loggedIn` false one that has no Pandora session yet.
+// The fake extension. `opts.loggedIn` false: no Pandora session yet. `opts.stateDelay`:
+// the first state comes that many ms after the first subscribe (a slow service worker).
+// `opts.lateReady`: the content script says nothing until then (ms), then announces
+// itself. `opts.player` false: an extension before 0.3.0. `opts.openLogin`: it knows
+// the open-login command.
 function fakeExtension(opts) {
   const log = window.__remote = { sent: [], commands: [], pushes: 0 };
   const tracks = [
@@ -99,7 +104,11 @@ function fakeExtension(opts) {
     ],
   };
   let subscribed = false;
+  let firstAsked = 0;
   let idx = 0;
+  const born = Date.now();
+  const ready = () => post({ type: 'ready', name: 'melodica-extension', version: opts.player === false ? '0.2.0' : '0.3.0', ...(opts.player === false ? {} : { player: true }) });
+  if (opts.lateReady) setTimeout(ready, opts.lateReady);
   const post = (m) => window.postMessage({ melodica: 1, ...m }, location.origin);
   const push = () => {
     if (!subscribed) return;
@@ -120,15 +129,23 @@ function fakeExtension(opts) {
     const d = ev.data;
     if (!d || d.melodica !== 1) return;
     if (['hello', 'subscribe', 'unsubscribe', 'command', 'request'].includes(d.type)) log.sent.push(d.type);
-    if (d.type === 'hello') { post({ type: 'ready', name: 'melodica-extension', version: '0.3.0', player: true }); return; }
-    if (d.type === 'subscribe') { if (opts.subscribe === false) return; subscribed = true; push(); return; }
+    if (opts.lateReady && Date.now() - born < opts.lateReady) return; // not injected yet
+    if (d.type === 'hello') { ready(); return; }
+    if (d.type === 'subscribe') {
+      if (opts.player === false) return;
+      if (!firstAsked) firstAsked = Date.now();
+      const wait = (opts.stateDelay || 0) - (Date.now() - firstAsked);
+      if (wait > 0) { setTimeout(() => { if (!subscribed) { subscribed = true; push(); } }, wait); return; }
+      subscribed = true; push(); return;
+    }
     if (d.type === 'unsubscribe') { subscribed = false; return; }
     if (d.type !== 'command') return;
     const { id, action } = d;
     log.commands.push(action === 'play' && d.station ? `play ${d.station.token}` : action === 'volume' || action === 'quality' ? `${action} ${d.value}` : action);
     let ok = true;
     let error = '';
-    if (!st.loggedIn) { ok = false; error = 'Not signed in to Pandora in the extension.'; }
+    if (action === 'open-login') { ok = !!opts.openLogin; error = ok ? '' : `unknown action ${action}`; }
+    else if (!st.loggedIn) { ok = false; error = 'Not signed in to Pandora in the extension.'; }
     else if (action === 'play') {
       if (d.station) { st.station = { token: d.station.token, name: d.station.name }; idx = 0; startTrack(); } else st.status = 'playing';
     } else if (action === 'pause') st.status = 'paused';
@@ -190,7 +207,6 @@ test.describe.serial('remote mode (the extension plays, the page is a view)', ()
       await expect(page.locator('#app')).toHaveAttribute('data-mode', 'remote');
       await expect(page.locator('#status')).toContainText('playing in melodica extension 0.3.0');
       await expect(page.locator('#view-login')).toBeHidden();
-      await expect(page.locator('#view-github')).toBeHidden();
       await expect(page.locator('#search-form')).toBeHidden();
       // The station list comes from the extension's state; no delete buttons (no such command).
       const stations = page.locator('#station-list button.station');
@@ -239,6 +255,11 @@ test.describe.serial('remote mode (the extension plays, the page is a view)', ()
 
       const remote = await page.evaluate(() => window.__remote);
       expect(remote.sent.slice(0, 2), 'hello, then subscribe').toEqual(['hello', 'subscribe']);
+      // While visible the page asks for the current state about once a second.
+      const subs = remote.sent.filter((t) => t === 'subscribe').length;
+      await page.waitForTimeout(2500);
+      const later = (await page.evaluate(() => window.__remote)).sent.filter((t) => t === 'subscribe').length;
+      expect(later - subs, 'state refreshed every second').toBeGreaterThanOrEqual(2);
       expect(remote.sent, 'no relay requests through the bridge').not.toContain('request');
       expect(remote.commands).toEqual(['play S1', 'toggle', 'toggle', 'love', 'next', 'tired', 'next', 'volume 35', 'quality low', 'stations']);
       expect(apiHits, 'no relay requests').toEqual([]);
@@ -250,27 +271,76 @@ test.describe.serial('remote mode (the extension plays, the page is a view)', ()
     }
   });
 
-  test('an extension without a Pandora session: remote view says where to sign in; failed commands are reported', async ({ page }, info) => {
-    const evidence = await open(page, { loggedIn: false });
+  test('an extension without a Pandora session: the page says to sign in there and opens its login', async ({ page }, info) => {
+    const evidence = await open(page, { loggedIn: false, openLogin: true });
     try {
       await expect(page.locator('#app')).toHaveAttribute('data-mode', 'remote');
-      await expect(page.locator('#np-hint')).toHaveText('Sign in to Pandora in the melodica extension, then come back.');
+      await expect(page.locator('#view-login')).toBeHidden();
+      await expect(page.locator('#remote-signin')).toBeVisible();
+      await expect(page.locator('#remote-signin-text')).toHaveText('Sign in in the melodica extension');
       await page.screenshot({ path: resolve(ARTIFACTS, 'remote-signed-out.png') });
       await info.attach('remote-signed-out', { path: resolve(ARTIFACTS, 'remote-signed-out.png'), contentType: 'image/png' });
+      await page.click('#remote-signin-open');
+      await expect.poll(() => page.evaluate(() => window.__remote.commands.at(-1))).toBe('open-login');
+      await expect(page.locator('#remote-signin-help')).toBeHidden();
     } finally {
       await finish(page, evidence, info);
     }
   });
 
-  test('an extension that ignores subscribe leaves the page in local mode', async ({ page }, info) => {
-    const evidence = await open(page, { subscribe: false });
+  test('an extension that cannot open its login: the page says where it is', async ({ page }, info) => {
+    const evidence = await open(page, { loggedIn: false });
+    try {
+      await expect(page.locator('#remote-signin')).toBeVisible();
+      await page.click('#remote-signin-open');
+      await expect(page.locator('#remote-signin-help')).toHaveText("Click the melodica icon in the browser's toolbar to sign in.");
+    } finally {
+      await finish(page, evidence, info);
+    }
+  });
+
+  test('a slow first state (2.5 s): the page stays a remote, asks again, and never logs in itself', async ({ page }, info) => {
+    const evidence = await open(page, { stateDelay: 2500 });
+    try {
+      await expect(page.locator('#app')).toHaveAttribute('data-mode', 'remote');
+      await expect(page.locator('#player-message')).toHaveText('Connecting to the melodica extension…');
+      await expect(page.locator('#station-list button.station')).toHaveText(['QuickMix', 'Aurora Fields Radio', 'Band Two Radio'], { timeout: 5000 });
+      await expect(page.locator('#player-message')).toHaveText('');
+      await expect(page.locator('#view-login')).toBeHidden();
+      const remote = await page.evaluate(() => window.__remote);
+      expect(remote.sent.filter((t) => t === 'subscribe').length, 'subscribe repeated').toBeGreaterThan(1);
+      expect(apiHits, 'no relay requests').toEqual([]);
+    } finally {
+      await finish(page, evidence, info);
+    }
+  });
+
+  test('an extension that appears after the page started on its own: the page switches without a reload', async ({ page }, info) => {
+    const evidence = await open(page, { lateReady: 4500 });
     try {
       await expect(page.locator('#app')).toHaveAttribute('data-view', 'login');
       expect(await page.locator('#app').getAttribute('data-mode')).toBeNull();
-      await expect(page.locator('#status')).toContainText('direct via melodica-extension 0.3.0');
+      await expect(page.locator('#app')).toHaveAttribute('data-mode', 'remote', { timeout: 8000 });
+      await expect(page.locator('#app')).toHaveAttribute('data-view', 'player');
+      await expect(page.locator('#status')).toContainText('playing in melodica extension 0.3.0');
+      await expect(page.locator('#station-list button.station')).toHaveCount(3);
+      const audio = await page.evaluate(() => document.getElementById('audio').getAttribute('src'));
+      expect(audio).toBeNull();
+    } finally {
+      await finish(page, evidence, info);
+    }
+  });
+
+  test('an extension before 0.3.0 (no remote): the page plays on its own through the relay', async ({ page }, info) => {
+    const evidence = await open(page, { player: false });
+    try {
+      await expect(page.locator('#app')).toHaveAttribute('data-view', 'login');
+      await page.waitForTimeout(3500);
+      expect(await page.locator('#app').getAttribute('data-mode')).toBeNull();
+      await expect(page.locator('#status')).toContainText('relay');
       await expect(page.locator('#status')).toContainText('melodica.h');
       const remote = await page.evaluate(() => window.__remote);
-      expect(remote.sent).toEqual(['hello', 'subscribe', 'unsubscribe']);
+      expect(remote.sent.filter((t) => t !== 'hello'), 'nothing but hello is sent to it').toEqual([]);
     } finally {
       await finish(page, evidence, info);
     }

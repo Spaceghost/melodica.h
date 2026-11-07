@@ -46,7 +46,7 @@ const $ = (id) => document.getElementById(id);
 const el = {
   app: $('app'), status: $('status'),
   viewLogin: $('view-login'), viewPlayer: $('view-player'), viewError: $('view-error'),
-  accessNote: $('access-note'),
+  remoteSignin: $('remote-signin'), remoteSigninOpen: $('remote-signin-open'), remoteSigninHelp: $('remote-signin-help'),
   accountLine: $('account-line'), accountSignin: $('account-signin'), accountSigned: $('account-signed'),
   accountName: $('account-name'), accountSignout: $('account-signout'),
   accountMenuLine: $('account-menu-line'), accountMenuName: $('account-menu-name'), accountMenuSignout: $('account-menu-signout'),
@@ -97,7 +97,7 @@ function readPolicy() { return { inserts: true }; }
 
 const state = {
   client: null,
-  bridge: null,       // BridgeTransport when the page may use the extension bridge
+  bridge: null,       // BridgeTransport: the link to the melodica extension (remote mode)
   account: null,      // Account (optional spacegho.st sign-in)
   accountReady: Promise.resolve(), // the policy is known once this settles
   policyReady: Promise.resolve(),  // the latest policy request
@@ -143,7 +143,6 @@ function extensionName() {
 }
 function transportLabel() {
   if (state.remote) return `playing in ${extensionName()}`;
-  if (state.bridge && state.bridge.active) return `direct via ${state.bridge.label}`;
   let host = state.apiBase;
   try { host = new URL(state.apiBase).host; } catch (_) { /* keep the raw string */ }
   return `via ${host} relay${state.apiFromQuery ? ' (?api=)' : ''}`;
@@ -797,13 +796,15 @@ function setVolume(v) {
   clearTimeout(volumeSaveTimer);
   volumeSaveTimer = setTimeout(saveVolume, 400);
   if (state.remote) {
-    remoteVolumeAt = Date.now();
+    remoteVolumeBusy += 1; // the slider wins over pushed volumes until its command is answered
     clearTimeout(remoteVolumeTimer);
-    remoteVolumeTimer = setTimeout(() => remoteCommand('volume', { value: state.volume }), 150);
+    remoteVolumeTimer = setTimeout(async () => {
+      try { await remoteCommand('volume', { value: state.volume }); } finally { remoteVolumeBusy = 0; }
+    }, 150);
   }
 }
 let remoteVolumeTimer = 0;
-let remoteVolumeAt = 0;   // the slider wins over pushed volume for a moment after the user moves it
+let remoteVolumeBusy = 0; // > 0 while a slider move has not been answered by the extension
 
 // ---------------------------------------------------------------- media session
 
@@ -883,10 +884,18 @@ async function createStation(token, label) {
 }
 
 // ---------------------------------------------------------------- remote mode
-// The melodica extension (0.3.0+) plays in the background; this page becomes a view
-// of that playback and a remote for it: same UI, driven by the state the extension
-// pushes, controls send commands, no local <audio>. Without the extension, or with an
-// older one that ignores subscribe, the page plays locally as before.
+// When the melodica extension (0.3.0+) answers on this page, its background player is
+// the only player: this page is a view of that playback and a remote for it (same UI,
+// driven by the state the extension pushes; controls send commands; no local <audio>,
+// no Pandora login here). The switch happens whenever the extension appears, also
+// after the page started on its own. Without the extension the page plays on its own
+// through the relay.
+
+const CONNECTING = 'Connecting to the melodica extension…';
+// Released extensions (0.5.x) do not push every change (not their login; a resume has
+// been seen to arrive seconds late), so while the page is visible it also asks for the
+// current state every second: the view is never more than about a second behind.
+const REMOTE_REFRESH_MS = 1000;
 
 async function remoteCommand(action, fields = {}) {
   try {
@@ -900,13 +909,16 @@ async function remoteCommand(action, fields = {}) {
   }
 }
 
-// Wait up to `ms` for the bridge's ready, then subscribe; resolves with the first
-// pushed state, or null (no extension, or one without remote control).
-async function probeRemote(bridge, ms = 1000) {
-  const until = Date.now() + ms;
-  while (!bridge.active && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
-  if (!bridge.active) return null;
-  return bridge.subscribe((st) => { if (state.remote) renderRemote(st); });
+function onBridgeChange(bridge) {
+  updateStatus();
+  if (bridge.active && bridge.player && !state.remote) enterRemote();
+}
+
+async function openExtensionLogin() {
+  let r = null;
+  try { r = await state.bridge.command('open-login', {}, 3000); } catch (_) { r = null; }
+  // Older extensions do not know the command; then say where the login is.
+  el.remoteSigninHelp.hidden = !!(r && r.ok);
 }
 
 function remoteSong(t) {
@@ -957,7 +969,7 @@ function renderRemote(rs) {
   setProgress(Number(rs.position) || 0, len);
 
   // Settings the extension owns.
-  if (Number.isFinite(Number(rs.volume)) && Date.now() - remoteVolumeAt > 1500) {
+  if (Number.isFinite(Number(rs.volume)) && !remoteVolumeBusy) {
     state.volume = clamp(Math.round(Number(rs.volume)), 0, 100);
     el.volume.value = String(state.volume);
   }
@@ -970,35 +982,46 @@ function renderRemote(rs) {
   el.upNextEmpty.hidden = false;
   el.upNextEmpty.textContent = n ? `${n} song${n === 1 ? '' : 's'} queued in the extension.` : 'Nothing queued yet.';
 
-  // Why nothing can play yet, in the extension's own terms.
-  const gateMode = rs.gate && rs.gate.mode;
-  if (rs.loggedIn === false || (gateMode && gateMode !== 'allowed' && gateMode !== 'off')) {
-    el.hint.textContent = gateMode && gateMode !== 'allowed' && gateMode !== 'off'
-      ? 'Sign in in the melodica extension, then come back.'
-      : 'Sign in to Pandora in the melodica extension, then come back.';
-  } else if (!state.song) {
-    updateHint();
+  // No Pandora session in the extension: say where to sign in (the page has no login).
+  const needsLogin = rs.loggedIn === false;
+  if (el.remoteSignin.hidden === needsLogin) {
+    el.remoteSignin.hidden = !needsLogin;
+    if (!needsLogin) el.remoteSigninHelp.hidden = true;
   }
-  if (rs.status === 'error' && rs.error) playerMessage(rs.error, 'error', 0);
+  if (needsLogin) el.hint.textContent = '';
+  else if (!state.song) updateHint();
+  if (el.playerMessage.textContent === CONNECTING) playerMessage('');
+  if (rs.status === 'error' && rs.error && !needsLogin) playerMessage(rs.error, 'error', 0);
   else if (rs.status === 'loading') playerMessage('Loading…', 'info', 0);
   else if (el.playerMessage.textContent === 'Loading…' || /^Loading .*…$/.test(el.playerMessage.textContent)) playerMessage('');
-  const who = rs.gate && rs.gate.login ? `the melodica extension (${rs.gate.login})` : 'the melodica extension';
+  const who = rs.gate && rs.gate.login ? `Playing in the melodica extension (${rs.gate.login})` : 'Playing in the melodica extension';
   el.signedIn.textContent = 'melodica extension';
   el.signedInFull.textContent = who;
 }
 
-function enterRemote(first) {
+function enterRemote() {
+  if (state.remote) return;
+  // The page may have started on its own: stop that and forget its Pandora session.
+  if (state.song || el.audio.getAttribute('src')) stopPlayback();
+  try { if (state.client && state.client.fn) state.client.logout(); } catch (_) { /* not loaded yet */ }
   state.remote = true;
   el.app.dataset.mode = 'remote';
   el.audio.pause();
   el.audio.removeAttribute('src');
+  el.audio.load();
   el.searchForm.hidden = true;
   el.searchResults.hidden = true;
   el.logout.hidden = true;
-  renderRemote(first);
-  show(el.viewPlayer);
+  el.signedIn.textContent = 'melodica extension';
+  el.signedInFull.textContent = 'Playing in the melodica extension';
   renderUpNext = () => {}; // the queue panel shows the extension's count (renderRemote)
+  show(el.viewPlayer);
+  playerMessage(CONNECTING, 'info', 0);
   updateStatus();
+  state.bridge.subscribe((st) => renderRemote(st));
+  setInterval(() => {
+    if (document.visibilityState === 'visible' && state.bridge.gotState) state.bridge.post({ type: 'subscribe' });
+  }, REMOTE_REFRESH_MS);
   addEventListener('pagehide', () => state.bridge && state.bridge.unsubscribe());
   visibleStationButton()?.focus();
 }
@@ -1007,11 +1030,6 @@ function enterRemote(first) {
 // Optional. The policy endpoint is asked with the account's token when signed in,
 // else with the relay's access token from the Pandora login; without either the
 // policy is the default (web/account.js, docs/ACCOUNT.md). No text explains it.
-
-// The relay's host name ('' when the address is unusable).
-function relayHost() {
-  try { return new URL(state.apiBase, location.href).hostname; } catch (_) { return ''; }
-}
 
 // Re-read the policy (after a login, a renewed relay token, sign-in or sign-out).
 function refreshPolicy() {
@@ -1025,7 +1043,6 @@ function refreshPolicy() {
 function updateAccountLine() {
   const a = state.account;
   const available = !!(a && a.config);
-  el.accessNote.hidden = !(available || relayHost() === 'spacegho.st');
   el.accountLine.hidden = !available;
   const signedIn = available && a.signedIn;
   el.accountSignin.hidden = signedIn;
@@ -1093,8 +1110,8 @@ async function login(email, password) {
     if (el.remember.checked) store.set(STORAGE.password, password);
     else store.remove(STORAGE.password);
     loginMessage('');
-    el.signedIn.textContent = email;
-    el.signedInFull.textContent = email;
+    el.signedIn.textContent = 'Signed in'; // never the Pandora email; a chosen username comes with docs/ACCOUNT.md's username endpoint
+    el.signedInFull.textContent = 'Signed in to Pandora';
     await loadStations();
     show(el.viewPlayer);
     updateHint();
@@ -1154,6 +1171,7 @@ function installEvents() {
   });
   el.logout.addEventListener('click', logout);
   el.accountSignin.addEventListener('click', accountSignIn);
+  el.remoteSigninOpen.addEventListener('click', openExtensionLogin);
   el.accountSignout.addEventListener('click', accountSignOut);
   el.accountMenuSignout.addEventListener('click', () => { el.account.open = false; accountSignOut(); });
   el.refreshStations.addEventListener('click', () => {
@@ -1314,24 +1332,21 @@ async function main() {
   };
   state.account = new Account({ origin: location.origin, store, session, log: (m) => console.debug('[account]', m) });
   state.accountReady = setupAccount().catch((err) => console.debug('[account]', describeError(err)));
-  // The extension bridge: say hello now so a content script can answer while
-  // the wasm loads. An explicit ?api= wins over it (the CI smoke relies on that).
+  // The melodica extension: say hello now (and again for a few seconds) so its content
+  // script can answer while the wasm loads; it may also appear later, and the page
+  // then switches to remote mode (onBridgeChange). An explicit ?api= means the relay
+  // given there, without the extension (the CI smoke relies on that).
   if (!api.fromQuery) {
-    state.bridge = new BridgeTransport(window, { log, onChange: updateStatus });
-    state.client.bridge = state.bridge;
+    state.bridge = new BridgeTransport(window, { log, onChange: onBridgeChange });
     state.bridge.start();
   }
   updateStatus();
-  // Remote mode is decided first (at most ~2 s: 1 s for ready, 1 s for the first
-  // state); the wasm loads meanwhile so local playback does not wait for it.
-  const remoteProbe = state.bridge ? probeRemote(state.bridge).catch(() => null) : Promise.resolve(null);
+  // The wasm loads meanwhile, so the page on its own does not wait for the extension.
   const loading = state.client.load().then(() => null, (err) => err || new Error('load failed'));
-  const first = await remoteProbe;
-  if (first) {
-    enterRemote(first);
-    return;
-  }
+  // An installed extension answers within a few hundred ms; give it 1.5 s before any login shows.
+  if (state.bridge && await state.bridge.waitReady(1500)) return; // onBridgeChange entered remote mode
   const loadErr = await loading;
+  if (state.remote) return;
   if (loadErr) {
     showFatal(`Could not load melodica.wasm: ${describeError(loadErr)}`);
     setStatus('wasm failed to load', true);
@@ -1340,6 +1355,9 @@ async function main() {
   updateStatus();
   showLogin();
   await state.accountReady;
+  // A remembered login waits until the extension had its full window to answer.
+  if (state.bridge) await state.bridge.waitReady();
+  if (state.remote) return;
   updateAccountLine();
   if (el.email.value && el.password.value) login(el.email.value, el.password.value);
 }

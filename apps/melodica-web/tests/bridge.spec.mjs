@@ -1,11 +1,9 @@
-// The extension bridge in a real browser, with a fake content script.
-//
-// A page-world script injected before app.js plays the melodica browser
-// extension: it answers {type:'hello'} with {type:'ready', name, version} and
-// proxies every {type:'request'} to the relay with fetch, posting the bytes
-// back as {type:'response'}. The test checks that the status line says the
-// transport is direct, that the login round trips were carried by the bridge,
-// and that an explicit ?api= wins over the bridge (no hello is even sent).
+// The page with an extension before 0.3.0, in a real browser, with a fake content
+// script: it answers {type:'hello'} with {type:'ready', name, version} (no
+// `player: true`) and would proxy {type:'request'} messages. The page no longer uses
+// the extension as a transport (with 0.3.0+ it is a remote of the extension's
+// player, tests/remote.spec.mjs): here it stays on the relay and posts nothing but
+// hello. An explicit ?api= means no extension at all (no hello is even sent).
 //
 // Env (as tests/browser.spec.mjs): MELODICA_API (relay the fake script forwards
 // to, default https://spacegho.st/melodica/api/), MELODICA_DIST,
@@ -139,55 +137,21 @@ async function finish(page, evidence, info) {
 }
 
 test.describe.serial('extension bridge', () => {
-  test('a ready content script switches the transport to direct', async ({ page }, info) => {
+  test('an extension before 0.3.0 is not used: the page stays on the relay', async ({ page }, info) => {
     const evidence = await openApp(page, base);
     try {
-      await expect(page.locator('#status')).toContainText(`direct via ${EXT.name} ${EXT.version}`);
-      await expect(page.locator('#status')).not.toContainText('relay');
-      await page.screenshot({ path: resolve(ARTIFACTS, 'bridge-login-screen.png') });
-      await info.attach('bridge-login-screen', { path: resolve(ARTIFACTS, 'bridge-login-screen.png'), contentType: 'image/png' });
-      expect(await page.evaluate(() => window.__bridgeLog)).toEqual(['hello']);
-      expect(evidence.errors, 'uncaught page errors').toEqual([]);
-      expect(evidence.console.filter((l) => l.startsWith('[error]')), 'console errors').toEqual([]);
-      expect(await page.evaluate(() => window.__cspViolations), 'CSP violations').toEqual([]);
-    } finally {
-      await finish(page, evidence, info);
-    }
-  });
-
-  test('sign-in round trips are carried by the bridge', async ({ page }, info) => {
-    const evidence = await openApp(page, base);
-    try {
-      await expect(page.locator('#status')).toContainText('direct via');
       await page.fill('#login-email', 'nobody@example.invalid');
       await page.fill('#login-password', 'wrong');
       await page.click('#login-button');
-      const message = page.locator('#login-message');
-      await expect(message).not.toHaveText(/^(Signing in…)?$/, { timeout: 25_000 });
-      const text = (await message.textContent()).trim();
-      info.annotations.push({ type: 'login-message', description: text });
-      await page.screenshot({ path: resolve(ARTIFACTS, 'bridge-login-error.png') });
-      await info.attach('bridge-login-error', { path: resolve(ARTIFACTS, 'bridge-login-error.png'), contentType: 'image/png' });
-
+      await page.waitForTimeout(3500);
+      await expect(page.locator('#status')).toContainText('relay');
+      await expect(page.locator('#status')).not.toContainText('direct');
+      await page.screenshot({ path: resolve(ARTIFACTS, 'bridge-login-screen.png') });
+      await info.attach('bridge-login-screen', { path: resolve(ARTIFACTS, 'bridge-login-screen.png'), contentType: 'image/png' });
       const log = await page.evaluate(() => window.__bridgeLog);
-      expect(log[0]).toBe('hello');
-      expect(log.some((l) => l.startsWith('request auth.partnerLogin ')), 'partnerLogin went through the bridge').toBe(true);
-      expect(log.filter((l) => l.startsWith('request ')).every((l) => / id=mw-\d+-\S+ body=\d+$/.test(l)), 'requests carry an id and a Uint8Array body').toBe(true);
-
-      const relayBlocked = /answered HTTP 403 via the melodica extension/.test(text) && evidence.relay.some((r) => r.status === 403);
-      if (relayBlocked && ALLOW_RELAY_BLOCK) {
-        console.log('WARNING: the relay answered HTTP 403 (Cloudflare challenge) to the fake content script; the error was reported through the bridge but the credentials path could not be exercised here.');
-        test.skip(true, 'relay blocked by Cloudflare from this network (MELODICA_BROWSER_ALLOW_RELAY_BLOCK=1)');
-      }
-      // The fake content script forwards to the spacegho.st relay, whose allow-list
-      // answers first for this address (a real extension goes to Pandora directly).
-      const allowList = text === 'melodica access is by allow-list. Your request has been sent.';
-      if (!allowList) expect(text, 'login message').toMatch(/wrong email address or password|invalid (username|password|credentials)/i);
-      expect(log.some((l) => l.startsWith('request auth.userLogin ')), 'userLogin went through the bridge').toBe(true);
+      expect(log.filter((l) => l !== 'hello'), 'no request through the extension').toEqual([]);
       expect(evidence.errors, 'uncaught page errors').toEqual([]);
-      const expected403 = (l) => allowList && /status of 403/.test(l);
-      expect(evidence.console.filter((l) => l.startsWith('[error]') && !expected403(l)), 'console errors').toEqual([]);
-      await expect(page.locator('#app')).toHaveAttribute('data-view', 'login');
+      expect(await page.evaluate(() => window.__cspViolations), 'CSP violations').toEqual([]);
     } finally {
       await finish(page, evidence, info);
     }
