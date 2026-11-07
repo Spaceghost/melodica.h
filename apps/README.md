@@ -8,6 +8,7 @@ developed, built and released.
 | directory | client | from | branch | upstream |
 | --- | --- | --- | --- | --- |
 | `melodica-web/` | Melodica Web (WebAssembly, in-browser) | Spaceghost/melodica-web | master | — |
+| `melodica-extension/` | Melodica Extension (Chrome, Edge, Firefox; Imba + Nelua wasm) | Spaceghost/melodica-extension | master | — |
 | `pithos/` | Pithos (GTK, Linux Flatpak) | Spaceghost/pithos | master | pithos/pithos |
 | `elpis/` | Elpis (Windows desktop) | Spaceghost/elpis-melodica | master | adammhaile/Elpis |
 | `epimetheus/` | Epimetheus (Flutter, Android + web) | Spaceghost/epimetheus | dev | EpimetheusMusicPlayer/Epimetheus |
