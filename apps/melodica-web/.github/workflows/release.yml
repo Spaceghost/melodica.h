@@ -46,6 +46,8 @@ jobs:
         run: node tests/bridge-unit.mjs
       - name: Gate unit test (token handling, no network)
         run: node tests/gate-unit.mjs
+      - name: Ads unit test (canned ad answers, no network)
+        run: node tests/ads-unit.mjs
       - name: Package
         run: |
           v="${{ steps.v.outputs.version }}"

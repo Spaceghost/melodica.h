@@ -59,25 +59,17 @@ the tests below prove the page against a fake `/auth/me`.
 
 ## Design
 
-One centered column of cards at every width: what the page looks like on a
-phone is what it looks like on a desktop (at most 500 px of content,
-centered). Cream paper and ink-brown type by default, an ink variant under
-`prefers-color-scheme: dark`; the concentric-rings mark, mono small caps,
-large serif headings, a full-width brown primary button and a mono footer.
-Every view is a card: GitHub sign-in, Pandora login, and the player, which
-is one "now playing" card (art, title/artist/album, progress, transport,
-volume and quality) with "Up next" and "Play log" cards below it. The
-station list is a sheet (`<dialog id="stations-sheet" class="drawer">`)
-opened from the "Stations" button in the header or the `s` / `/` keys; it
-opens by itself when the player has nothing to play yet, and closes when a
-station is picked. Remote mode uses the same layout.
-
-The stylesheet is `web/app.css`; its header comment lists the shared tokens
-and component classes, and melodica-extension copies it for its popup,
-player tab and options page. Screenshots of every view at 390x844 and
-1280x800 come from `tests/design.spec.mjs` (it also checks that the content
-column is at most 520 px wide and centered); the before/after set for the
-0.5.0 redesign is in `docs/design/`.
+The layout is responsive: on desktop a station rail on the left and a wide
+player, on phones a single column with a sticky transport bar. The look is
+the phone view's at every width, in light and dark: the warm top bar (the two
+body glows are sized relative to the window, so a desktop paints the same
+band a phone does), no blurred cover wash behind the art, and flat cards.
+The stylesheet is `web/app.css`; melodica-extension copies it (its popup may
+use the phone layout; its player tab and options use the desktop layout with
+the same top bar). `tests/design.spec.mjs` screenshots every view at 390x844
+and 1280x800; `docs/design/` holds the v0.4.0 (`design-v040-*`) and v0.5.1
+(`design-v051-*`) shots in light and dark, and the reverted 0.5.0 one-column
+experiment (`design-after-*`).
 
 ## How it works
 
@@ -365,6 +357,35 @@ permission from the page:
 - A request with no response after 20 s, or a response with no HTTP status
   (`status: 0` plus `error`), falls back to the relay for that request. An
   HTTP or Pandora answer through the bridge is final.
+
+### Audio ads
+
+Pandora playlists can contain audio ads: items with an `adToken` instead of a
+song. libpiano's parser skips those items, as upstream pianobar does, so
+`src/piano_wasm.c` handles them itself:
+
+- a `playlist` reply also lists `ads: [{adToken, position}]`, `position`
+  being the number of songs before the ad; `PianoClient.playlist` puts an
+  `{isAd: true, adToken}` marker at that place in the song list;
+- the action `adMetadata` (`adToken`, optional `quality`) sends
+  `ad.getAdMetadata` with `returnAdTrackingTokens` and `supportAudioAds`, and
+  answers `{title, companyName, imageUrl, clickThroughUrl, audioUrl,
+  audioFormat, adTrackingTokens}` (the asked quality, else the best one
+  offered);
+- the action `registerAd` (`stationId`, `adTrackingTokens`) sends
+  `ad.registerAd`.
+
+Both are authenticated and Blowfish-encrypted exactly like the library's own
+requests. The page plays an ad like a song, showing its title, company and
+image in the now-playing card with the chip "ad". While an ad plays, next,
+love, ban, tired and "why this song?" are disabled, the `n` key does nothing
+and the ad is left out of the play log. `ad.registerAd` is sent once the ad's
+audio has started. An ad without audio, or whose metadata request fails, is
+passed over.
+
+Whether ads are played is decided only by the policy value `ads` (default
+`true`), kept in `localStorage` under `melodica.policy` as `{"ads": …}`.
+`tests/ads-unit.mjs` checks the C side against canned answers.
 
 ### Remote mode (extension 0.3.0+)
 
