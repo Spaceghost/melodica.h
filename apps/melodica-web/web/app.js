@@ -54,6 +54,7 @@ const el = {
   loginButton: $('login-button'), loginMessage: $('login-message'), fatal: $('fatal-message'),
   stationList: $('station-list'), stationFilter: $('station-filter'), stationEmpty: $('station-empty'),
   stationCount: $('station-count'),
+  stationsOpen: $('stations-open'), stationsSheet: $('stations-sheet'), stationsClose: $('stations-close'),
   refreshStations: $('refresh-stations'), logout: $('logout'),
   account: $('account'), signedIn: $('signed-in'), signedInFull: $('signed-in-full'),
   searchForm: $('search-form'), searchInput: $('search-input'), searchResults: $('search-results'),
@@ -120,6 +121,28 @@ function show(view) {
   el.app.dataset.view = view.id.replace('view-', '');
   el.account.hidden = view !== el.viewPlayer;
   el.account.open = false;
+  el.stationsOpen.hidden = view !== el.viewPlayer;
+  if (view !== el.viewPlayer) closeStations();
+}
+
+// The stations sheet (<dialog class="drawer">), opened from the header button,
+// the s and / keys, or automatically when the player has nothing to play yet.
+function openStations(focus = 'list') {
+  if (el.viewPlayer.hidden) return;
+  if (!el.stationsSheet.open) {
+    if (typeof el.stationsSheet.showModal === 'function') el.stationsSheet.showModal();
+    else el.stationsSheet.setAttribute('open', '');
+  }
+  el.stationsOpen.setAttribute('aria-expanded', 'true');
+  if (focus === 'filter') { el.stationFilter.focus(); el.stationFilter.select(); }
+  else (visibleStationButton() || el.stationFilter).focus();
+}
+function closeStations() {
+  if (el.stationsSheet.open) {
+    if (typeof el.stationsSheet.close === 'function') el.stationsSheet.close();
+    else el.stationsSheet.removeAttribute('open');
+  }
+  el.stationsOpen.setAttribute('aria-expanded', 'false');
 }
 
 function setStatus(text, isError = false) {
@@ -489,6 +512,7 @@ function stopPlayback(reason) {
 }
 
 async function playStation(st) {
+  closeStations();
   if (state.remote) {
     playerMessage(`Loading ${st.name}…`, 'info', 0);
     await remoteCommand('play', { station: { token: st.id, name: st.name } });
@@ -951,7 +975,8 @@ function enterRemote(first) {
   renderUpNext = () => {}; // the queue panel shows the extension's count (renderRemote)
   updateStatus();
   addEventListener('pagehide', () => state.bridge && state.bridge.unsubscribe());
-  visibleStationButton()?.focus();
+  if (!state.song && state.stations.length) openStations();
+  else el.play.focus();
 }
 
 // ---------------------------------------------------------------- GitHub gate
@@ -1047,7 +1072,7 @@ async function login(email, password) {
     show(el.viewPlayer);
     updateHint();
     renderUpNext();
-    visibleStationButton()?.focus();
+    if (!state.song && state.stations.length) openStations();
   } catch (err) {
     loginMessage(describeError(err), 'error');
   } finally {
@@ -1101,6 +1126,10 @@ function installEvents() {
     store.set(STORAGE.shortcuts, state.shortcutsOn ? '1' : '0');
   });
   el.logout.addEventListener('click', logout);
+  el.stationsOpen.addEventListener('click', () => openStations());
+  el.stationsClose.addEventListener('click', () => { closeStations(); el.stationsOpen.focus(); });
+  el.stationsSheet.addEventListener('close', () => el.stationsOpen.setAttribute('aria-expanded', 'false'));
+  closeOnBackdrop(el.stationsSheet, closeStations);
   el.githubSignout.addEventListener('click', githubSignOut);
   el.githubSignout2.addEventListener('click', githubSignOut);
   el.refreshStations.addEventListener('click', () => {
@@ -1222,8 +1251,8 @@ function installEvents() {
       case 'e': explain(); break;
       case ')': setVolume(state.volume + 5); break;
       case '(': setVolume(state.volume - 5); break;
-      case 's': visibleStationButton()?.focus(); break;
-      case '/': ev.preventDefault(); el.stationFilter.focus(); el.stationFilter.select(); break;
+      case 's': openStations(); break;
+      case '/': ev.preventDefault(); openStations('filter'); break;
       case '?': ev.preventDefault(); if (el.shortcuts.open) closeShortcuts(); else openShortcuts(); break;
       default: return;
     }

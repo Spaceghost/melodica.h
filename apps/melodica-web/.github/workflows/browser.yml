@@ -68,6 +68,8 @@ jobs:
         run: npx playwright test tests/gate.spec.mjs
       - name: Browser test (remote mode against a fake background player, no network)
         run: npx playwright test tests/remote.spec.mjs
+      - name: Design screenshots (every view at 390x844 and 1280x800, one centered column)
+        run: npx playwright test tests/design.spec.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

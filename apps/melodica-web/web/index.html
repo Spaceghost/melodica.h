@@ -13,6 +13,10 @@
 <header class="top">
   <h1 class="brand">melodica <span class="brand-tag">web</span></h1>
   <div class="top-right">
+    <button id="stations-open" type="button" class="pill" aria-haspopup="dialog" aria-controls="stations-sheet" hidden>
+      <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      <span>Stations</span>
+    </button>
     <details id="account" class="account" hidden>
       <summary class="account-summary" title="Account menu">
         <span class="avatar" aria-hidden="true">
@@ -85,6 +89,7 @@
   </section>
 
   <section id="view-player" class="view player" hidden>
+   <div class="card now">
     <section class="stage idle" aria-label="Now playing">
       <img id="wash" class="wash" alt="" aria-hidden="true" src="data:,">
       <figure class="art">
@@ -145,12 +150,17 @@
         </select>
       </label>
     </div>
+   </div>
 
+    <dialog id="stations-sheet" class="drawer" aria-labelledby="stations-head">
     <aside class="rail" aria-label="Stations">
       <div class="rail-head">
-        <h2>Stations <span id="station-count" class="count" aria-live="polite"></span></h2>
+        <h2 id="stations-head">Stations <span id="station-count" class="count" aria-live="polite"></span></h2>
         <button id="refresh-stations" type="button" class="icon" aria-label="Reload station list" title="Reload station list">
           <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        </button>
+        <button id="stations-close" type="button" class="icon" aria-label="Close stations" title="Close (Escape)">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
         </button>
       </div>
       <input id="station-filter" class="filter" type="search" placeholder="Filter stations  /" aria-label="Filter stations. Enter plays the first match, Escape clears." autocomplete="off">
@@ -165,6 +175,7 @@
       </form>
       <ul id="search-results" class="search-results" hidden></ul>
     </aside>
+    </dialog>
 
     <section class="shelf">
       <blockquote id="explain-panel" class="panel pull" hidden tabindex="-1" aria-labelledby="explain-head">
