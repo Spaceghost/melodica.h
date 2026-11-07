@@ -93,6 +93,8 @@ const state = {
   client: null,
   bridge: null,       // BridgeTransport when the page may use the extension bridge
   gate: null,         // GithubGate (GitHub sign-in gate)
+  remote: false,      // true when the melodica extension plays and this page is its view
+  remoteState: null,  // last state pushed by the extension
   gateStatus: null,   // last GithubGate.check() result
   apiBase: '',
   apiFromQuery: false,
@@ -127,14 +129,20 @@ function setStatus(text, isError = false) {
 
 // "direct via melodica extension 0.1.0" or "via spacegho.st relay", then the
 // module and page versions once the wasm is up.
+function extensionName() {
+  const b = state.bridge;
+  return `${(b.name || 'melodica extension').replace(/^melodica-extension$/, 'melodica extension')} ${b.version || ''}`.trim();
+}
 function transportLabel() {
+  if (state.remote) return `playing in ${extensionName()}`;
   if (state.bridge && state.bridge.active) return `direct via ${state.bridge.label}`;
   let host = state.apiBase;
   try { host = new URL(state.apiBase).host; } catch (_) { /* keep the raw string */ }
   return `via ${host} relay${state.apiFromQuery ? ' (?api=)' : ''}`;
 }
 function updateStatus() {
-  const mod = state.client && state.client.version ? `melodica.h ${state.client.version} · web ${VERSION}` : 'loading melodica.h…';
+  const mod = state.remote ? `web ${VERSION}`
+    : state.client && state.client.version ? `melodica.h ${state.client.version} · web ${VERSION}` : 'loading melodica.h…';
   setStatus(`${transportLabel()} · ${mod}`);
 }
 
@@ -234,7 +242,7 @@ function buildStations() {
     b.title = name;
     b.addEventListener('click', () => playStation(st));
     li.append(b);
-    if (!st.isQuickMix) {
+    if (!st.isQuickMix && !state.remote) {
       const d = document.createElement('button');
       d.type = 'button';
       d.className = 'delete';
@@ -364,7 +372,7 @@ function updateQualityChip() {
   el.qualityChip.hidden = false;
 }
 
-function renderUpNext() {
+let renderUpNext = function renderUpNext() {
   el.upNext.replaceChildren();
   const peek = state.queue.slice(0, UP_NEXT_MAX);
   for (const s of peek) {
@@ -387,7 +395,7 @@ function renderUpNext() {
       ? 'Last song of this playlist; Pandora sends more when it ends.'
       : 'Nothing queued yet.';
   }
-}
+};
 
 function ratingClasses(button, kind, rating) {
   button.classList.toggle('on', kind === 'love' && rating === 1);
@@ -481,6 +489,11 @@ function stopPlayback(reason) {
 }
 
 async function playStation(st) {
+  if (state.remote) {
+    playerMessage(`Loading ${st.name}…`, 'info', 0);
+    await remoteCommand('play', { station: { token: st.id, name: st.name } });
+    return;
+  }
   state.station = st;
   state.queue = [];
   state.playGen += 1;
@@ -565,6 +578,24 @@ function applyVolume() {
 }
 
 function playSong(song) {
+  displaySong(song);
+  applyVolume();
+  el.audio.src = song.audioUrl;
+  const p = el.audio.play();
+  if (p && p.catch) {
+    p.catch((err) => {
+      if (err && err.name === 'NotAllowedError') {
+        playerMessage('Press play to start (the browser blocks autoplay).', 'info', 0);
+        setPlayIcon(false);
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+      }
+    });
+  }
+  updateMediaSession(song);
+}
+
+// Everything about a new song except playing it (shared with remote mode).
+function displaySong(song) {
   state.song = song;
   el.stage.classList.remove('idle');
   el.title.textContent = song.title || '';
@@ -586,19 +617,6 @@ function playSong(song) {
   else playerMessage('');
   const label = [song.title, song.artist].filter(Boolean).join(' – ');
   document.title = label ? `${label} · melodica` : IDLE_TITLE;
-  applyVolume();
-  el.audio.src = song.audioUrl;
-  const p = el.audio.play();
-  if (p && p.catch) {
-    p.catch((err) => {
-      if (err && err.name === 'NotAllowedError') {
-        playerMessage('Press play to start (the browser blocks autoplay).', 'info', 0);
-        setPlayIcon(false);
-        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
-      }
-    });
-  }
-  updateMediaSession(song);
 }
 
 function updateRatingButtons() {
@@ -613,6 +631,7 @@ function updateRatingButtons() {
 }
 
 function skip(reason) {
+  if (state.remote) { remoteCommand('next'); return; }
   if (reason) { playerMessage(reason); state.keepMessage = true; }
   el.audio.pause();
   nextSong();
@@ -621,6 +640,12 @@ function skip(reason) {
 // Rate the current song (ban skips) or any song from the play log via its trackToken.
 async function rateSong(song, kind) {
   if (!song) return;
+  if (state.remote) {
+    if (song !== state.song) { playerMessage('Only the playing song can be rated while the extension plays.'); return; }
+    const r = await remoteCommand(kind);
+    if (r && r.ok) playerMessage(kind === 'ban' ? 'Banned. Skipping.' : 'Loved.');
+    return;
+  }
   try {
     const r = await state.client.rate(song, kind);
     song.rating = r.rating;
@@ -642,6 +667,11 @@ function rate(kind) { return rateSong(state.song, kind); }
 async function tired() {
   const song = state.song;
   if (!song) return;
+  if (state.remote) {
+    const r = await remoteCommand('tired');
+    if (r && r.ok) playerMessage('Pandora will rest this song for a month.');
+    return;
+  }
   try {
     await state.client.tired(song);
     song.rating = 3;
@@ -655,6 +685,7 @@ async function tired() {
 async function explain() {
   const song = state.song;
   if (!song || state.explaining) return; // the e key bypasses the disabled button
+  if (state.remote) { playerMessage('“Why this song?” is not available while the extension plays.'); return; }
   state.explaining = true;
   el.explain.disabled = true;
   el.explain.setAttribute('aria-busy', 'true');
@@ -679,6 +710,16 @@ async function explain() {
 }
 
 function togglePlay() {
+  if (state.remote) {
+    const rs = state.remoteState || {};
+    if (!state.song && !rs.station) {
+      const st = lastStation();
+      if (st) playStation(st);
+      return;
+    }
+    remoteCommand('toggle');
+    return;
+  }
   if (!state.song) {
     const st = lastStation();
     if (st) playStation(st);
@@ -706,7 +747,14 @@ function setVolume(v) {
   applyVolume();
   clearTimeout(volumeSaveTimer);
   volumeSaveTimer = setTimeout(saveVolume, 400);
+  if (state.remote) {
+    remoteVolumeAt = Date.now();
+    clearTimeout(remoteVolumeTimer);
+    remoteVolumeTimer = setTimeout(() => remoteCommand('volume', { value: state.volume }), 150);
+  }
 }
+let remoteVolumeTimer = 0;
+let remoteVolumeAt = 0;   // the slider wins over pushed volume for a moment after the user moves it
 
 // ---------------------------------------------------------------- media session
 
@@ -783,6 +831,127 @@ async function createStation(token, label) {
   } catch (err) {
     playerMessage(describeError(err), 'error');
   }
+}
+
+// ---------------------------------------------------------------- remote mode
+// The melodica extension (0.3.0+) plays in the background; this page becomes a view
+// of that playback and a remote for it: same UI, driven by the state the extension
+// pushes, controls send commands, no local <audio>. Without the extension, or with an
+// older one that ignores subscribe, the page plays locally as before.
+
+async function remoteCommand(action, fields = {}) {
+  try {
+    const r = await state.bridge.command(action, fields);
+    if (r.state) renderRemote(r.state);
+    if (!r.ok) playerMessage(r.error || `The extension could not ${action}.`, 'error');
+    return r;
+  } catch (err) {
+    playerMessage(describeError(err), 'error');
+    return null;
+  }
+}
+
+// Wait up to `ms` for the bridge's ready, then subscribe; resolves with the first
+// pushed state, or null (no extension, or one without remote control).
+async function probeRemote(bridge, ms = 1000) {
+  const until = Date.now() + ms;
+  while (!bridge.active && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+  if (!bridge.active) return null;
+  return bridge.subscribe((st) => { if (state.remote) renderRemote(st); });
+}
+
+function remoteSong(t) {
+  return {
+    title: t.title || '', artist: t.artist || '', album: t.album || '', coverArt: t.coverArt || '',
+    trackToken: t.trackToken || '', rating: t.rating || 0, duration: t.duration || 0,
+    quality: t.quality || '', audioFormat: t.audioFormat || '',
+  };
+}
+
+let remoteStationsKey = '';
+function renderRemote(rs) {
+  state.remoteState = rs;
+  // Stations: rebuilt only when the list itself changed (keeps focus and scroll).
+  const stations = (Array.isArray(rs.stations) ? rs.stations : []).filter((s) => s && s.token)
+    .map((s) => ({ id: s.token, name: s.name || '', isQuickMix: !!s.isQuickMix }));
+  const key = JSON.stringify(stations);
+  if (key !== remoteStationsKey) {
+    remoteStationsKey = key;
+    state.stations = stations;
+    buildStations();
+  }
+  const cur = rs.station && rs.station.token ? rs.station : null;
+  state.station = cur ? (state.stations.find((s) => s.id === cur.token) || { id: cur.token, name: cur.name || '' }) : null;
+  if (cur) store.set(STORAGE.station, cur.token);
+  markActiveStation();
+
+  // Now playing.
+  const t = rs.track && (rs.track.title || rs.track.trackToken) ? rs.track : null;
+  if (t) {
+    if (!state.song || state.song.trackToken !== (t.trackToken || '') || state.song.title !== (t.title || '')) {
+      const known = state.history.find((s) => s.trackToken && s.trackToken === t.trackToken);
+      displaySong(known ? Object.assign(known, remoteSong(t)) : remoteSong(t));
+    } else if (state.song.rating !== (t.rating || 0)) {
+      state.song.rating = t.rating || 0;
+      updateRatingButtons();
+      updateHistoryItem(state.song);
+    }
+    el.station.textContent = state.station ? `on ${state.station.name}` : '';
+  } else if (state.song) {
+    state.song = null;
+    showIdle();
+    updateRatingButtons();
+    renderHistory();
+  }
+  setPlayIcon(rs.status === 'playing');
+  const len = Number(rs.duration) || (t && Number(t.duration)) || 0;
+  setProgress(Number(rs.position) || 0, len);
+
+  // Settings the extension owns.
+  if (Number.isFinite(Number(rs.volume)) && Date.now() - remoteVolumeAt > 1500) {
+    state.volume = clamp(Math.round(Number(rs.volume)), 0, 100);
+    el.volume.value = String(state.volume);
+  }
+  if (QUALITIES.includes(rs.quality)) { state.quality = rs.quality; el.quality.value = rs.quality; }
+
+  // Up next: the extension only says how many songs are queued.
+  el.upNext.replaceChildren();
+  const n = Number(rs.queueLength) || 0;
+  el.upNextCount.textContent = '';
+  el.upNextEmpty.hidden = false;
+  el.upNextEmpty.textContent = n ? `${n} song${n === 1 ? '' : 's'} queued in the extension.` : 'Nothing queued yet.';
+
+  // Why nothing can play yet, in the extension's own terms.
+  const gateMode = rs.gate && rs.gate.mode;
+  if (rs.loggedIn === false || (gateMode && gateMode !== 'allowed' && gateMode !== 'off')) {
+    el.hint.textContent = gateMode && gateMode !== 'allowed' && gateMode !== 'off'
+      ? 'Sign in with GitHub in the melodica extension, then come back.'
+      : 'Sign in to Pandora in the melodica extension, then come back.';
+  } else if (!state.song) {
+    updateHint();
+  }
+  if (rs.status === 'error' && rs.error) playerMessage(rs.error, 'error', 0);
+  else if (rs.status === 'loading') playerMessage('Loading…', 'info', 0);
+  else if (el.playerMessage.textContent === 'Loading…' || /^Loading .*…$/.test(el.playerMessage.textContent)) playerMessage('');
+  const who = rs.gate && rs.gate.login ? `the melodica extension (${rs.gate.login})` : 'the melodica extension';
+  el.signedIn.textContent = 'melodica extension';
+  el.signedInFull.textContent = who;
+}
+
+function enterRemote(first) {
+  state.remote = true;
+  el.app.dataset.mode = 'remote';
+  el.audio.pause();
+  el.audio.removeAttribute('src');
+  el.searchForm.hidden = true;
+  el.searchResults.hidden = true;
+  el.logout.hidden = true;
+  renderRemote(first);
+  show(el.viewPlayer);
+  renderUpNext = () => {}; // the queue panel shows the extension's count (renderRemote)
+  updateStatus();
+  addEventListener('pagehide', () => state.bridge && state.bridge.unsubscribe());
+  visibleStationButton()?.focus();
 }
 
 // ---------------------------------------------------------------- GitHub gate
@@ -934,7 +1103,10 @@ function installEvents() {
   el.logout.addEventListener('click', logout);
   el.githubSignout.addEventListener('click', githubSignOut);
   el.githubSignout2.addEventListener('click', githubSignOut);
-  el.refreshStations.addEventListener('click', () => loadStations().catch((e) => playerMessage(describeError(e), 'error')));
+  el.refreshStations.addEventListener('click', () => {
+    if (state.remote) { remoteCommand('stations'); return; }
+    loadStations().catch((e) => playerMessage(describeError(e), 'error'));
+  });
   el.stationFilter.addEventListener('input', filterStations);
   el.stationFilter.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter') {
@@ -968,6 +1140,7 @@ function installEvents() {
   el.volume.addEventListener('input', () => setVolume(Number(el.volume.value)));
   el.volume.addEventListener('change', saveVolume);
   el.quality.addEventListener('change', () => {
+    if (state.remote) { remoteCommand('quality', { value: QUALITIES.includes(el.quality.value) ? el.quality.value : 'high' }); return; }
     setQuality(QUALITIES.includes(el.quality.value) ? el.quality.value : 'high');
     const wasFetching = state.fetching !== null;
     state.queue = [];
@@ -1096,10 +1269,18 @@ async function main() {
     state.bridge.start();
   }
   updateStatus();
-  try {
-    await state.client.load();
-  } catch (err) {
-    showFatal(`Could not load melodica.wasm: ${describeError(err)}`);
+  // Remote mode is decided first (at most ~2 s: 1 s for ready, 1 s for the first
+  // state); the wasm loads meanwhile so local playback does not wait for it.
+  const remoteProbe = state.bridge ? probeRemote(state.bridge).catch(() => null) : Promise.resolve(null);
+  const loading = state.client.load().then(() => null, (err) => err || new Error('load failed'));
+  const first = await remoteProbe;
+  if (first) {
+    enterRemote(first);
+    return;
+  }
+  const loadErr = await loading;
+  if (loadErr) {
+    showFatal(`Could not load melodica.wasm: ${describeError(loadErr)}`);
     setStatus('wasm failed to load', true);
     return;
   }
