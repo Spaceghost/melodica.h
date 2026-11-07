@@ -209,8 +209,16 @@ browser.runtime.onMessage.addListener do(msg, sender, sendResponse)
 
 # Settings edited on the options page: a new endpoint invalidates the session
 # (tokens belong to one server); quality applies to the next playlist.
+# A change that lands while boot() is still reading the old settings must not be
+# dropped (seen in Brave, whose worker starts later than the options page saves):
+# wait for the boot and apply it on top. A worker that has not begun booting
+# reads the stored settings when it does.
 browser.storage.onChanged.addListener do(changes, area)
-	return unless area === 'local' and state
+	return unless area === 'local' and booting
+	try
+		await ensure()
+	catch e
+		return
 	if changes.endpoint
 		const endpoint = normalizeEndpoint(changes.endpoint.newValue)
 		if endpoint !== state.client.endpoint

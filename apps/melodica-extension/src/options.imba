@@ -11,6 +11,10 @@ tag Options
 	prop kind = ''
 	prop version = ''
 	prop granted = null
+	# The form is shown only once the stored settings are in; a value typed
+	# before that would be overwritten when they arrived (seen in Brave, where
+	# the page is interactive before storage answers).
+	prop loaded = no
 
 	def mount
 		const s = await loadSettings()
@@ -19,6 +23,7 @@ tag Options
 		remember = s.remember
 		version = browser.runtime.getManifest().version
 		await checkPermission()
+		loaded = yes
 		imba.commit()
 
 	get origin
@@ -101,26 +106,29 @@ tag Options
 				<h1>
 					"melodica options"
 					<small> " {version}"
-				<label>
-					"API endpoint"
-					<input#endpoint type="url" bind=endpoint placeholder=SETTINGS_DEFAULTS.endpoint spellcheck=false>
-				<p.help> "Default: {SETTINGS_DEFAULTS.endpoint} (Pandora's JSON API v5, reached directly with the extension's host permission). Point it at a melodica-tuner or a relay for testing."
-				if origin and origin !== 'https://tuner.pandora.com'
-					<div.row>
-						<button#grant type="button" @click=grant> "Grant access to {origin}"
-						<span.message#granted> (granted === yes ? "granted" : (granted === no ? "not granted (CORS needed)" : ''))
-				<label>
-					"Audio quality"
-					<select#quality bind=quality>
-						<option value="high"> "high"
-						<option value="medium"> "medium"
-						<option value="low"> "low"
-				<label.row>
-					<input#remember type="checkbox" bind=remember>
-					"Remember the password on this device (kept unencrypted in extension storage)"
-				<div.actions>
-					<button#save.primary type="button" @click=save> "Save"
-					<button#reset type="button" @click=reset> "Reset to Pandora"
-				<p.message#options-message .error=(kind === 'error') .info=(kind === 'info')> message
+				if !loaded
+					<p.help#options-loading> "Loading settings…"
+				else
+					<label>
+						"API endpoint"
+						<input#endpoint type="url" bind=endpoint placeholder=SETTINGS_DEFAULTS.endpoint spellcheck=false>
+					<p.help> "Default: {SETTINGS_DEFAULTS.endpoint} (Pandora's JSON API v5, reached directly with the extension's host permission). Point it at a melodica-tuner or a relay for testing."
+					if origin and origin !== 'https://tuner.pandora.com'
+						<div.row>
+							<button#grant type="button" @click=grant> "Grant access to {origin}"
+							<span.message#granted> (granted === yes ? "granted" : (granted === no ? "not granted (CORS needed)" : ''))
+					<label>
+						"Audio quality"
+						<select#quality bind=quality>
+							<option value="high"> "high"
+							<option value="medium"> "medium"
+							<option value="low"> "low"
+					<label.row>
+						<input#remember type="checkbox" bind=remember>
+						"Remember the password on this device (kept unencrypted in extension storage)"
+					<div.actions>
+						<button#save.primary type="button" @click=save> "Save"
+						<button#reset type="button" @click=reset> "Reset to Pandora"
+					<p.message#options-message .error=(kind === 'error') .info=(kind === 'info')> message
 
 imba.mount <Options>

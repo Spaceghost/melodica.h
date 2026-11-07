@@ -21,9 +21,13 @@
 // Environment: TUNER_HTTPS_URL / TUNER_HTTP_URL / TUNER_USER / TUNER_PASSWORD
 // (the Spaceghost/melodica-tuner action's outputs), or MELODICA_TUNER_DIR to
 // start a checkout here. MELODICA_EXT_DIST (default dist/chrome).
-// Output: tests/artifacts/smoke-extension.json, smoke-extension-login.png,
-// smoke-extension-stations.png, smoke-extension-playing.png,
-// smoke-extension-bridge.png.
+// MELODICA_BROWSER: `chromium` (default: Playwright's bundled Chromium) or
+// `brave` (an installed Brave at MELODICA_BROWSER_PATH, default
+// /usr/bin/brave-browser, driven through the same Playwright `chromium`
+// launcher; Brave's Shields stay at their defaults and every request Brave
+// blocks is listed in the report).
+// Output: tests/artifacts/<name>.json and <name>-{login,stations,playing,bridge}.png
+// where <name> is `smoke-extension` for Chromium and `smoke-brave` for Brave.
 
 import { test, expect, chromium } from '@playwright/test';
 import https from 'node:https';
@@ -43,6 +47,24 @@ const TUNER_DIR = process.env.MELODICA_TUNER_DIR || resolve(root, '..', 'melodic
 const APP_PATH = '/melodica/app/';
 const WEB_HOST = 'spacegho.st';
 
+// Which browser runs the proof, and how its report is named and labelled.
+const BROWSERS = {
+  chromium: { name: 'smoke-extension', platform: 'browser-extension', executablePath: undefined },
+  brave: { name: 'smoke-brave', platform: 'brave', executablePath: process.env.MELODICA_BROWSER_PATH || '/usr/bin/brave-browser' },
+};
+const BROWSER = (process.env.MELODICA_BROWSER || 'chromium').toLowerCase();
+if (!BROWSERS[BROWSER]) throw new Error(`MELODICA_BROWSER=${BROWSER}: expected one of ${Object.keys(BROWSERS).join(', ')}`);
+const B = BROWSERS[BROWSER];
+const shot = (what) => resolve(ARTIFACTS, `${B.name}-${what}.png`);
+// `brave-browser --version` -> "Brave Browser 1.84.xx"; Chromium's version comes from CDP.
+function browserBinaryVersion(path) {
+  try {
+    return execFileSync(path, ['--version'], { encoding: 'utf8', timeout: 30_000 }).trim().split('\n')[0];
+  } catch (e) {
+    return `${path} --version failed: ${String(e.message).split('\n')[0]}`;
+  }
+}
+
 const tuner = {
   https: process.env.TUNER_HTTPS_URL || '',
   http: process.env.TUNER_HTTP_URL || '',
@@ -54,7 +76,7 @@ const tuner = {
 };
 const haveTuner = !!tuner.https || existsSync(join(TUNER_DIR, 'tuner', '__main__.py'));
 
-const report = { steps: [], summary: '', ok: false, bridge: null, audio: null, browser: '', extension: {} };
+const report = { steps: [], summary: '', ok: false, bridge: null, audio: null, browser: '', engine: '', extension: {}, blocked: [], failedRequests: [], shields: null };
 const step = (s) => { if (!report.steps.includes(s)) report.steps.push(s); };
 const getJson = async (url) => {
   const res = await fetch(url);
@@ -134,8 +156,17 @@ test.beforeAll(async () => {
   web.port = web.server.address().port;
 
   userDataDir = await mkdtemp(join(tmpdir(), 'melodica-ext-profile-'));
+  if (B.executablePath) {
+    report.browser = browserBinaryVersion(B.executablePath);
+    console.log(`browser: ${report.browser} (${B.executablePath})`);
+  }
   context = await chromium.launchPersistentContext(userDataDir, {
     headless: false,
+    executablePath: B.executablePath,
+    // Playwright passes --disable-component-update by default; in Brave that leaves
+    // Shields without its filter lists (brave://components: "No components are
+    // installed"), so the proof would run against an empty blocker. Brave fetches them.
+    ignoreDefaultArgs: BROWSER === 'brave' ? ['--disable-component-update'] : [],
     viewport: { width: 1280, height: 800 },
     ignoreHTTPSErrors: true,
     args: [
@@ -145,6 +176,7 @@ test.beforeAll(async () => {
       `--host-resolver-rules=MAP ${WEB_HOST} 127.0.0.1:${web.port}`,
       '--autoplay-policy=no-user-gesture-required',
       '--no-first-run',
+      '--no-default-browser-check',
     ],
   });
 });
@@ -157,19 +189,66 @@ test.afterAll(async () => {
   if (!haveTuner) return;
   const out = {
     ok: report.ok,
-    platform: 'browser-extension',
+    platform: B.platform,
     summary: report.summary,
     when: new Date().toISOString(),
     steps: report.steps,
     tuner: tuner.version,
     browser: report.browser,
+    engine: report.engine,
     extension: report.extension,
     audio: report.audio,
     bridge: report.bridge,
+    blocked: report.blocked,
+    failedRequests: report.failedRequests,
+    shields: report.shields,
   };
-  await writeFile(resolve(ARTIFACTS, 'smoke-extension.json'), JSON.stringify(out, null, 2) + '\n');
-  console.log(`smoke-extension.json: ${JSON.stringify(out)}`);
+  await writeFile(resolve(ARTIFACTS, `${B.name}.json`), JSON.stringify(out, null, 2) + '\n');
+  console.log(`${B.name}.json: ${JSON.stringify(out)}`);
 });
+
+// Brave: wait (up to a minute) for Shields' filter-list components to arrive, so the
+// proof runs with Brave's default ad-block and privacy lists loaded, and record them.
+// brave://components lists "<name> - Version: <v>" then "Status - <state>" per component.
+async function waitForShieldsLists() {
+  const t0 = Date.now();
+  const page = await context.newPage();
+  let components = [];
+  let filtersLoaded = false;
+  const wanted = ['Brave Default Adblock Filters', 'Brave Default Privacy Filters', 'Brave Ad Block Resources Library'];
+  try {
+    while (Date.now() - t0 < 60_000) {
+      await page.goto('brave://components', { waitUntil: 'load', timeout: 15_000 });
+      await page.waitForTimeout(1500);
+      const lines = (await page.evaluate(() => document.body.innerText)).split('\n').map((l) => l.trim()).filter(Boolean);
+      components = [];
+      for (let i = 0; i < lines.length; i++) {
+        const m = lines[i].match(/^(.+?) - Version: (\S+)$/);
+        if (!m) continue;
+        const st = (lines[i + 1] || '').match(/^Status - (.+)$/);
+        components.push({ name: m[1], version: m[2], status: st ? st[1] : '' });
+      }
+      const have = (n) => components.find((c) => c.name === n && c.status === 'Updated' && c.version !== '0.0.0.0');
+      filtersLoaded = wanted.every(have);
+      if (filtersLoaded) break;
+      await page.waitForTimeout(3000);
+    }
+  } catch (e) {
+    console.log(`brave://components not readable: ${String(e.message).split('\n')[0]}`);
+  } finally {
+    await page.close().catch(() => {});
+  }
+  const brave = components.filter((c) => /^Brave/.test(c.name));
+  report.shields = {
+    filtersLoaded,
+    waitedMs: Date.now() - t0,
+    components: brave,
+    note: filtersLoaded
+      ? 'Shields filter lists present before the proof; Shields settings left at their defaults'
+      : 'Shields filter lists did NOT finish arriving within 60s; the proof ran with whatever brave://components lists here',
+  };
+  console.log(`brave://components after ${report.shields.waitedMs}ms (filtersLoaded=${filtersLoaded}):${brave.map((c) => `\n  ${c.name} ${c.version} ${c.status}`).join('')}`);
+}
 
 async function extensionId() {
   let sw = context.serviceWorkers()[0];
@@ -190,12 +269,15 @@ test('signs in through the popup, plays a station in the player tab, bridges the
     page.on('requestfailed', (req) => evidence.failed.push(`[${label}] ${req.method()} ${req.url()} ${req.failure()?.errorText}`));
   };
   try {
-    report.browser = `chromium ${context.browser()?.version() || ''}`.trim();
+    report.engine = `chromium ${context.browser()?.version() || ''}`.trim();
+    if (!report.browser) report.browser = report.engine;
+    console.log(`browser: ${report.browser}; engine: ${report.engine}`);
     const id = await extensionId();
     const manifest = JSON.parse(await readFile(resolve(EXT, 'manifest.json'), 'utf8'));
     report.extension = { id, version: manifest.version_name || manifest.version, name: manifest.name };
     console.log(`extension ${id} ${report.extension.version}`);
     step('extension loaded');
+    if (BROWSER === 'brave') await waitForShieldsLists();
 
     // 1. Options: point at the tuner.
     const options = await context.newPage();
@@ -205,6 +287,10 @@ test('signs in through the popup, plays a station in the player tab, bridges the
     await options.fill('#endpoint', `${tuner.https}/services/json/`);
     await options.click('#save');
     await expect(options.locator('#options-message')).toContainText('Saved');
+    // The background must have adopted it (not only storage): ask it.
+    const effective = await options.evaluate(() => chrome.runtime.sendMessage({ type: 'state' }).then((r) => r && r.settings && r.settings.endpoint));
+    console.log(`background endpoint: ${effective}`);
+    expect(effective, 'endpoint the background will use').toBe(`${tuner.https}/services/json/`);
     step('endpoint set');
     await options.close();
 
@@ -215,7 +301,7 @@ test('signs in through the popup, plays a station in the player tab, bridges the
     await expect(popup.locator('#app')).toHaveAttribute('data-view', 'login', { timeout: 30_000 });
     await expect(popup.locator('#login-email')).toBeVisible();
     step('login screen');
-    await popup.screenshot({ path: resolve(ARTIFACTS, 'smoke-extension-login.png') });
+    await popup.screenshot({ path: shot('login') });
 
     await popup.fill('#login-email', tuner.user);
     await popup.fill('#login-password', tuner.password);
@@ -237,7 +323,7 @@ test('signs in through the popup, plays a station in the player tab, bridges the
     for (const n of expected) expect(names, `station "${n}" from the tuner fixture`).toContain(n);
     expect(names, 'the fixture station').toContain('Aurora Fields Radio');
     step('stations listed');
-    await popup.screenshot({ path: resolve(ARTIFACTS, 'smoke-extension-stations.png') });
+    await popup.screenshot({ path: shot('stations') });
 
     // 3. Start a station: the player tab opens and plays.
     const playerPromise = context.waitForEvent('page', { timeout: 30_000 });
@@ -245,6 +331,7 @@ test('signs in through the popup, plays a station in the player tab, bridges the
     await stations.first().click();
     const player = await playerPromise;
     watch(player, 'player');
+    await player.waitForURL((u) => u.href.startsWith(`chrome-extension://${id}/player.html`), { timeout: 30_000 });
     await player.waitForLoadState('load');
     expect(player.url(), 'player tab url').toContain(`chrome-extension://${id}/player.html`);
     await expect(player.locator('#np-title')).not.toHaveText(/^(Pick a station)?$/, { timeout: 30_000 });
@@ -270,7 +357,7 @@ test('signs in through the popup, plays a station in the player tab, bridges the
     });
     report.audio = { ...audio, ...now };
     console.log(`audio: ${JSON.stringify(audio)}`);
-    await player.screenshot({ path: resolve(ARTIFACTS, 'smoke-extension-playing.png') });
+    await player.screenshot({ path: shot('playing') });
     expect(audio.error, 'audio element error').toBeNull();
     expect(audio.src, 'audio src from the tuner').toContain('/audio/');
     expect(audio.readyState, 'HTMLMediaElement.readyState').toBeGreaterThanOrEqual(2);
@@ -345,7 +432,7 @@ test('signs in through the popup, plays a station in the player tab, bridges the
     }));
     expect(refused.ok).toBe(false);
     report.bridge = { announced, ready, roundTrip: { ok: roundTrip.ok, status: roundTrip.status, stat: answer.stat }, refused };
-    await page.screenshot({ path: resolve(ARTIFACTS, 'smoke-extension-bridge.png') });
+    await page.screenshot({ path: shot('bridge') });
     step('bridge round trip');
 
     // 5. The tuner's own record.
@@ -363,12 +450,20 @@ test('signs in through the popup, plays a station in the player tab, bridges the
     expect(audioGet, 'tuner log shows a GET /audio/ fetch').toBeTruthy();
     step('audio fetched');
 
+    // Anything the browser itself refused (Brave Shields answer net::ERR_BLOCKED_BY_CLIENT)
+    // is recorded; the tuner, the audio and the bridge above must have gone through regardless.
+    report.failedRequests = evidence.failed.slice();
+    report.blocked = evidence.failed.filter((l) => /ERR_BLOCKED_BY_(CLIENT|ADMINISTRATOR|RESPONSE)/.test(l));
+    console.log(`requests the browser blocked (${report.blocked.length}):${report.blocked.map((l) => `\n  ${l}`).join('')}`);
+    const blockedOurs = report.blocked.filter((l) => l.includes(tuner.https) || l.includes(`https://${WEB_HOST}`) || l.includes('chrome-extension://'));
+    expect(blockedOurs, 'the browser blocked a request of the extension, the tuner or the page').toEqual([]);
+
     expect(evidence.errors, 'uncaught page errors').toEqual([]);
     const consoleErrors = evidence.console.filter((l) => /:error\]/.test(l) && !/relay|HTTP 4|melodica\/api/.test(l));
     expect(consoleErrors, 'console errors (extension pages)').toEqual(consoleErrors.filter((l) => l.startsWith('[web:')));
 
     report.ok = true;
-    report.summary = `melodica-extension ${report.extension.version} (unpacked, ${report.browser}) pointed at melodica-tuner ${tuner.version} ` +
+    report.summary = `melodica-extension ${report.extension.version} (unpacked, ${report.browser}${report.engine && report.engine !== report.browser ? `, ${report.engine}` : ''}) pointed at melodica-tuner ${tuner.version} ` +
       `via the options page, signed in from the popup, listed ${names.length} stations, played "${now.title}" by ${now.artist} on ${now.station} ` +
       `in the player tab (readyState ${audio.readyState}, ${audio.currentTime.toFixed(1)}s), and bridged a partnerLogin for the melodica-web page on https://${WEB_HOST}`;
   } catch (err) {

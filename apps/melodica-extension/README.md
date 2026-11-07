@@ -1,6 +1,6 @@
 # melodica-extension
 
-A Pandora WebExtension for Chrome and Firefox (Manifest V3). Two jobs:
+A Pandora WebExtension for Chrome, Brave and Firefox (Manifest V3). Two jobs:
 
 - **A standalone player.** Sign in from the toolbar popup, pick a station, and
   the music plays in an extension tab (`player.html`) that keeps the `<audio>`
@@ -51,15 +51,17 @@ Buttons and current steps: <https://spacegho.st/extensions/#melodica-extension>.
   `xpinstall.signatures.required=false`, or load it temporarily as below.
   gecko id `melodica-extension@spacegho.st`; update feed
   `https://spacegho.st/extensions/dl/melodica-extension/updates.json`.
-- **Chrome / Edge:** `melodica-extension-<ver>.crx` is a CRX3 signed with the
-  repository's key (secret `CRX_PRIVATE_KEY`; the public half gives the
-  Chrome extension id **`obbahflgghfemmpmjppeibnemibgblbd`**, computed by
-  `scripts/crx-id.mjs`). Linux: `chrome://extensions` → Developer mode →
-  drag the file onto the page. Windows and macOS block off-store `.crx`
-  installs except by enterprise policy (`ExtensionInstallSources` +
-  `ExtensionInstallForcelist` with the update feed
-  `https://spacegho.st/extensions/dl/melodica-extension/update.xml`, which is
-  also the manifest's `update_url`); otherwise load the zip unpacked.
+- **Chrome / Edge / Brave:** `melodica-extension-<ver>.crx` is a CRX3 signed
+  with the repository's key (secret `CRX_PRIVATE_KEY`; the public half gives
+  the Chrome extension id **`obbahflgghfemmpmjppeibnemibgblbd`**, computed by
+  `scripts/crx-id.mjs`). Linux: `chrome://extensions` (`brave://extensions`,
+  `edge://extensions`) → Developer mode → drag the file onto the page. Windows
+  and macOS block off-store `.crx` installs except by enterprise policy
+  (`ExtensionInstallSources` + `ExtensionInstallForcelist` with the update
+  feed `https://spacegho.st/extensions/dl/melodica-extension/update.xml`,
+  which is also the manifest's `update_url`; Brave honours the same Chromium
+  policies); otherwise load the zip unpacked. Brave uses the Chrome build
+  unchanged, and CI runs the full smoke in it (below).
 
 ### Install (unpacked)
 
@@ -69,6 +71,10 @@ and unzip it.
 
 - **Chrome / Chromium / Edge:** `chrome://extensions` → Developer mode → Load
   unpacked → the unzipped folder.
+- **Brave:** `brave://extensions` → Developer mode (top right) → Load unpacked
+  → the unzipped folder (the Chrome zip). Shields stay as they are: the
+  extension's requests are its own, not a web page's, so Shields' per-site
+  settings do not apply to them.
 - **Firefox (128+):** `about:debugging#/runtime/this-firefox` → Load Temporary
   Add-on → pick `manifest.json` in the unzipped folder (it is removed when
   Firefox quits), or `npx web-ext run --source-dir <folder>`. A permanent
@@ -97,8 +103,8 @@ is how the CI smoke runs).
 | `scripts/build.mjs` | esbuild + `imba/compiler` → `dist/chrome`, `dist/firefox`, `build/node/core.js`; generated icons; CSP guards |
 | `scripts/package.sh` | the zips, the `.xpi`, the `.crx` (via `crx3`, key from `$CRX_KEY`), the source tarball, `SHA256SUMS` |
 | `scripts/crx-id.mjs` | the Chrome extension id of a key: first 128 bits of SHA-256 over the DER SubjectPublicKeyInfo, hex mapped to a–p |
-| `tests/smoke-extension.spec.mjs` | the Playwright proof (below); `tests/fixtures/melodica-web-dist` is melodica-web 0.2.0's built page |
-| `.github/workflows/ci.yml` | build → smoke → release on `v*` tags |
+| `tests/smoke-extension.spec.mjs` | the Playwright proof (below) in Playwright's Chromium or, with `MELODICA_BROWSER=brave`, an installed Brave; `tests/fixtures/melodica-web-dist` is melodica-web 0.2.0's built page |
+| `.github/workflows/ci.yml` | build → `smoke` (Chromium) and `smoke-brave` (Brave stable from Brave's apt repository) → release on `v*` tags |
 
 ### Core (wasm) exports
 
@@ -225,25 +231,75 @@ packages the zips, and then runs `tests/smoke-extension.spec.mjs`:
 
 It writes `tests/artifacts/smoke-extension.json` (`ok`, `platform:
 "browser-extension"`, `summary`, `when`, `steps`, `tuner`, plus `browser`,
-`extension`, `audio`, `bridge`) and `smoke-extension-login.png`,
-`smoke-extension-stations.png`, `smoke-extension-playing.png`,
-`smoke-extension-bridge.png`. On a `v*` tag the `release` job refuses to
-publish unless `ok` is `true` and attaches the report and screenshots next to
-the zips.
+`engine`, `extension`, `audio`, `bridge`, `blocked`, `failedRequests`) and
+`smoke-extension-login.png`, `smoke-extension-stations.png`,
+`smoke-extension-playing.png`, `smoke-extension-bridge.png`. Step 3 also asks
+the background (message `state`) which endpoint it will use and requires the
+tuner's, so a save the worker did not pick up fails there, not at login.
+
+### The same proof in Brave (`smoke-brave`)
+
+A second job installs Brave from `https://brave-browser-apt-release.s3.brave.com/`
+(its signing key, `stable main`, nothing pinned; the version is logged and
+written to the report) and runs the identical spec with `MELODICA_BROWSER=brave`:
+Playwright's `chromium.launchPersistentContext` with
+`executablePath: /usr/bin/brave-browser`, headed under xvfb, the same
+`--disable-extensions-except`/`--load-extension`, `--no-first-run`,
+`--no-default-browser-check`. Brave Shields are left at their defaults. The
+report is `smoke-brave.json` (`platform: "brave"`, `browser` = the
+`brave-browser --version` line, `engine` = the Chromium version Brave reports
+over CDP, and `blocked` = every request Brave answered with
+`net::ERR_BLOCKED_BY_*`; the test fails if one of those is the extension's,
+the tuner's or the page's) plus `smoke-brave-login.png`,
+`smoke-brave-stations.png`, `smoke-brave-playing.png`, `smoke-brave-bridge.png`.
+Playwright launches Chromium-family browsers with `--disable-component-update`,
+which in Brave leaves Shields without any filter list (`brave://components`
+says "No components are installed"); in Brave the spec drops that flag, waits
+up to a minute before the proof for `brave://components` to show the Brave
+Default Adblock Filters, Default Privacy Filters and Ad Block Resources Library
+as `Updated`, and records them with their versions in `shields`
+(`filtersLoaded`, `waitedMs`, `components`). `filtersLoaded` is recorded, not
+asserted: read it before taking `blocked: []` as a statement about Shields.
+The `release` job requires both reports to say `ok: true` and attaches both
+sets, covered by `SHA256SUMS`.
+
+Why Shields do not need a per-site exception here: the extension's own
+requests (login, stations, playlist, audio) are issued by the service worker
+and the player page, both extension contexts, which Shields do not filter; the
+bridge is a content script that only relays the page's `postMessage`s to the
+worker, so the page itself makes no request to the tuner. The Brave runs
+recorded `blocked: []` with `filtersLoaded: true`.
+
+Rehearsing in Brave exposed two races that Chromium's timing had hidden, both
+fixed in 0.1.2: the options page rendered its form before the stored settings
+had arrived, so a value typed in that window was overwritten (the form now
+waits for them); and a `storage.onChanged` event that landed while the worker
+was still booting was dropped (it now waits for the boot and applies on top).
+Before the fixes the Brave smoke failed about half the time with the
+extension still pointed at `tuner.pandora.com`.
 
 Rehearsed on 2026-11-07 in the bak container `melodica-ext` (Playwright
-Chromium 158, tuner 0.1.2, headed under xvfb): `ok: true`, all sixteen steps,
-"Slow Light" by Aurora Fields on QuickMix at readyState 4, the bridged
-`auth.partnerLogin` answered `stat: "ok"`, and `?method=../../admin` refused.
-The authoritative runs are the ones on GitHub Actions for the tagged commit;
-see the release notes for the run of each tag.
+Chromium 158 and Brave Browser 157.1.99.55 from Brave's apt repository, tuner
+0.1.2, headed under xvfb): `ok: true` in both, all sixteen steps, "Slow Light"
+by Aurora Fields on QuickMix at readyState 4, the bridged `auth.partnerLogin`
+answered `stat: "ok"`, `?method=../../admin` refused, and in Brave
+`blocked: []`. The authoritative runs are the ones on GitHub Actions for the
+tagged commit; see the release notes for the run of each tag.
 
 ### What this does and does not prove
 
-- Proven by the tag's run: the exact `dist/chrome` build loads in Chromium,
-  its options/popup/player pages work, its wasm core frames requests the
-  strict tuner accepts, audio plays from the tuner, and the bridge protocol
-  round-trips through the content script and background.
+- Proven by the tag's run: the exact `dist/chrome` build loads in Chromium
+  and in Brave, its options/popup/player pages work, its wasm core frames
+  requests the strict tuner accepts, audio plays from the tuner, and the
+  bridge protocol round-trips through the content script and background.
+- **Brave: the stable of the day, Shields at defaults, on Linux.** The job
+  does not pin Brave, so each run proves whatever `brave-browser` apt
+  installed then (the version is in the report). Shields were not configured;
+  `blocked: []` says nothing of ours was refused during the run, and
+  `shields.filtersLoaded` says whether Brave's filter lists were in place
+  before it (waited for, recorded, not asserted). Brave on Windows or macOS,
+  Brave's `.crx` drag-install and Brave's policy install have not been
+  exercised.
 - **Not a real Pandora login.** CI has no Pandora account and GitHub runners
   are not in the US; the extension has not been observed against
   `tuner.pandora.com` itself. The request shapes are those of pianobar's
