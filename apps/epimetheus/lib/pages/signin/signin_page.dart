@@ -1,0 +1,288 @@
+import 'dart:io';
+
+import 'package:audio_service/audio_service.dart';
+import 'package:epimetheus/libepimetheus/networking.dart';
+import 'package:epimetheus/models/collection/collection_model.dart';
+import 'package:epimetheus/models/user/user.dart';
+import 'package:epimetheus/pages/authentication/authentication_page.dart';
+import 'package:epimetheus/platform_constants.dart';
+import 'package:epimetheus/storage/secure_storage_manager.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_autofill/flutter_autofill.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+/// The user inputs their credentials to this page, which then passes them on to [AuthenticationPage].
+/// If an email is passed in from the app launching code, it automatically fills that in.
+
+const _emailRegex = r"[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?";
+
+void signOut(BuildContext context) async {
+  AudioService.stop();
+
+  final secureStorageManager = await getPlatformSecureStorageManager();
+  await Future.wait([
+    secureStorageManager.delete('email'),
+    secureStorageManager.delete('password'),
+  ]);
+
+  final userModel = UserModel.of(context);
+  final collectionModel = CollectionModel.of(context);
+
+  await Navigator.pushReplacementNamed(context, '/sign-in');
+
+  userModel.clear();
+  collectionModel.clear();
+  csrfToken = null; // Clear the csrfToken to avoid geo-blocking glitches
+}
+
+class SignInPage extends StatefulWidget {
+  final String email;
+  final String password;
+  final String apiHost;
+
+  SignInPage({this.email, this.password, this.apiHost});
+
+  @override
+  _SignInPageState createState() => _SignInPageState();
+}
+
+class _SignInPageState extends State<SignInPage> {
+  final _formKey = GlobalKey<FormState>();
+  TextEditingController _emailController;
+  TextEditingController _passwordController;
+  TextEditingController _apiHostController;
+
+  String _email;
+  String _password;
+  String _apiHost;
+
+  void _signIn() {
+    final _formKeyState = _formKey.currentState;
+    if (_formKeyState.validate()) {
+      _formKeyState.save();
+      if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) FlutterAutofill.commit();
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (context) {
+            return AuthenticationPage(
+              email: _email,
+              password: _password,
+              apiHost: _apiHost,
+            );
+          },
+        ),
+      );
+    }
+  }
+
+  void _signUp() {
+    launch('https://www.pandora.com/account/register');
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _emailController = TextEditingController(text: widget.email);
+    _passwordController = TextEditingController(text: widget.password);
+    if (kIsWeb) _apiHostController = TextEditingController(text: widget.apiHost);
+  }
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    if (kIsWeb) _apiHostController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    String emailValidator(String email) {
+      if (email.isEmpty) return 'Please enter an email address.';
+      if (!RegExp(_emailRegex).hasMatch(email)) return 'Please enter a valid email address.';
+      return null;
+    }
+
+    String passwordValidator(String password) {
+      if (password.isEmpty) return 'Please enter a password.';
+      return null;
+    }
+
+    String apiHostValidator(String apiHost) {
+      if (apiHost.isEmpty) return 'A CORS stripper hostname is required in the Web app.';
+      return null;
+    }
+
+    void _showCORSDialog() {
+      showDialog(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('CORS stripper'),
+            content: const Text(
+              'Due to a browser limitation, a CORS stripper proxy must be used to communicate '
+              'with Pandora.\nYou may create your own for free, or use a desktop/mobile '
+              'version of Epimetheus.',
+            ),
+            actions: [
+              FlatButton(
+                textColor: Theme.of(context).accentColor,
+                onPressed: () {
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Back'),
+              ),
+              RaisedButton(
+                onPressed: () {
+                  launch('https://github.com/EpimetheusMusicPlayer/CORSflare-for-Pandora');
+                  Navigator.of(context).pop();
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: const Text('Make one'),
+                ),
+              ),
+            ],
+          );
+        },
+      );
+    }
+
+    return WillPopScope(
+      onWillPop: () async {
+        return false;
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Sign in'),
+          actions: <Widget>[
+            IconButton(
+              icon: Icon(Icons.vpn_lock),
+              tooltip: 'Proxy settings',
+              onPressed: () async {
+                if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) await FlutterAutofill.cancel();
+                Navigator.pushNamed(context, '/preferences/proxy');
+              },
+            ),
+          ],
+        ),
+        body: Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: largeScreenUIConstraints,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 48),
+              child: Form(
+                key: _formKey,
+                child: Align(
+                  alignment: const Alignment(0, -0.25),
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: <Widget>[
+                      Row(
+                        children: <Widget>[
+                          Hero(
+                            tag: 'app_icon',
+                            child: Image.asset(
+                              'assets/app_icon.png',
+                              width: 96,
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          const Text('Epimetheus', textScaleFactor: 2),
+                        ],
+                      ),
+                      const SizedBox(height: 48),
+                      Autofill(
+                        autofillHints: const [FlutterAutofill.AUTOFILL_HINT_EMAIL_ADDRESS],
+                        autofillType: FlutterAutofill.AUTOFILL_TYPE_TEXT,
+                        onAutofilled: (value) {
+                          _emailController.text = value;
+                        },
+                        textController: _emailController,
+                        child: TextFormField(
+                          controller: _emailController,
+                          validator: emailValidator,
+                          textInputAction: TextInputAction.next,
+                          onSaved: (email) => _email = email,
+                          decoration: const InputDecoration(
+                            border: const OutlineInputBorder(),
+                            labelText: 'Email address',
+                          ),
+                          keyboardType: TextInputType.emailAddress,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Autofill(
+                        autofillHints: const [FlutterAutofill.AUTOFILL_HINT_PASSWORD],
+                        autofillType: FlutterAutofill.AUTOFILL_TYPE_TEXT,
+                        onAutofilled: (value) {
+                          _passwordController.text = value;
+                        },
+                        textController: _passwordController,
+                        child: TextFormField(
+                          controller: _passwordController,
+                          validator: passwordValidator,
+                          textInputAction: TextInputAction.next,
+                          onSaved: (password) => _password = password,
+                          decoration: const InputDecoration(
+                            border: const OutlineInputBorder(),
+                            labelText: 'Password',
+                          ),
+                          obscureText: true,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      if (kIsWeb)
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextFormField(
+                                controller: _apiHostController,
+                                validator: apiHostValidator,
+                                textInputAction: TextInputAction.next,
+                                onSaved: (apiHost) => _apiHost = apiHost,
+                                decoration: const InputDecoration(
+                                  border: const OutlineInputBorder(),
+                                  labelText: 'CORS stripper',
+                                ),
+                                keyboardType: TextInputType.url,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            IconButton(
+                              icon: const Icon(Icons.help_outline),
+                              color: Colors.black54,
+                              tooltip: 'What is this?',
+                              onPressed: _showCORSDialog,
+                            ),
+                          ],
+                        ),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: <Widget>[
+                          FlatButton(
+                            textColor: Theme.of(context).accentColor,
+                            onPressed: _signUp,
+                            child: const Text('Sign up'),
+                          ),
+                          const SizedBox(width: 8),
+                          RaisedButton(
+                            onPressed: _signIn,
+                            child: const Text('Sign in'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
