@@ -67,6 +67,14 @@ jobs:
         run: npx playwright test tests/remote.spec.mjs
       - name: Design screenshots (every view at 390x844 and 1280x800, one centered column)
         run: npx playwright test tests/design.spec.mjs
+      - name: Design against v0.4.0 (the player at 1920x1080 and 2560x1440 next to the v0.4.0 release)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/v040"
+          gh release download v0.4.0 -R "$GITHUB_REPOSITORY" -p 'melodica-web-0.4.0.tar.gz' -D "$RUNNER_TEMP/v040"
+          tar xzf "$RUNNER_TEMP/v040/melodica-web-0.4.0.tar.gz" -C "$RUNNER_TEMP/v040"
+          MELODICA_V040_DIST="$RUNNER_TEMP/v040/dist" npx playwright test tests/design-v040.spec.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

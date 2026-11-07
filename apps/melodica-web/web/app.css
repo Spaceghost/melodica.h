@@ -2,13 +2,12 @@
    spacegho.st/melodica (tokens copied; the app is self-contained). System
    fonts only, nothing fetched from another origin but Pandora cover art.
 
-   Layout is responsive (a left station rail and a wide player on desktop, a
-   single column with a sticky transport bar on phones). The look is the
-   phone's at every width: the warm top bar comes from the two body glows,
-   sized relative to the viewport so a 1280 px window paints the same band a
-   390 px phone does; no cover wash behind the art; flat (shadowless) rail.
-   melodica-extension copies this file: the popup may use the phone layout,
-   the player tab and options use the desktop one with the same top bar. */
+   The look is v0.4.0's: responsive layout (a left station rail and a wide
+   player on desktop, a single column with a sticky transport bar on phones),
+   two fixed-size body glows (900x480 and 800x420 px), the cover wash behind
+   the art on desktop and a shadowed rail. tests/design-v040.spec.mjs compares the
+   player at 1920x1080 and 2560x1440 against renders of the v0.4.0 tag.
+   melodica-extension copies this file into public/theme.css. */
 :root {
   color-scheme: dark;
   --ink: #0b0e14; --ink-2: #111622;
@@ -49,11 +48,9 @@ html { background: var(--ink); color: var(--text); -webkit-text-size-adjust: 100
 body {
   margin: 0; min-height: 100%; display: flex; flex-direction: column;
   font: 15px/1.5 var(--body);
-  /* The phone's glows (900x480 and 800x420 px over a 390 px screen), scaled
-     with the width: the warm top bar of the phone view at every size. */
   background:
-    radial-gradient(231% 480px at 85% -140px, var(--glow-a), transparent 70%),
-    radial-gradient(205% 420px at 8% -160px, var(--glow-g), transparent 70%),
+    radial-gradient(900px 480px at 85% -140px, var(--glow-a), transparent 70%),
+    radial-gradient(800px 420px at 8% -160px, var(--glow-g), transparent 70%),
     linear-gradient(var(--ink), var(--ink-2));
 }
 a { color: var(--aether); text-decoration: none; }
@@ -181,7 +178,7 @@ a.button:hover, a.button:focus-visible { background: var(--gold-2); text-decorat
 .rail {
   position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto;
   display: flex; flex-direction: column; gap: 0.6rem;
-  background: var(--glass); border: 1px solid var(--line); border-radius: var(--radius); padding: 0.9rem; box-shadow: none;
+  background: var(--glass); border: 1px solid var(--line); border-radius: var(--radius); padding: 0.9rem; box-shadow: var(--shadow);
 }
 .rail-head { display: flex; align-items: center; justify-content: space-between; }
 .rail-head h2 { font-size: 1.35rem; color: var(--gold-2); }
@@ -226,7 +223,6 @@ a.button:hover, a.button:focus-visible { background: var(--gold-2); text-decorat
   transition: opacity 1.2s ease;
 }
 .stage.idle .wash, .wash[src="data:,"] { opacity: 0; }
-.wash { display: none; } /* as on phones: no cover wash at any width */
 .art { margin: 0; width: min(100%, 34vh, 340px); aspect-ratio: 1; flex: none; }
 .cover {
   display: block; width: 100%; height: 100%; object-fit: cover; border-radius: 12px;
@@ -380,3 +376,4 @@ button.primary.danger:hover { background: var(--warn); border-color: var(--warn)
 @media (prefers-reduced-motion: reduce) {
   .wash, .cover, .toast { transition: none; }
 }
+

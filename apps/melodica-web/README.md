@@ -65,13 +65,15 @@ The page shows no text about the policy.
 
 The layout is responsive: on desktop a station rail on the left and a wide
 player, on phones a single column with a sticky transport bar. The look is
-the phone view's at every width, in light and dark: the warm top bar (the two
-body glows are sized relative to the window, so a desktop paints the same
-band a phone does), no blurred cover wash behind the art, and flat cards.
-The stylesheet is `web/app.css`; melodica-extension copies it (its popup may
-use the phone layout; its player tab and options use the desktop layout with
-the same top bar). `tests/design.spec.mjs` screenshots every view at 390x844
-and 1280x800; `docs/design/` holds the v0.4.0 (`design-v040-*`) and v0.5.1
+v0.4.0's, in light and dark: two fixed-size body glows, the blurred cover wash
+behind the art on desktop, and a shadowed station rail. (0.5.1 to 0.6.0 sized
+the glows relative to the window, which painted a wide warm band on the right
+of large windows; 0.6.1 restored v0.4.0's.) The stylesheet is `web/app.css`;
+melodica-extension copies it into `public/theme.css`. `tests/design.spec.mjs`
+screenshots every view at 390x844 and 1280x800; `tests/design-v040.spec.mjs`
+renders the player at 1920x1080 and 2560x1440 from this build and from the
+v0.4.0 release and fails when they differ in 1% of the pixels or more (status
+line and footer masked). `docs/design/` holds the v0.4.0 (`design-v040-*`) and v0.5.1
 (`design-v051-*`) shots in light and dark, and the reverted 0.5.0 one-column
 experiment (`design-after-*`).
 
