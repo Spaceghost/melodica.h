@@ -29,7 +29,7 @@ becomes a view of that playback and a remote for it, instead of running its own 
 | page → ext | `{melodica:1, type:'subscribe'}`: start receiving state; answered at once with a `state` |
 | page → ext | `{melodica:1, type:'unsubscribe'}` |
 | ext → page | `{melodica:1, type:'state', state}` on subscribe and on every change (about once a second while playing) |
-| page → ext | `{melodica:1, type:'command', id, action, …}`: `play` (`station: {token, name}` to start a station, none to resume), `pause`, `toggle`, `next`, `love`, `ban`, `tired`, `stop`, `volume` (`value` 0–100), `quality` (`value` high/medium/low), `stations` (reload the list) |
+| page → ext | `{melodica:1, type:'command', id, action, …}`: `play` (`station: {token, name}` to start a station, none to resume), `pause`, `toggle`, `next`, `love`, `ban`, `tired`, `stop`, `volume` (`value` 0–100), `quality` (`value` high/medium/low), `stations` (reload the list), `openLogin` (opens the extension's sign-in: the toolbar popup where the browser allows it, else the popup page in a tab) |
 | ext → page | `{melodica:1, type:'result', id, ok, error, state}` |
 
 `state` is the background's `playerState`:
@@ -49,7 +49,7 @@ becomes a view of that playback and a remote for it, instead of running its own 
 ```
 
 `track.audioUrl` is never sent to the page. While an ad plays, `track.ad` is true and
-`next`, `love`, `ban` and `tired` do nothing. While no Pandora session exists, commands
+`next`, `love`, `ban` and `tired` do nothing. `subscribe` is answered whatever the extension is doing, including idle, signed out and right after browser start (the content script asks the background again for about 20 s before answering with an error), and a `state` is pushed on every change from any source (popup, player tab, keyboard shortcut, media keys, sign-in and sign-out). While no Pandora session exists, commands
 fail with `ok: false` and the reason; `state.loggedIn` says so, and `state.access` carries
 the access answer's message when access was not allowed (README "Access"). Relayed
 Pandora calls (layer 1) other than `auth.partnerLogin` and `test.checkLicensing` are

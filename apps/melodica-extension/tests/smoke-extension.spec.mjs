@@ -615,6 +615,29 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     report.bridge.remote = { backgroundTrack: bgNow, states: remote.states.length, paused: true, resumed: true, results: remote.results, first: remote.states[0] };
     step('bridge remote');
 
+    // The page stays subscribed and records every push; a change made in the popup
+    // (not by the page) must reach it.
+    await page.evaluate(() => {
+      window.__states = [];
+      window.addEventListener('message', (ev) => {
+        if (ev.source === window && ev.data && ev.data.melodica === 1 && ev.data.type === 'state') window.__states.push({ status: ev.data.state.status, loggedIn: ev.data.state.loggedIn, access: ev.data.state.access || null });
+      });
+      window.postMessage({ melodica: 1, type: 'subscribe' }, location.origin);
+    });
+    await page.waitForFunction(() => window.__states.length > 0, null, { timeout: 25_000 });
+    const pop2 = await context.newPage();
+    await pop2.setViewportSize(POPUP);
+    await pop2.goto(`chrome-extension://${id}/popup.html`);
+    await expect(pop2.locator('#app')).toHaveAttribute('data-status', 'playing', { timeout: 20_000 });
+    const mark = await page.evaluate(() => window.__states.length);
+    await pop2.click('#play');
+    await page.waitForFunction((n) => window.__states.slice(n).some((x) => x.status === 'paused'), mark, { timeout: 15_000 });
+    await pop2.click('#play');
+    await page.waitForFunction((n) => window.__states.slice(n).some((x) => x.status === 'playing'), mark, { timeout: 15_000 });
+    await pop2.close();
+    report.bridge.pushFromPopup = { paused: true, resumed: true };
+    step('bridge push from the popup');
+
     // 6. Verify default playback and its fixture counters.
     //    slot after every song; the background must fetch it (ad.getAdMetadata), play
     //    it (GET of its audio), show it, refuse `next` while it plays, and register it
@@ -751,6 +774,27 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     expect(stopped.status === 'playing', 'the music stopped').toBe(false);
     report.access.withdrawn = { status: stopped.status, loggedIn: stopped.loggedIn };
     step('access withdrawn: stopped and signed out');
+
+    // The subscribed page learned it too, and can ask the extension to open its sign-in.
+    await page.waitForFunction(() => window.__states.some((x) => x.loggedIn === false), null, { timeout: 15_000 });
+    const opened = await page.evaluate(() => new Promise((ok, fail) => {
+      const t = setTimeout(() => fail(new Error('no openLogin result within 15s')), 15_000);
+      window.addEventListener('message', function h(ev) {
+        if (ev.source !== window || !ev.data || ev.data.melodica !== 1 || ev.data.type !== 'result' || ev.data.id !== 'open-login') return;
+        window.removeEventListener('message', h); clearTimeout(t);
+        ok({ ok: ev.data.ok, error: ev.data.error, opened: ev.data.opened, loggedIn: ev.data.state && ev.data.state.loggedIn });
+      });
+      window.postMessage({ melodica: 1, type: 'command', id: 'open-login', action: 'openLogin' }, location.origin);
+    }));
+    console.log(`bridge openLogin: ${JSON.stringify(opened)}`);
+    expect(opened.ok, `openLogin (${opened.error})`).toBe(true);
+    expect(['popup', 'tab']).toContain(opened.opened);
+    expect(opened.loggedIn, 'the state says signed out').toBe(false);
+    if (opened.opened === 'tab') {
+      await expect.poll(() => context.pages().some((p) => p.url() === `chrome-extension://${id}/popup.html`), { timeout: 10_000 }).toBe(true);
+    }
+    report.bridge.signedOut = { pushed: true, openLogin: opened.opened };
+    step('bridge: signed out pushed, openLogin');
     await ctl.close();
 
     // 7. The tuner's own record.

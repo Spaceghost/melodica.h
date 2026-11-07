@@ -26,16 +26,19 @@ off (see Scrobbling).
 2. **Extension (direct to Pandora).** Before `auth.userLogin`, `POST /oauth/melodica/access`
    with the same email string. If `allowed` is false, do not log in; show the
    allow-list wording above (the request has been sent).
-3. **Ads.** Obey `ads` from `/oauth/melodica/access`, or from `/oauth/melodica/policy`.
-   The web player gets it from the policy endpoint using the `x-melodica-access` token as
-   the bearer. Anything unexpected means `plus: false`.
-4. **Login confirmation and scrobbling.** Web: the relay records the login itself and
-   adds `x-melodica-scrobble: <token>` next to `x-melodica-access`. Extension: after
-   Pandora accepts the login, `POST /oauth/melodica/login-ok`. Both get a Spaceghost
-   Scrobbles client token while scrobbling is on (the default). See Scrobbling.
+3. **Ads.** Obey `ads` from `/oauth/melodica/access` or `/oauth/melodica/login-ok`, or
+   from `/oauth/melodica/policy`. The web player gets it from the policy endpoint using
+   the `x-melodica-access` token as the bearer. Anything unexpected means `plus: false`.
+4. **Login proof and scrobbling.** Knowing an allowed email proves nothing, so nothing
+   personal is handed out before Pandora has accepted the password. Web: the relay sees
+   Pandora's real answer, records the login and adds `x-melodica-scrobble: <token>` next to
+   `x-melodica-access`. Extension: right after Pandora's stat ok to `auth.userLogin`,
+   `POST /oauth/melodica/login-ok` with the Pandora session; spacegho.st checks it with
+   Pandora and only then returns a verified melodica access token and the Spaceghost
+   Scrobbles client token (while scrobbling is on, the default). See Scrobbling.
 5. **Optional spacegho.st sign-in** (OAuth 2.1 code + PKCE, below). It is not needed to
-   use melodica. With an access token, send it as the bearer to `/oauth/melodica/access`
-   and `/oauth/melodica/policy`.
+   use melodica. With an access token, send it as the bearer to `/oauth/melodica/access`,
+   `/oauth/melodica/login-ok` and `/oauth/melodica/policy`.
 
 ## Access check (extension)
 
@@ -49,12 +52,8 @@ Authorization: Bearer <spacegho.st access token>     (optional)
 
 `client` is `"extension"`, `"ios"` or `"web"`.
 
-- 200 `{"allowed":true,"plus":false|true,"token":"<jwt>","scrobbling":true|false,"scrobble":{"token","endpoint"}}`:
-  log in to Pandora. `token` is a melodica access token (12 h) usable as the bearer for
-  `/oauth/melodica/policy`, `/oauth/melodica/login-ok` and `/oauth/melodica/scrobbling*`.
-  `scrobble` is present only while scrobbling is on and Scrobbles answered; it is
-  missing otherwise (do not treat that as an error). Send the token you already hold
-  as `"scrobble_token"` in the body and you get the same one back instead of a new one.
+- 200 `{"allowed":true,"plus":false|true}`: log in to Pandora, then call login-ok.
+  Nothing else comes back: no access token, no scrobble token, no history link.
 - An allowed check counts as a login attempt; `last_login` moves only with login-ok.
 - 200 `{"allowed":false,"plus":false,"message":"…"}`: do not log in; show `message`.
 - 400 `{"error":"invalid_request"}`: not an email address.
@@ -78,18 +77,37 @@ Authorization: Bearer <spacegho.st access token>     (optional)
 
 ```
 POST https://spacegho.st/oauth/melodica/login-ok
-Authorization: Bearer <melodica access token from /access>
 Content-Type: application/json
+Authorization: Bearer <spacegho.st OAuth access token>     (optional, as for /access)
 
-{"email":"<same string as for /access>","client":"extension","scrobble_token":"<current token, optional>"}
+{"email":"<same string as for /access and auth.userLogin>","client":"extension",
+ "pandora":{"userAuthToken":"<result.userAuthToken of auth.userLogin>",
+            "userId":"<result.userId>","partnerId":"<partnerId from auth.partnerLogin>",
+            "syncTimeOffset":<integer seconds: Pandora sync time minus local time, as used for syncTime>},
+ "scrobble_token":"<current Scrobbles token, optional>"}
 ```
 
-Call it right after Pandora answered stat ok to `auth.userLogin`.
+Call it right after Pandora answered stat ok to `auth.userLogin`, with that session. The
+Worker calls Pandora's `user.getSettings` with it (JSON v5, android partner request key,
+`syncTime = now + syncTimeOffset`) and accepts the login only if Pandora answers stat ok
+and `result.username` equals the email (lowercased, trimmed). The Pandora token is used
+for that one call and never stored or logged. pianobar reads the username from the same
+call.
 
-- 200 `{"ok":true,"scrobbling":bool,"scrobble"?:{"token","endpoint"}}`.
-- 401 `{"error":"invalid_token"}`: the access token is missing, expired or for another
-  email. Ignore it for playback. The login worked, but it is not recorded.
-- Network errors: ignore; never block playback on this call.
+- 200 `{"ok":true,"plus":bool,"token":"<jwt>","scrobbling":bool,"scrobble"?:{"token","endpoint"}}`.
+  `token` is the verified melodica access token (12 h): use it as the bearer for
+  `/oauth/melodica/policy` and every `/oauth/melodica/scrobbling*` call. `scrobble` is
+  present while scrobbling is on and Scrobbles answered. Send the Scrobbles token you
+  already hold as `scrobble_token` to keep it; otherwise a new one is issued and older ones
+  for this client beyond two are revoked.
+- 401 `{"error":"login_not_verified"}`: Pandora did not confirm a login for this email
+  (wrong, forged or expired session, or another account). Nothing is issued.
+- 403 `{"error":"not_allowed"}`: the email is not (or no longer) on the allow-list.
+- 400 `{"error":"invalid_request"}`: email or the `pandora` object missing or malformed.
+- 429 `{"error":"rate_limited"}` (20 per hour per address and per email), 503
+  `{"error":"temporarily_unavailable"}` (Pandora unreachable): retry later.
+- Never block playback on this call; without it there is just no scrobbling, history or
+  settings until the next login.
 
 ## Scrobbling (Spaceghost Scrobbles)
 
@@ -120,7 +138,12 @@ Content-Type: application/json
   Network errors: queue at most a handful and retry; never block playback.
 - `GET /scrobble/1/validate-token` answers `{"valid":true,"user_name":"…"}`.
 
-**First-run notice.** Before the first submission, show once, visibly:
+Scrobbling is on for every melodica user, existing ones included, unless that user
+turned it off (or Jack did for them). An opt-out is stored explicitly and survives
+logins; nothing turns it back on except the user's switch or Jack.
+
+**First-run notice.** Before the first submission, show once, visibly, both on a fresh
+install and on the first run after an upgrade to a scrobbling version:
 "Scrobbling to spacegho.st is on. Turn it off in settings."
 
 **Recent listens** (to fill the "recently played" list after a reload, the last 15):
@@ -137,8 +160,11 @@ private.
 **Settings.** The settings screen gets the scrobbling switch, a leaderboard switch, a
 display name field, and two links: "Your listening history" and "Leaderboard".
 
+- These calls need a **verified** melodica access token: the relay's `x-melodica-access`
+  (web) or the `token` from login-ok (extension). Anything else gets 401
+  `{"error":"invalid_token"}`.
 - Scrobbling state: `GET https://spacegho.st/oauth/melodica/scrobbling` with
-  `Authorization: Bearer <melodica access token>` →
+  `Authorization: Bearer <verified melodica access token>` →
   `{"enabled":bool,"endpoint":"https://spacegho.st/scrobble","history":"https://spacegho.st/oauth/melodica/scrobbling/history","leaderboard":"https://spacegho.st/scrobble/leaderboard"}`.
 - Switch: `POST https://spacegho.st/oauth/melodica/scrobbling`, same bearer,
   `{"enabled":false}` or `{"enabled":true,"client":"web"|"extension"|"ios"}`.
@@ -168,10 +194,10 @@ count.
 
 The Scrobbles API sends no CORS headers except on `/1/leaderboard`: the web app calls it same-origin, and the extension needs host permission for `https://spacegho.st/scrobble/*`.
 
-Note on trust: the extension's `/access` answer already carries a Scrobbles token and
-opens the history link for whoever knows an allowed email (the same client-side trust
-as the access check itself). The relay's token is handed out only after Pandora
-accepted the password.
+Trust: Scrobbles tokens, verified access tokens, history links, settings and the
+opt-out switch are handed out only after Pandora accepted the password, as seen by the
+relay (web) or confirmed with Pandora by login-ok (extension). The access check alone
+is client-side and only decides whether to try logging in.
 
 ## Endpoints
 

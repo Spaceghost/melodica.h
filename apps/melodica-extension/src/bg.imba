@@ -228,6 +228,7 @@ def accountView
 def setAccount patch
 	account = Object.assign({}, account, patch, {checkedAt: Date.now()})
 	broadcast({type: 'account', account: accountView()})
+	playerChanged(player)
 	account
 
 def storedAccount
@@ -414,6 +415,7 @@ def setAccess email, r
 	access = {email, allowed: !!r.allowed, spots: r.spots === no ? no : yes, checkedAt: Date.now(), message: r.message or '', error: ''}
 	await browser.storage.local.set({access: {email, allowed: access.allowed, spots: access.spots, checkedAt: access.checkedAt, message: access.message}})
 	broadcast({type: 'access', access: accessView()})
+	playerChanged(player)
 	access
 
 # Boot and hourly: ask again for the login email. No longer allowed: stop the
@@ -468,6 +470,19 @@ def broadcast message
 		await browser.runtime.sendMessage(message)
 	catch e
 		null
+
+# A page (the bridge's `openLogin`) asks for the sign-in: the toolbar popup where
+# the browser allows opening it, else the popup page in a tab.
+def openLogin
+	if browser.action and browser.action.openPopup
+		try
+			await browser.action.openPopup()
+			note('login: opened the popup')
+			return 'popup'
+		catch e
+			note("login: openPopup refused ({e and e.message or e}); opening a tab")
+	await browser.tabs.create({url: browser.runtime.getURL('popup.html')})
+	'tab'
 
 # The player tab is optional: a full-size view of the same state. Opening it
 # starts nothing; closing it stops nothing.
@@ -806,6 +821,7 @@ def handle msg, sender
 			await persist()
 			const stations = await client.stations()
 			await remember('stations', stations)
+			playerChanged(player)
 			{email, stations}
 		when 'logout'
 			client.logout()
@@ -814,12 +830,16 @@ def handle msg, sender
 			await persist()
 			await remember('stations', [])
 			await stopPlayback('signed out')
+			playerChanged(player)
 			{}
 		when 'stations'
 			const stations = await client.stations()
 			await remember('stations', stations)
 			await persist()
+			playerChanged(player)
 			{stations}
+		when 'open-login'
+			{opened: await openLogin()}
 		when 'playlist'
 			const station = stationByToken(msg.stationToken) or {token: msg.stationToken, name: ''}
 			const quality = QUALITIES.includes(msg.quality) ? msg.quality : state.settings.quality

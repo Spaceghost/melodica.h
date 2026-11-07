@@ -12,7 +12,7 @@
 #   ext  -> {melodica:1, type:'response', id, ok, status, body:Uint8Array, error}
 #   page -> {melodica:1, type:'subscribe'} | {type:'unsubscribe'}
 #   ext  -> {melodica:1, type:'state', state}            (on subscribe and on every change)
-#   page -> {melodica:1, type:'command', id, action, …}  (play/pause/toggle/next/love/ban/tired/stop/volume/quality/stations)
+#   page -> {melodica:1, type:'command', id, action, …}  (play/pause/toggle/next/love/ban/tired/stop/volume/quality/stations/openLogin)
 #   ext  -> {melodica:1, type:'result', id, ok, error, state}
 # The extension also announces 'ready' once when it loads. Only searches whose
 # method matches /^[a-z]+\.[A-Za-z]+$/ are forwarded; the background POSTs the
@@ -43,13 +43,24 @@ def publicState state
 def pushState state
 	window.postMessage({melodica: 1, type: 'state', state: publicState(state)}, location.origin)
 
+# Right after browser start the background (service worker, offscreen document or
+# Firefox background page) may not be listening yet: ask again for up to ~20 s
+# before reporting an error. The answer is the state whatever it is: idle,
+# signed out (`loggedIn: false`) or playing.
 def subscribe
 	subscribed = yes
-	try
-		const r = await browser.runtime.sendMessage({type: 'player-subscribe', on: yes})
-		pushState(r and r.ok ? r.state : {status: 'error', error: r and r.error or 'the extension did not answer'})
-	catch e
-		pushState({status: 'error', error: String(e and e.message or e)})
+	let last = null
+	for wait in [0, 250, 500, 1000, 1000, 2000, 2000, 3000, 5000, 5000]
+		await new Promise(do(ok) setTimeout(ok, wait)) if wait
+		return unless subscribed
+		try
+			const r = await browser.runtime.sendMessage({type: 'player-subscribe', on: yes})
+			if r and r.ok and r.state
+				return pushState(r.state)
+			last = r and r.error or 'the extension did not answer'
+		catch e
+			last = String(e and e.message or e)
+	pushState({status: 'error', error: last or 'the extension did not answer', loggedIn: no})
 
 def handleCommand data
 	const id = String(data.id)
@@ -58,7 +69,12 @@ def handleCommand data
 	try
 		const action = String(data.action or '')
 		let r
-		if action === 'stations'
+		if action === 'openLogin'
+			const o = await browser.runtime.sendMessage({type: 'open-login'})
+			return reply({ok: no, error: o and o.error or 'the extension did not answer'}) unless o and o.ok
+			r = await browser.runtime.sendMessage({type: 'player-get'})
+			return reply({ok: yes, opened: o.opened, state: publicState(r and r.state)}) if r and r.ok
+		elif action === 'stations'
 			r = await browser.runtime.sendMessage({type: 'stations'})
 			return reply({ok: no, error: r and r.error or 'extension error'}) unless r and r.ok
 			r = await browser.runtime.sendMessage({type: 'player-get'})
