@@ -1,0 +1,233 @@
+name: release
+
+on:
+  push:
+    tags: ['20*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (empty: build only, upload workflow artifacts)'
+        required: false
+        default: ''
+
+env:
+  VERSION: ${{ github.event_name == 'push' && github.ref_name || (inputs.tag != '' && inputs.tag || format('dev-{0}', github.sha)) }}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            platform: x64
+            outdir: x64
+          - arch: x86
+            platform: x86
+            outdir: Win32
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          ref: ${{ inputs.tag != '' && inputs.tag || '' }}
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: Prepare build environment
+        shell: pwsh
+        run: |
+          ./contrib/windows/prepare-build-env.ps1 -BuildEnv "$env:RUNNER_TEMP\build-env" -Source "$env:GITHUB_WORKSPACE"
+
+      - name: Build pianobar (Release|${{ matrix.platform }})
+        shell: pwsh
+        run: |
+          msbuild "$env:RUNNER_TEMP\build-env\pianobar.sln" -t:pianobar `
+            -m -nologo -v:minimal `
+            -p:Configuration=Release "-p:Platform=${{ matrix.platform }}" `
+            -p:PlatformToolset=v143
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-Item "$env:RUNNER_TEMP\build-env\build\${{ matrix.outdir }}\pianobar.exe"
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = "pianobar-windows-$env:VERSION-win-${{ matrix.arch }}"
+          $stage = "$env:RUNNER_TEMP\$name"
+          New-Item -ItemType Directory -Path $stage, dist | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\build-env\build\${{ matrix.outdir }}\pianobar.exe" $stage
+          Copy-Item release\* $stage
+          Copy-Item COPYING $stage
+          Copy-Item vendor\melodica\LICENSE.libpiano $stage
+          7z a -tzip "dist\$name.zip" "$stage\*" | Out-Null
+          Get-ChildItem dist
+
+      - name: Installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $stage = "$env:RUNNER_TEMP\pianobar-windows-$env:VERSION-win-${{ matrix.arch }}"
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+            "/DAppVersion=$env:VERSION" "/DArch=${{ matrix.arch }}" `
+            "/DStageDir=$stage" "/DOutputDir=$env:GITHUB_WORKSPACE\dist" `
+            contrib\windows\pianobar.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-Item "dist\pianobar-windows-$env:VERSION-setup-win-${{ matrix.arch }}.exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pianobar-windows-${{ env.VERSION }}-win-${{ matrix.arch }}
+          path: |
+            dist/*.zip
+            dist/*.exe
+          if-no-files-found: error
+
+  smoke:
+    # Proves the x64 release artifacts on a fresh windows-latest runner: the installer installs and
+    # uninstalls, the installed and portable pianobar.exe start in a console, log in to a melodica-tuner
+    # test server, list its stations and print a now-playing line (smoke-windows.json "ok" is true only
+    # when all of that was observed). See contrib/windows/smoke.ps1.
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag != '' && inputs.tag || '' }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pianobar-windows-${{ env.VERSION }}-win-x64
+          path: dist
+
+      # Fake tuner.pandora.com. pianobar-windows' WinHTTP layer connects with INTERNET_DEFAULT_PORT (443 for
+      # the TLS calls, 80 for the plain ones; rpc_tls_port is not used) and trusts the machine Root store, so the
+      # tuner must own the real hostname on 443/80 (hosts override, IIS stopped) and its CA must be in Root.
+      - uses: Spaceghost/melodica-tuner@v1
+        id: tuner
+        with:
+          user: ci@melodica.invalid
+          password: ci-smoke
+          hosts-override: "true"
+          install-ca: "true"
+
+      - name: Smoke test installer, installed exe and portable zip
+        shell: powershell
+        env:
+          TUNER_HTTPS_URL: ${{ steps.tuner.outputs.https-url }}
+          TUNER_HTTPS_PORT: ${{ steps.tuner.outputs.https-port }}
+          TUNER_HTTP_PORT: ${{ steps.tuner.outputs.http-port }}
+          TUNER_LOG_URL: ${{ steps.tuner.outputs.log-url }}
+          TUNER_USER: ${{ steps.tuner.outputs.user }}
+          TUNER_PASSWORD: ${{ steps.tuner.outputs.password }}
+        run: |
+          if ($env:TUNER_HTTPS_PORT -ne '443' -or $env:TUNER_HTTP_PORT -ne '80') {
+            Write-Host "::error::melodica-tuner bound $env:TUNER_HTTPS_PORT/$env:TUNER_HTTP_PORT, pianobar-windows needs 443/80"
+            exit 1
+          }
+          $tunerHost = ([Uri] $env:TUNER_HTTPS_URL).Host
+          $installer = Get-Item "dist\pianobar-windows-$env:VERSION-setup-win-x64.exe"
+          $zip = Get-Item "dist\pianobar-windows-$env:VERSION-win-x64.zip"
+          & contrib\windows\smoke.ps1 -Installer $installer.FullName -Zip $zip.FullName `
+            -OutDir "$env:GITHUB_WORKSPACE\smoke" -DriverSource contrib\windows\SmokeDriver.cs `
+            -User $env:TUNER_USER -Password $env:TUNER_PASSWORD `
+            -TunerHost $tunerHost -TunerPort $env:TUNER_HTTPS_PORT `
+            -TunerHealthUrl "$env:TUNER_HTTPS_URL/__tuner/health" -TunerLogUrl $env:TUNER_LOG_URL `
+            -TunerLabel "Spaceghost/melodica-tuner@v1, hosts override, CA in machine Root"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Tuner server log
+        if: always()
+        shell: pwsh
+        run: |
+          $log = Join-Path '${{ steps.tuner.outputs.work-dir }}' 'tuner.log'
+          if (Test-Path $log) { Copy-Item $log smoke\tuner-server.log; Get-Content $log | Select-Object -Last 60 }
+
+      - name: Show result
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path smoke\smoke-windows.json) { Get-Content smoke\smoke-windows.json }
+          if (Test-Path smoke\smoke-windows.txt) { Get-Content smoke\smoke-windows.txt }
+          Get-ChildItem smoke -ErrorAction SilentlyContinue
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-windows
+          path: smoke/smoke-windows*
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-windows-raw
+          path: |
+            smoke/*-transcript.txt
+            smoke/*-result.json
+            smoke/*-driver.log
+            smoke/install.log
+            smoke/tuner-log.txt
+            smoke/tuner-server.log
+          if-no-files-found: ignore
+
+  release:
+    needs: [build, smoke]
+    if: github.event_name == 'push' || inputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: pianobar-windows-*
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: smoke-windows
+          path: dist
+
+      - name: Checksums
+        run: |
+          cd dist
+          ls -l
+          sha256sum *.zip *.exe smoke-windows*.json smoke-windows*.txt smoke-windows*.png | tee SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: pianobar-windows ${{ env.VERSION }} (melodica.h)
+          files: dist/*
+          fail_on_unmatched_files: true
+          body: |
+            pianobar for Windows, built with [melodica.h](https://github.com/Spaceghost/melodica.h) in place of libpiano.
+
+            melodica.h's `compat/` layer replaces `src/libpiano` (and the bundled json-c and blowfish
+            projects) in the upstream MSVC build environment; the rest of the Windows port is unchanged.
+
+            **Installer:** run `pianobar-windows-<version>-setup-win-x64.exe` (or `-x86.exe`). It installs
+            to `%LOCALAPPDATA%\Programs\pianobar` (per-user; choose "all users" for Program Files), adds the
+            folder to your user PATH (optional task) and creates a Start Menu shortcut that opens pianobar
+            in a console. Windows SmartScreen will warn because the installer is not code-signed; choose
+            "More info" > "Run anyway".
+
+            **Portable:** unzip `pianobar-windows-<version>-win-x64.zip` (or `-x86.zip`) anywhere and run
+            `pianobar.exe`.
+
+            Either way, copy `pianobar.cfg.example` to `pianobar.cfg` next to `pianobar.exe` and fill in
+            your Pandora credentials before the first run.
+
+            Assets: two installers (`-setup-win-<arch>.exe`), two portable zips (`-win-<arch>.zip`, each holding
+            `pianobar.exe`, `pianobar.cfg.example`, `README.md`, licenses), `SHA256SUMS`, and the smoke-test
+            evidence `smoke-windows.json` / `smoke-windows.txt` / `smoke-windows-*.png`.
+            Built by GitHub Actions on `windows-latest` (MSVC v143, Inno Setup 6).
+
+            **What was tested before publishing** (`smoke` job, same workflow run, x64 artifacts only, on a
+            `windows-latest` runner without an audio device): the installer ran silently per-user, registered
+            its uninstaller, the installed `pianobar.exe` and the portable zip's `pianobar.exe` were started
+            in a real console and printed their banner and login line, and the installer uninstalled cleanly.
+            `smoke-windows.json` says exactly which steps passed and whether a test server was used
+            (`"ok": true` means login, station list and a now-playing line were observed against the
+            melodica-tuner test server, and the server log confirmed the API calls). The x86 build was not
+            run. Nothing was tested against real Pandora.
