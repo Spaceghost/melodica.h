@@ -10,10 +10,23 @@ import { browser, loadSettings, normalizeEndpoint, fromBase64, toBase64 } from '
 const METHOD = /^[a-z]+\.[A-Za-z]+$/
 const PLAYER_URL = browser.runtime.getURL('player.html')
 const session = browser.storage.session or browser.storage.local
-const SESSION_KEYS = {session: null, stations: [], nowPlaying: null, playerTabId: null, pendingPlay: null}
+const SESSION_KEYS = {session: null, stations: [], nowPlaying: null, playerTabId: null, pendingPlay: null, log: []}
+const LOG_MAX = 200
 
 let booting = null
 let state = null
+let logLines = []
+
+# The background log: console.debug plus a ring of the last LOG_MAX lines kept
+# in session storage, which the options page's "Copy diagnostics" reads (the
+# background console is hard to reach in Firefox). Lines carry no tokens: the
+# client logs method names, sizes, codes and the clock offset only.
+def note line
+	const text = "{new Date().toISOString()} {line}"
+	console.debug("melodica {line}")
+	logLines.push(text)
+	logLines.splice(0, logLines.length - LOG_MAX) if logLines.length > LOG_MAX
+	session.set({log: logLines}).catch(do(e) null)
 
 def boot
 	const settings = await loadSettings()
@@ -21,12 +34,39 @@ def boot
 	const bytes = await (await fetch(url)).arrayBuffer()
 	const core = await Core.load(bytes)
 	throw new Error('melodica core: key setup failed') unless core.init()
-	const client = new Pandora(core, {endpoint: settings.endpoint, log: do(line) console.debug("melodica {line}")})
+	const client = new Pandora(core, {endpoint: settings.endpoint, log: note, userAgent: await clientUserAgent(settings.endpoint)})
 	const saved = await session.get(SESSION_KEYS)
-	client.restore(saved.session)
+	logLines = Array.isArray(saved.log) ? saved.log : []
+	const manifest = browser.runtime.getManifest()
+	note("boot melodica-extension {manifest.version_name or manifest.version} core {core.version} ({bytes.byteLength} bytes) endpoint {settings.endpoint} session-storage={browser.storage.session ? 'yes' : 'no (storage.local)'}")
+	note("ua {navigator.userAgent}")
+	try
+		const perms = await browser.permissions.getAll()
+		note("permissions {(perms.permissions or []).join(' ')}; origins {(perms.origins or []).join(' ') or '(none)'}")
+	catch e
+		note("permissions.getAll failed: {e and e.message or e}")
+	note("restored session for {client.user.email}") if client.restore(saved.session)
 	if settings.remember and settings.email and settings.password
 		client.credentials = {email: settings.email, password: settings.password}
 	{core, client, settings, saved}
+
+# The User-Agent for the endpoint: the client's own when the extension holds a
+# host permission for that origin (Pandora's, or an optional one the user
+# granted), none (the browser's) when the endpoint is reached through CORS,
+# where a custom User-Agent would fail the preflight. See pandora.imba USER_AGENT.
+def clientUserAgent endpoint
+	let origin = ''
+	try
+		origin = new URL(endpoint).origin
+	catch e
+		return null
+	let granted = no
+	try
+		granted = await browser.permissions.contains({origins: ["{origin}/*"]})
+	catch e
+		granted = no
+	note("endpoint {origin}: host permission {granted ? 'granted, requests carry the client User-Agent' : 'not granted, CORS request with the browser User-Agent'}")
+	granted ? "melodica-extension/{browser.runtime.getManifest().version} (+https://github.com/Spaceghost/melodica-extension)" : null
 
 def ensure
 	unless booting
@@ -108,6 +148,26 @@ def handle msg, sender
 	switch msg.type
 		when 'ping'
 			{version: browser.runtime.getManifest().version, core: state.core.version}
+		when 'diagnostics'
+			let permissions = null
+			try
+				permissions = await browser.permissions.getAll()
+			catch e
+				permissions = {error: String(e and e.message or e)}
+			const manifest = browser.runtime.getManifest()
+			{
+				version: manifest.version_name or manifest.version
+				core: state.core.version
+				ua: navigator.userAgent
+				endpoint: state.settings.endpoint
+				userAgent: client.userAgent or '(the browser\'s)'
+				loggedIn: client.loggedIn
+				syncOffset: state.core.syncOffset
+				sessionStorage: !!browser.storage.session
+				background: manifest.background
+				permissions: permissions
+				lines: logLines.slice()
+			}
 		when 'state'
 			{
 				loggedIn: client.loggedIn
@@ -121,7 +181,9 @@ def handle msg, sender
 		when 'login'
 			const email = String(msg.email or '').trim()
 			const password = String(msg.password or '')
+			note("login requested (email {email.length} chars, password {password.length} chars, remember={!!msg.remember})")
 			await client.login(email, password)
+			note("login ok: user id {client.user.id.length} chars, token {client.user.authToken.length} chars, subscriber={client.user.subscriber}")
 			const patch = {email}
 			if msg.remember
 				patch.remember = yes
@@ -202,6 +264,7 @@ browser.runtime.onMessage.addListener do(msg, sender, sendResponse)
 	const done = do(result) sendResponse(Object.assign({ok: yes}, result or {}))
 	const failed = do(e)
 		console.warn("melodica {msg.type}: {(e and e.message) or e}")
+		note("{msg.type} failed: {(e and e.message) or e}") unless e and e.kind === 'pandora'
 		const code = (e and e.code != null) ? e.code : null
 		sendResponse({ok: no, error: String((e and e.message) or e), code: code, kind: (e and e.kind) or 'error'})
 	handle(msg, sender).then(done, failed)
@@ -224,6 +287,7 @@ browser.storage.onChanged.addListener do(changes, area)
 		if endpoint !== state.client.endpoint
 			state.settings.endpoint = endpoint
 			state.client.endpoint = endpoint
+			state.client.userAgent = await clientUserAgent(endpoint)
 			state.client.reset()
 			await persist()
 			await remember('stations', [])

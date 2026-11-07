@@ -4,7 +4,8 @@
 //   dist/chrome/   manifest without Firefox-only keys (self-hosted: carries update_url)
 //   dist/cws/      the Chrome build without update_url, for the Chrome Web Store and Edge Add-ons
 //   dist/firefox/  manifest with browser_specific_settings and background.scripts
-// Also emits build/node/core.js (the Core wrapper for Node) for core/test.mjs.
+// Also emits build/node/core.js (the Core wrapper for Node) for core/test.mjs and
+// build/node/pandora.js (the Pandora client) for scripts/real-pandora-probe.mjs.
 //
 //   node scripts/build.mjs [--version 0.1.0] [--core build/core/melodica_core.wasm]
 import { build } from 'esbuild';
@@ -183,6 +184,8 @@ await writeFile(resolve(dist, 'VERSION'), version + '\n');
 // Node build of the core wrapper for the unit test.
 await mkdir(resolve(root, 'build/node'), { recursive: true });
 await bundle('src/core.imba', resolve(root, 'build/node/core.js'), 'node');
+// ...and of the Pandora client, for scripts/real-pandora-probe.mjs (no-account probe against the real tuner).
+await bundle('src/pandora.imba', resolve(root, 'build/node/pandora.js'), 'node');
 
 const files = await listFiles(resolve(dist, 'chrome'));
 console.log(`built melodica-extension ${version}: ${files.join(', ')}`);
