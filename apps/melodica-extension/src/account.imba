@@ -77,8 +77,7 @@ export def policyFrom status, body
 export def accountLabel policy, info
 	return policy.name if policy and policy.name
 	return info.name if info and typeof info.name === 'string' and info.name
-	return info.email if info and typeof info.email === 'string' and info.email
-	'spacegho.st account'
+	'Signed in'
 
 # Claims of a JWT (display only; the server checks tokens).
 export def jwtClaims token

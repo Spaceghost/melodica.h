@@ -398,6 +398,10 @@ jobs:
             smoke-extension-popup-playing.png
             smoke-extension-player-tab.png
             smoke-extension-player-tab-dark.png
+            smoke-extension-player-tab-1920.png
+            smoke-extension-player-tab-2560.png
+            smoke-extension-options-1920.png
+            smoke-extension-options-2560.png
             smoke-extension-options.png
             smoke-extension-bridge.png
             smoke-brave.json
@@ -410,6 +414,10 @@ jobs:
             smoke-brave-popup-playing.png
             smoke-brave-player-tab.png
             smoke-brave-player-tab-dark.png
+            smoke-brave-player-tab-1920.png
+            smoke-brave-player-tab-2560.png
+            smoke-brave-options-1920.png
+            smoke-brave-options-2560.png
             smoke-brave-options.png
             smoke-brave-bridge.png
             smoke-firefox.json

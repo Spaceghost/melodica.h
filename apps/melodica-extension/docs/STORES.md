@@ -5,8 +5,8 @@ addons.mozilla.org listings, and will not be. The only distribution is the self-
 store at <https://spacegho.st/extensions/#melodica-extension>: the release `.xpi`,
 `.crx` and unpacked zips from GitHub, mirrored with their checksums and update feeds.
 
-melodica is distributed only from spacegho.st/extensions; melodica access is by
-allow-list, which the stores cannot express. "Unlisted" and
+melodica is distributed only from spacegho.st/extensions; access is decided by
+spacegho.st per Pandora login, which the stores cannot express. "Unlisted" and
 "hidden" hide a listing from search, not from anyone with the link, and a reviewer would
 be handed a player that refuses them. We also will not ship a store build that behaves
 differently from the self-hosted one (a build without the access check, or with a different one)

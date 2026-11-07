@@ -64,8 +64,8 @@ eq(policyFrom(200, { playback: {} }), { spots: true, name: null }, 'missing flag
 // Label: display name, else userinfo name, else email, else neutral.
 eq(accountLabel({ name: 'alice' }, { email: 'a@example.com' }), 'alice', 'display name first');
 eq(accountLabel({ name: null }, { name: 'Bob' }), 'Bob', 'userinfo name');
-eq(accountLabel({ name: null }, { email: 'invitee@example.com' }), 'invitee@example.com', 'email-only account');
-eq(accountLabel(null, null), 'spacegho.st account', 'neutral fallback');
+eq(accountLabel({ name: null }, { email: 'invitee@example.com' }), 'Signed in', 'an email is never shown');
+eq(accountLabel(null, null), 'Signed in', 'neutral fallback');
 
 // JWT claims (display only).
 const jwt = ['{"alg":"ES256"}', '{"sub":"u_1","name":"Zoë"}'].map((x) => Buffer.from(x).toString('base64url')).join('.') + '.sig';

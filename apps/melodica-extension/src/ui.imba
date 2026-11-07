@@ -104,7 +104,6 @@ export tag Login
 					<p#remember-warning.warn> "The password is kept in the extension's local storage, unencrypted."
 				<button#login-button.primary type="submit" disabled=busy> (busy ? "Signing in…" : "Sign in")
 				<p#login-message.message .error=(kind === 'error') .info=(kind === 'info') role="status"> message
-				<p#access-note.fine> "melodica access is by allow-list; signing in sends your email to the admin as an access request."
 				<p.fine> "Sign-in and every Pandora call go from the extension straight to Pandora; no relay sees them."
 
 export tag StationList
@@ -149,6 +148,7 @@ export tag NowPlaying
 	def render
 		const song = now and now.song
 		<self.stage .idle=!song aria-label="Now playing">
+			<img.wash src=(song and song.coverArt or 'data:,') alt="" aria-hidden="true">
 			<figure.art>
 				<img.cover#np-cover src=(song and song.coverArt or FALLBACK_COVER) alt=(song and song.album ? "Cover of {song.album}" : '')>
 			<div.meta>

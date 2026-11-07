@@ -251,8 +251,7 @@ try {
   step('login screen');
   await screenshot(driver, 'login');
   // Access: an email not on the allow-list is not logged in, and Pandora is not asked.
-  const accessNote = await driver.findElement(By.css('#access-note')).getText();
-  check(accessNote === 'melodica access is by allow-list; signing in sends your email to the admin as an access request.', `login card states the allow-list (${accessNote})`);
+  check((await driver.findElements(By.css('#access-note'))).length === 0, 'no login note');
   const refusedLogin = await loginAndWait(driver, tuner.user, tuner.password);
   const userLogins = async () => (await getJson(`${tuner.http}/__tuner/log`)).filter((e) => e.method === 'auth.userLogin').length;
   check(refusedLogin.view === 'login' && refusedLogin.message === 'melodica access is by allow-list. Your request has been sent.', `not on the list: not logged in (${JSON.stringify(refusedLogin)})`);

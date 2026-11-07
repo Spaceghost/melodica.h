@@ -216,7 +216,9 @@ export class Engine
 		set({status: 'playing', error: ''})
 		updateMediaSession()
 
+	# The element pauses on its own when a track ends; that is not a pause.
 	def onPause
+		return if audio.ended
 		set({status: 'paused'}) if state.track and state.status !== 'stopped' and state.status !== 'loading'
 
 	def onTime force = no

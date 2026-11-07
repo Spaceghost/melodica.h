@@ -29,7 +29,7 @@ becomes a view of that playback and a remote for it, instead of running its own 
 | page → ext | `{melodica:1, type:'subscribe'}`: start receiving state; answered at once with a `state` |
 | page → ext | `{melodica:1, type:'unsubscribe'}` |
 | ext → page | `{melodica:1, type:'state', state}` on subscribe and on every change (about once a second while playing) |
-| page → ext | `{melodica:1, type:'command', id, action, …}`: `play` (`station: {token, name}` to start a station, none to resume), `pause`, `toggle`, `next`, `love`, `ban`, `tired`, `stop`, `volume` (`value` 0–100), `quality` (`value` high/medium/low), `stations` (reload the list), `openLogin` (opens the extension's sign-in: the toolbar popup where the browser allows it, else the popup page in a tab) |
+| page → ext | `{melodica:1, type:'command', id, action, …}`: `play` (`station: {token, name}` to start a station, none to resume), `pause`, `toggle`, `next`, `love`, `ban`, `tired`, `stop`, `volume` (`value` 0–100), `quality` (`value` high/medium/low), `stations` (reload the list), `openLogin` or `open-login` (opens the extension's sign-in: the toolbar popup where the browser allows it, else the popup page in a tab) |
 | ext → page | `{melodica:1, type:'result', id, ok, error, state}` |
 
 `state` is the background's `playerState`:
@@ -53,6 +53,6 @@ becomes a view of that playback and a remote for it, instead of running its own 
 fail with `ok: false` and the reason; `state.loggedIn` says so, and `state.access` carries
 the access answer's message when access was not allowed (README "Access"). Relayed
 Pandora calls (layer 1) other than `auth.partnerLogin` and `test.checkLicensing` are
-refused while this browser's access answer is not "allowed". The web player's side of this is implemented in melodica-web by
+refused after this browser's access answer said no. The web player's side of this is implemented in melodica-web by
 its own maintainer; the extension's half is proven by the Chromium and Brave smokes
 (`tests/smoke-extension.spec.mjs`, step "bridge remote").

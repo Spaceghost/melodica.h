@@ -197,9 +197,11 @@ progress::-moz-progress-bar { background: var(--accent); }
   padding: 1.6rem 1.4rem 0.6rem;
 }
 .wash {
-  position: absolute; inset: -20% -20% 30%; width: 140%; height: 90%;
+  position: absolute; left: 50%; top: 42%; width: min(140%, 60rem); height: 150%; transform: translate(-50%, -50%);
   object-fit: cover; z-index: -1; pointer-events: none;
-  filter: blur(60px) saturate(1.2); opacity: var(--wash-opacity);
+  filter: blur(64px) saturate(1.3); opacity: var(--wash-opacity);
+  -webkit-mask-image: radial-gradient(ellipse 50% 36% at 50% 42%, #000 0%, rgba(0, 0, 0, 0.6) 35%, transparent 72%);
+  mask-image: radial-gradient(ellipse 50% 36% at 50% 42%, #000 0%, rgba(0, 0, 0, 0.6) 35%, transparent 72%);
   transition: opacity 1.2s ease;
 }
 .stage.idle .wash, .wash[src="data:,"] { opacity: 0; }
@@ -382,8 +384,8 @@ button.primary.danger { background: var(--err); border-color: var(--err); color:
 @media (prefers-color-scheme: dark) { :root { --glow-a: rgba(111, 214, 208, 0.13); --glow-g: rgba(216, 178, 106, 0.10); } }
 body {
   background:
-    radial-gradient(231% 480px at 85% -140px, var(--glow-a), transparent 70%),
-    radial-gradient(205% 420px at 8% -160px, var(--glow-g), transparent 70%),
+    radial-gradient(900px 480px at 85% -140px, var(--glow-a), transparent 70%),
+    radial-gradient(800px 420px at 8% -160px, var(--glow-g), transparent 70%),
     linear-gradient(var(--page), var(--page-2));
 }
 .top { border-bottom: 1px solid var(--line); margin-bottom: 10px; }
@@ -392,8 +394,10 @@ html.ext-player .top, html.ext-options .top { max-width: none; padding-left: max
    body's flex items (.top, .app, .foot) as in melodica-web's page. */
 .ext-root { display: contents; }
 /* The toolbar popup is the phone layout at 380 px. */
-html.ext-popup { width: 380px; min-width: 380px; overflow-x: hidden; }
-html.ext-popup body { min-height: 0; overflow-x: hidden; }
+/* The body scrolls, not the page: a page scrollbar made Chrome's popup window
+   wider than the 380 px content, leaving an empty strip on the right. */
+html.ext-popup { width: 380px; min-width: 380px; max-width: 380px; overflow: hidden; }
+html.ext-popup body { min-height: 0; max-height: 600px; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; }
 html.ext-popup .login { padding-top: 0; }
 html.ext-popup .card { padding: 1.4rem 1.2rem 1.2rem; }
 html.ext-popup .login-card h2 { font-size: 1.9rem; }
@@ -465,3 +469,10 @@ html.ext-player .login, html.ext-options .login { width: 100%; max-width: calc(v
 .ext-account-line { display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.6rem; }
 .ext-account-line button.link { min-height: 32px; padding: 0; font: inherit; }
 #account-label { color: var(--text); overflow-wrap: anywhere; }
+
+/* The station rail beside the player is a raised panel, and the cover's colour
+   washes the now-playing card (melodica-web v0.4.0). */
+.ext-desk .ext-stations { box-shadow: var(--shadow); }
+.now { position: relative; isolation: isolate; overflow: hidden; }
+html.ext-popup .brand { white-space: nowrap; }
+html.ext-popup .top-right { flex-wrap: nowrap; }

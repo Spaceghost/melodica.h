@@ -12,7 +12,7 @@
 #   ext  -> {melodica:1, type:'response', id, ok, status, body:Uint8Array, error}
 #   page -> {melodica:1, type:'subscribe'} | {type:'unsubscribe'}
 #   ext  -> {melodica:1, type:'state', state}            (on subscribe and on every change)
-#   page -> {melodica:1, type:'command', id, action, …}  (play/pause/toggle/next/love/ban/tired/stop/volume/quality/stations/openLogin)
+#   page -> {melodica:1, type:'command', id, action, …}  (play/pause/toggle/next/love/ban/tired/stop/volume/quality/stations/openLogin, also spelled open-login)
 #   ext  -> {melodica:1, type:'result', id, ok, error, state}
 # The extension also announces 'ready' once when it loads. Only searches whose
 # method matches /^[a-z]+\.[A-Za-z]+$/ are forwarded; the background POSTs the
@@ -69,7 +69,7 @@ def handleCommand data
 	try
 		const action = String(data.action or '')
 		let r
-		if action === 'openLogin'
+		if action === 'openLogin' or action === 'open-login'
 			const o = await browser.runtime.sendMessage({type: 'open-login'})
 			return reply({ok: no, error: o and o.error or 'the extension did not answer'}) unless o and o.ok
 			r = await browser.runtime.sendMessage({type: 'player-get'})
@@ -86,6 +86,9 @@ def handleCommand data
 		return reply({ok: no, error: 'the extension did not answer'}) unless r
 		return reply({ok: no, error: r.error or 'extension error', kind: r.kind}) unless r.ok
 		reply({ok: yes, state: publicState(r.state)})
+		# Push the same state at once so a subscribed page need not wait for
+		# the background's next broadcast (the resume lag).
+		pushState(r.state) if subscribed and r.state
 	catch e
 		reply({ok: no, error: String(e and e.message or e)})
 

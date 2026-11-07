@@ -59,7 +59,7 @@ let subscribers = null
 let account = {signedIn: no, label: '', email: '', sub: '', spots: yes, checkedAt: 0, error: ''}
 let accountChecking = null
 let accountBooted = no
-# melodica access: an allow-list keyed on the Pandora login email, asked at
+# melodica access: the spacegho.st answer for the Pandora login email, asked at
 # https://spacegho.st/oauth/melodica/access before auth.userLogin, then again at
 # boot and hourly (docs/ACCOUNT.md). The answer's `spots` is obeyed; nothing shows it.
 const ACCESS_MAX_AGE = 60 * 60 * 1000
@@ -701,7 +701,8 @@ def bridge msg
 	throw new PandoraError('method not allowed', null, 0, 'bridge') unless method and METHOD.test(method)
 	# The page's own Pandora login goes straight to Pandora through here, so past the
 	# partner login it needs the same access answer as the extension's login.
-	unless method === 'auth.partnerLogin' or method === 'test.checkLicensing' or access.allowed
+	# Only an answer that said no refuses; no answer yet is not a refusal.
+	if method !== 'auth.partnerLogin' and method !== 'test.checkLicensing' and access.checkedAt and !access.allowed and access.message
 		throw new PandoraError(access.message or ACCESS_DENIED, null, 0, 'access')
 	let res
 	try
@@ -723,8 +724,13 @@ def stationByToken token
 def handle msg, sender
 	await ensure()
 	const client = state.client
-	await checkAccount() if !accountChecking and account.checkedAt and Date.now() - account.checkedAt > ACCOUNT_MAX_AGE
-	await checkAccess() if !accessChecking and access.checkedAt and Date.now() - access.checkedAt > ACCESS_MAX_AGE
+	# Stale account and access answers are asked again; player traffic (the views,
+	# the bridge) is not held up by those round trips.
+	const quick = msg.type === 'player' or msg.type === 'player-get' or msg.type === 'player-subscribe' or msg.type === 'engine-state'
+	if !accountChecking and account.checkedAt and Date.now() - account.checkedAt > ACCOUNT_MAX_AGE
+		quick ? checkAccount().catch(do(e) null) : await checkAccount()
+	if !accessChecking and access.checkedAt and Date.now() - access.checkedAt > ACCESS_MAX_AGE
+		quick ? checkAccess().catch(do(e) null) : await checkAccess()
 	switch msg.type
 		when 'access'
 			{access: accessView()}

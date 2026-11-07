@@ -339,6 +339,16 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     expect(effective, 'endpoint the background will use').toBe(`${tuner.https}/services/json/`);
     step('endpoint set');
     await options.screenshot({ path: shot('options') });
+    // Wide screens: no horizontal overflow, and the background glows keep a fixed size
+    // (they were percent-sized, which stretched them across wide windows).
+    for (const [w, h] of [[1920, 1080], [2560, 1440]]) {
+      await options.setViewportSize({ width: w, height: h });
+      const wide = await options.evaluate(() => { const r = document.querySelector('.app').getBoundingClientRect(); return { overflow: document.documentElement.scrollWidth - innerWidth, bg: getComputedStyle(document.body).backgroundImage, skew: Math.abs(r.left - (innerWidth - r.right)) }; });
+      expect(wide.skew, `options at ${w}: content centred`).toBeLessThanOrEqual(24);
+      expect(wide.overflow, `options at ${w}: no horizontal overflow`).toBeLessThanOrEqual(0);
+      expect(wide.bg, 'fixed-size glows').toContain('900px 480px');
+      await options.screenshot({ path: shot(`options-${w}`) });
+    }
     await options.close();
 
     // 2. Popup as a tab: login, stations.
@@ -348,9 +358,9 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     await popup.goto(`chrome-extension://${id}/popup.html`);
     await expect(popup.locator('#app')).toHaveAttribute('data-view', 'login', { timeout: 30_000 });
     await expect(popup.locator('#login-email')).toBeVisible();
-    // The Pandora login is the first screen; it says access is by allow-list. The
+    // The Pandora login is the first screen. The
     // spacegho.st account is optional.
-    await expect(popup.locator('#access-note')).toHaveText('melodica access is by allow-list; signing in sends your email to the admin as an access request.');
+    expect(await popup.locator('#access-note').count(), 'no login note').toBe(0);
     await expect(popup.locator('#account-signin')).toHaveText('Sign in with spacegho.st');
     // The update banner: the fake releases.json names 99.0.0, newer than any build.
     await expect(popup.locator('#update-banner')).toBeVisible({ timeout: 20_000 });
@@ -497,6 +507,14 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     await player.emulateMedia({ colorScheme: 'dark' });
     await player.screenshot({ path: shot('player-tab-dark') });
     await player.emulateMedia({ colorScheme: 'light' });
+    for (const [w, h] of [[1920, 1080], [2560, 1440]]) {
+      await player.setViewportSize({ width: w, height: h });
+      const wide = await player.evaluate(() => { const r = document.querySelector('.app').getBoundingClientRect(); return { overflow: document.documentElement.scrollWidth - innerWidth, bg: getComputedStyle(document.body).backgroundImage, skew: Math.abs(r.left - (innerWidth - r.right)) }; });
+      expect(wide.skew, `player tab at ${w}: content centred`).toBeLessThanOrEqual(24);
+      expect(wide.overflow, `player tab at ${w}: no horizontal overflow`).toBeLessThanOrEqual(0);
+      expect(wide.bg, 'fixed-size glows').toContain('900px 480px');
+      await player.screenshot({ path: shot(`player-tab-${w}`) });
+    }
     await player.close();
     const p3 = await probe();
     await new Promise((ok) => setTimeout(ok, 3000));

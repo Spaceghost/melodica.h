@@ -194,7 +194,7 @@ tag Popup
 						<Login busy=busy message=message kind=kind @login=login>
 					else
 						<div.ext-account>
-							<span#signed-in> email
+							<span#signed-in> "Signed in"
 							<button#logout type="button" @click=logout> "Sign out"
 						<div.card.now.ext-compact>
 							<NowPlaying now=now compact=yes>

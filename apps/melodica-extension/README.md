@@ -1,9 +1,8 @@
 # melodica-extension
 
-A Pandora WebExtension for Chrome, Brave and Firefox (Manifest V3). **melodica
-access is by allow-list**, keyed on the Pandora login email (see "Access"
-below), which is also why it is self-hosted and not on any store
-(`docs/STORES.md`). Two jobs:
+A Pandora WebExtension for Chrome, Brave and Firefox (Manifest V3). Before the Pandora
+login it asks spacegho.st whether that email may use melodica (see "Access"
+below); it is self-hosted and not on any store (`docs/STORES.md`). Two jobs:
 
 - **A standalone player that needs no tab.** Sign in from the toolbar popup,
   pick a station, close the popup: the music plays in the background (an
@@ -49,15 +48,14 @@ checksums, the CI proof and the update feeds.
 
 ## Access
 
-melodica access is by allow-list, keyed on the email you log in to Pandora
-with. Before `auth.userLogin` the background posts that email to
-`https://spacegho.st/oauth/melodica/access` (`{"email", "client": "extension"}`,
-docs/ACCOUNT.md). The login card says so: "melodica access is by allow-list;
-signing in sends your email to the admin as an access request."
+Before `auth.userLogin` the background posts the email you log in to Pandora
+with to `https://spacegho.st/oauth/melodica/access`
+(`{"email", "client": "extension"}`, docs/ACCOUNT.md); spacegho.st decides
+from it.
 
 - Allowed: the login goes straight to Pandora as before.
-- Not allowed: no login and no Pandora call; the card shows the answer
-  ("melodica access is by allow-list. Your request has been sent.").
+- Not allowed: no login and no Pandora call; the card shows the server's
+  message.
 - The check is unreachable or answers something else: no login; the card says
   to try again.
 
@@ -65,9 +63,9 @@ The answer is kept in `storage.local` (`access`: email, allowed, time) and asked
 again on every background boot and hourly while the extension is in use. If an
 answer says no, playback stops, the Pandora session is dropped and the login
 card shows the message; if a re-check cannot reach the server, the last answer
-stands and it asks again in five minutes. The bridge (docs/BRIDGE.md) passes
-the web page's own Pandora calls past `auth.partnerLogin` only while this
-browser's answer is "allowed".
+stands and it asks again in five minutes. The bridge (docs/BRIDGE.md) refuses
+the web page's own Pandora calls past `auth.partnerLogin` only after an
+answer that said no.
 
 ## Playlist items
 
@@ -91,7 +89,7 @@ never change), and the code is exchanged at `/oauth/token`. The tokens live in
 `storage.local` (`account`); the refresh token rotates on every refresh, and
 sign-out revokes it. While signed in, the access token goes as the bearer to
 `/oauth/melodica/access` and `/oauth/melodica/policy`, which are asked at boot and
-hourly. The account line shows the account's display name (or its email).
+hourly. The account line shows the account's display name, or "Signed in".
 `src/account.imba` holds the PKCE, redirect, token and policy parsing
 (`tests/account.test.mjs`); `src/bg.imba` holds the flows. On Safari the sign-in
 opens in a tab (client `melodica-ios`, redirect `https://spacegho.st/melodica/app/`)
@@ -122,8 +120,8 @@ Buttons and current steps: <https://spacegho.st/extensions/#melodica-extension>.
   is unsigned and the notes and `docs/STORES.md` give the fallback routes.
   gecko id `melodica-extension@spacegho.st`; update feed
   `https://spacegho.st/extensions/dl/melodica-extension/updates.json`.
-- **No store listings:** `docs/STORES.md` says why (access is by allow-list,
-  which no store can express, and we will not ship a store build that behaves
+- **No store listings:** `docs/STORES.md` says why (access is decided by
+  spacegho.st per login, which no store can express, and we will not ship a store build that behaves
   differently from this one).
 - **Chrome / Edge / Brave:** `melodica-extension-<ver>.crx` is a CRX3 signed
   with the repository's key (secret `CRX_PRIVATE_KEY`; the public half gives
@@ -141,7 +139,7 @@ Buttons and current steps: <https://spacegho.st/extensions/#melodica-extension>.
 
 `melodica-<ver>-unsigned.ipa` on the release (and on the store page, as
 "iPhone / iPad (sideload)") is a small app that carries the extension for
-Safari. melodica access is by allow-list ("Access" above). It is not on the App Store or TestFlight and
+Safari. It asks spacegho.st about access like every build ("Access" above). It is not on the App Store or TestFlight and
 never will be submitted to either; there is no public link of any kind.
 Build, manifest and playback details: `ios/README.md`.
 
@@ -589,7 +587,7 @@ tagged commit; see the release notes for the run of each tag.
 
 ### What this does and does not prove
 
-The local fixtures exercise playback, access checks, sign-in, and structured browser reports.
+The browser checks exercise playback, account policy, authentication and the requests recorded by the tuner. The attached reports provide the exact observations.
 
 ## Privacy
 
