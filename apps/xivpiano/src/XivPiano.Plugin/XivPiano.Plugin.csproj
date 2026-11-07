@@ -1,0 +1,33 @@
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+  <PropertyGroup>
+    <AssemblyName>XivPiano</AssemblyName>
+    <RootNamespace>XivPiano.Plugin</RootNamespace>
+    <Version>0.1.2.1</Version>
+    <!-- Secrets.cs pins the password bytes for the DPAPI call. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\XivPiano.Core\XivPiano.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Sound out through winmm (Wine maps it to PulseAudio/PipeWire), and MP3 decoding in managed code:
+         no Windows codec is involved, so it plays the same under Wine as on Windows. Both MIT. -->
+    <PackageReference Include="NAudio.WinMM" Version="3.1.0" />
+    <PackageReference Include="NLayer" Version="3.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <MelodicaNativeInput Include="../../native/melodica_bridge.*;../../native/vendor/melodica/compat/*;../../native/vendor/melodica/include/*;../../native/vendor/melodica/SOURCE.json;../../tools/build-melodica.sh" />
+    <None Include="../../runtimes/win-x64/native/xivpiano_melodica.dll"
+          Link="runtimes/win-x64/native/xivpiano_melodica.dll"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="BuildMelodicaWindows" BeforeTargets="PrepareForBuild"
+          Condition="!$([MSBuild]::IsOSPlatform('Windows')) and '$(DesignTimeBuild)' != 'true'"
+          Inputs="@(MelodicaNativeInput)" Outputs="$(MSBuildThisFileDirectory)../../runtimes/win-x64/native/xivpiano_melodica.dll">
+    <Exec Command="bash &quot;$(MSBuildThisFileDirectory)../../tools/build-melodica.sh&quot; --windows" />
+  </Target>
+  <Target Name="RequireMelodicaWindows" BeforeTargets="CopyFilesToOutputDirectory" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Error Condition="!Exists('$(MSBuildThisFileDirectory)../../runtimes/win-x64/native/xivpiano_melodica.dll')"
+           Text="The required Windows melodica bridge is missing. Run tools/build-melodica.sh --windows with Zig available." />
+  </Target>
+</Project>

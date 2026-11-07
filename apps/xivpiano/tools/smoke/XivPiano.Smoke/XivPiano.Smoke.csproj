@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The release smoke harness: a console program compiled against, and running, the XivPiano.Core.dll
+    taken out of the released plugin zip (XivPianoRelease: the folder the zip was extracted to). It has
+    no project reference to the source tree on purpose: what it proves is the released bytes.
+    See tools/smoke-core.sh.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>XivPiano.Smoke</RootNamespace>
+    <AssemblyName>XivPiano.Smoke</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <XivPianoRelease Condition="'$(XivPianoRelease)' == ''">$(MSBuildThisFileDirectory)../../../native/build/smoke/release</XivPianoRelease>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="XivPiano.Core">
+      <HintPath>$(XivPianoRelease)/XivPiano.Core.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+</Project>
