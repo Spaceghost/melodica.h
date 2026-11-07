@@ -1,0 +1,225 @@
+name: release
+
+on:
+  push:
+    tags: ['20*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to publish a release for (leave empty for a build-only dry run)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  linux-x86_64:
+    runs-on: [self-hosted, linux, x64, bak]
+    outputs:
+      ref: ${{ steps.ver.outputs.ref }}
+      publish: ${{ steps.ver.outputs.publish }}
+      version: ${{ steps.v.outputs.version }}
+      melodica: ${{ steps.v.outputs.melodica }}
+    steps:
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            ref="${{ github.ref_name }}"
+            publish=true
+          elif [ -n "${{ github.event.inputs.tag }}" ]; then
+            ref="${{ github.event.inputs.tag }}"
+            publish=true
+          else
+            ref="${{ github.ref_name }}"
+            publish=false
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.ver.outputs.ref }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Compute version string
+        id: v
+        run: |
+          if git describe --tags --exact-match >/dev/null 2>&1; then
+            version="$(git describe --tags --exact-match)"
+          else
+            version="$(date -u +%Y.%m.%d)-g$(git rev-parse --short HEAD)"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "melodica=$(git -C vendor/melodica.h rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "version=$version"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get -o DPkg::Lock::Timeout=900 update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=900 install -y --no-install-recommends \
+            build-essential pkg-config file \
+            libao-dev libavcodec-dev libavfilter-dev libavformat-dev libavutil-dev \
+            libcurl4-gnutls-dev libgcrypt20-dev libjson-c-dev
+
+      - name: Source tarball
+        run: |
+          v='${{ steps.v.outputs.version }}'
+          mkdir -p dist
+          git ls-files --recurse-submodules -z \
+            | tar --null -T - --transform "s,^,pianobar-$v/," -czf "dist/pianobar-$v-src.tar.gz"
+
+      - name: Build
+        run: |
+          make V=1
+          file pianobar
+
+      - name: Binary tarball
+        run: |
+          v='${{ steps.v.outputs.version }}'
+          d="pianobar-$v-linux-x86_64"
+          rm -rf "stage/$d"; mkdir -p "stage/$d"
+          cp pianobar README.rst COPYING ChangeLog "stage/$d/"
+          cp -r contrib "stage/$d/contrib"
+          [ -f pianobar.cfg ] && cp pianobar.cfg "stage/$d/" || true
+          tar -C stage -czf "dist/$d.tar.gz" "$d"
+          ( cd dist && sha256sum *.tar.gz > SHA256SUMS && cat SHA256SUMS )
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pianobar-${{ steps.v.outputs.version }}
+          path: dist/*
+
+  smoke-linux:
+    # Proves the exact tarball that gets released installs and runs: see ci/smoke-linux.py.
+    needs: linux-x86_64
+    runs-on: [self-hosted, linux, x64, bak]
+    env:
+      VERSION: ${{ needs.linux-x86_64.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.linux-x86_64.outputs.ref }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pianobar-${{ needs.linux-x86_64.outputs.version }}
+          path: dist
+
+      - name: Install runtime dependencies
+        run: |
+          sudo apt-get -o DPkg::Lock::Timeout=900 update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=900 install -y --no-install-recommends \
+            libao4 libavcodec60 libavfilter9 libavformat60 libavutil58 \
+            libcurl3t64-gnutls libgcrypt20 libjson-c5 \
+            python3 imagemagick fonts-dejavu-core ca-certificates
+
+      - name: Verify checksum of the downloaded tarball
+        run: |
+          cd dist && ls -l && sha256sum -c SHA256SUMS
+
+      # Fake tuner.pandora.com (JSON API v5 + TLS) so login, station list and
+      # playback can be proven without a Pandora account.  pianobar is pointed at
+      # it with rpc_host/rpc_tls_port/ca_bundle; libpiano sends its non-TLS
+      # methods to http://rpc_host:80, hence http-port 80.
+      - name: Wait for the tuner ports
+        run: |
+          # The runner is persistent and shares its network namespace with the other
+          # repo runners on bak: a tuner left behind by an earlier job would hold
+          # 8443/80.  Wait for a live one to finish, kill one older than 10 minutes.
+          for i in $(seq 1 90); do
+            busy="$(sudo ss -Hltnp '( sport = :8443 or sport = :80 )')"
+            [ -z "$busy" ] && exit 0
+            stale="$(ps -eo pid,etimes,args | awk '/python3? -m tuner/ && !/awk/ && $2 > 600 {print $1}')"
+            if [ -n "$stale" ]; then
+              echo "killing stale melodica-tuner: $stale"
+              sudo kill $stale || true
+              sleep 2
+              continue
+            fi
+            echo "tuner ports busy, waiting ($i/90):"; echo "$busy"
+            sleep 10
+          done
+          echo "::error::ports 8443/80 stayed busy for 15 minutes"; exit 1
+
+      - uses: Spaceghost/melodica-tuner@v1
+        id: tuner
+        with:
+          user: ci@melodica.invalid
+          password: ci-smoke
+          hosts-override: "false"
+          http-port: "80"
+          install-ca: "false"
+
+      - name: Smoke test (install, start, log in, list stations, play)
+        env:
+          TUNER_HTTPS_URL: ${{ steps.tuner.outputs.https-url }}
+          TUNER_HTTPS_PORT: ${{ steps.tuner.outputs.https-port }}
+          TUNER_HTTP_PORT: ${{ steps.tuner.outputs.http-port }}
+          TUNER_CA: ${{ steps.tuner.outputs.ca-path }}
+          TUNER_LOG_URL: ${{ steps.tuner.outputs.log-url }}
+          TUNER_USER: ${{ steps.tuner.outputs.user }}
+          TUNER_PASSWORD: ${{ steps.tuner.outputs.password }}
+        run: |
+          if [ "$TUNER_HTTP_PORT" != "80" ]; then
+            echo "::error::melodica-tuner's http listener is on port $TUNER_HTTP_PORT, pianobar needs it on 80"
+            exit 1
+          fi
+          host="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.urlsplit(sys.argv[1]).hostname)' "$TUNER_HTTPS_URL")"
+          python3 -I ci/smoke-linux.py \
+            --tarball "dist/pianobar-$VERSION-linux-x86_64.tar.gz" \
+            --out smoke \
+            --user "$TUNER_USER" --password "$TUNER_PASSWORD" \
+            --rpc-host "$host" --rpc-tls-port "$TUNER_HTTPS_PORT" --ca-bundle "$TUNER_CA" \
+            --tuner-health-url "$TUNER_HTTPS_URL/__tuner/health" \
+            --tuner-log-url "$TUNER_LOG_URL"
+
+      - name: Tuner log on failure
+        if: failure()
+        run: |
+          cat "${{ steps.tuner.outputs.work-dir }}/tuner.log" || true
+
+      - name: Stop melodica-tuner
+        if: always()
+        run: |
+          # the action starts the tuner with nohup and has no post step; this runner is persistent
+          pid='${{ steps.tuner.outputs.pid }}'
+          [ -n "$pid" ] && sudo kill "$pid" 2>/dev/null || true
+          sudo pkill -f -- "--ready-file $RUNNER_TEMP/melodica-tuner/ready" || true
+          sleep 1
+          sudo ss -Hltnp '( sport = :8443 or sport = :80 )' || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-linux-${{ needs.linux-x86_64.outputs.version }}
+          path: |
+            smoke/smoke-linux.txt
+            smoke/smoke-linux.json
+            smoke/smoke-linux-*.png
+            smoke/smoke-linux-tuner-log.json
+          if-no-files-found: error
+
+      - name: Release
+        if: needs.linux-x86_64.outputs.publish == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.linux-x86_64.outputs.version }}
+          name: pianobar ${{ needs.linux-x86_64.outputs.version }} (melodica.h)
+          files: |
+            dist/*
+            smoke/smoke-linux.txt
+            smoke/smoke-linux.json
+            smoke/smoke-linux-*.png
+            smoke/smoke-linux-tuner-log.json
+          body: |
+            Built from this mirror of [PromyLOPh/pianobar](https://github.com/PromyLOPh/pianobar), with
+            [melodica.h](https://github.com/Spaceghost/melodica.h) (`${{ needs.linux-x86_64.outputs.melodica }}`) replacing libpiano.
+
+            - `pianobar-${{ needs.linux-x86_64.outputs.version }}-linux-x86_64.tar.gz`: dynamically linked Linux x86_64 build (Ubuntu 24.04; needs libao, libav*, libcurl, libgcrypt, json-c at runtime) plus README, COPYING, ChangeLog and contrib/.
+            - `pianobar-${{ needs.linux-x86_64.outputs.version }}-src.tar.gz`: source tree including the vendored melodica.h.
+            - `SHA256SUMS`: checksums for both tarballs.
+            - `smoke-linux.json`, `smoke-linux.txt`, `smoke-linux-*.png`: CI smoke proof for the Linux tarball (`ci/smoke-linux.py`): the released binary was unpacked on Ubuntu 24.04, its shared libraries resolved, and it was driven under a pseudo-terminal. `ok` in the JSON says whether login, station listing and playback were proven against a test server; the transcript shows exactly what was observed.
