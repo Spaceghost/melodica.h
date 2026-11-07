@@ -1,0 +1,13 @@
+"""Load the pinned melodica.h Python adapter from installs or source trees."""
+
+import sys
+from pathlib import Path
+
+try:
+    from melodica import OfflineLibrary, StreamingCacheServer, dumps
+except ImportError:
+    binding = Path(__file__).resolve().parents[1] / "vendor/melodica.h/bindings/python"
+    sys.path.insert(0, str(binding))
+    from melodica import OfflineLibrary, StreamingCacheServer, dumps
+
+__all__ = ("OfflineLibrary", "StreamingCacheServer", "dumps")

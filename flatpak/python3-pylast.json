@@ -1,0 +1,14 @@
+{
+    "name": "python3-pylast",
+    "buildsystem": "simple",
+    "build-commands": [
+        "pip3 install --no-index --find-links=\"file://${PWD}\" --prefix=${FLATPAK_DEST} pylast"
+    ],
+    "sources": [
+        {
+            "type": "file",
+            "url": "https://files.pythonhosted.org/packages/01/ca/849a8f1aa722f8bb47e910fa018caf84bee1c4414370abd65241a92ebb32/pylast-4.5.0-py3-none-any.whl",
+            "sha256": "47c3da663002f7fbacb7d561f8724cf007c22ac7c9c310c17ad987415273e7d0"
+        }
+    ]
+}
