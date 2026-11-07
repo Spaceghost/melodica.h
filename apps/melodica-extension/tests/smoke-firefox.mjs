@@ -2,6 +2,12 @@
 // driven through geckodriver with selenium-webdriver (Playwright's Firefox build
 // cannot load extensions). Two parts:
 //
+//   0. the GitHub gate against a fake /melodica/auth/me (tests/fake-auth.mjs) on a
+//      local http server: Firefox has no host-resolver flag, so the extension's
+//      `authBase` storage key points it there (README "GitHub gate"). With the
+//      endpoint at Pandora's default the popup shows the gate screen; allowed,
+//      denied, 503, 401 and expired tokens drive it through its states, and a
+//      allowed token is left in place so part 2 reaches the Pandora login;
 //   1. against melodica-tuner, like the Chromium and Brave smokes: the options
 //      page points the extension at the tuner, the popup (opened as a tab)
 //      signs in, lists the fixture's stations, starts one; the player tab opens
@@ -24,6 +30,7 @@
 // a window; MELODICA_SKIP_REAL=1 skips part 2.
 // Output: tests/artifacts/smoke-firefox.json and smoke-firefox-{login,stations,playing,real-pandora}.png
 import { Builder, By, until } from 'selenium-webdriver';
+import { startFakeAuth, makeToken, parseClaims } from './fake-auth.mjs';
 import firefox from 'selenium-webdriver/firefox.js';
 import { spawn, execFileSync } from 'node:child_process';
 import { readFile, mkdir, writeFile, rm, mkdtemp } from 'node:fs/promises';
@@ -55,7 +62,7 @@ if (!haveTuner) { console.error('no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or
 
 const report = {
   ok: false, platform: 'firefox', browser: '', engine: '', summary: '', when: '', steps: [], tuner: '',
-  extension: {}, permissions: null, sessionStorage: null, background: null, audio: null,
+  extension: {}, permissions: null, sessionStorage: null, background: null, gate: null, audio: null,
   realPandora: null, log: [], errors: [],
 };
 const step = (s) => { if (!report.steps.includes(s)) report.steps.push(s); console.log(`step: ${s}`); };
@@ -149,9 +156,12 @@ async function diagnostics(driver, ext) {
 }
 
 let driver = null;
+let fakeAuth = null;
 const bin = process.env.MELODICA_FIREFOX || 'firefox';
 try {
   await mkdir(ARTIFACTS, { recursive: true });
+  fakeAuth = await startFakeAuth();
+  console.log(`fake auth server: ${fakeAuth.base}`);
   if (!tuner.https) await startTuner();
   if (!tuner.http) throw new Error('TUNER_HTTP_URL is required alongside TUNER_HTTPS_URL');
   const health = await getJson(`${tuner.http}/__tuner/health`);
@@ -217,7 +227,77 @@ try {
   check(Array.isArray(manifest.background.scripts) && manifest.background.scripts.includes('bg.js'), 'background is an event page (scripts)');
   step('host permission granted');
 
+  // 0. The GitHub gate, with the endpoint still at Pandora's default and the auth
+  // server pointed at the fake. Tokens go where the sign-in flow stores them.
+  const setAuthBase = await inPage(driver, `await browser.storage.local.set({ authBase: ${JSON.stringify(fakeAuth.base)} }); return (await browser.storage.local.get('authBase')).authBase;`);
+  check(setAuthBase.value === fakeAuth.base, `authBase override stored (${JSON.stringify(setAuthBase)})`);
+  await goExt(driver, `${ext}/popup.html`);
+  await waitFor(driver, async () => (await loginOutcome(driver)).view === 'gate', 'gate view');
+  await driver.wait(until.elementLocated(By.css('#github-signin')), 20_000);
+  const gateNote = await driver.findElement(By.css('#gate-note')).getText();
+  check(/GitHub sign-in is used for identity only; nothing is stored\./.test(gateNote), `gate note explains the sign-in (${gateNote})`);
+  await screenshot(driver, 'gate');
+  const gateWith = async (claims) => {
+    const r = await inPage(driver, `const token = ${JSON.stringify(claims ? makeToken(claims) : null)};
+      if (token) await browser.storage.local.set({ github: { token } }); else await browser.storage.local.remove('github');
+      const r = await browser.runtime.sendMessage({ type: 'gate-check' });
+      if (!r || !r.ok) throw new Error('gate-check: ' + (r && r.error));
+      const stored = await browser.storage.local.get('github');
+      return { gate: r.gate, storedToken: stored.github ? stored.github.token : null };`);
+    if (r.error) throw new Error(`gate-check: ${r.error}`);
+    return r.value;
+  };
+  const gateView = () => driver.executeScript(() => ({
+    view: document.getElementById('app')?.dataset.view || '',
+    status: document.getElementById('gate-status')?.textContent || '',
+    message: document.getElementById('gate-message')?.textContent || '',
+  }));
+  const gateReport = { authBase: fakeAuth.base, anon: await gateView() };
+  const allowed = await gateWith({ sub: 'allowed-ci', id: 101, friend: true });
+  check(allowed.gate.mode === 'allowed', `allowed token -> allowed (${JSON.stringify(allowed.gate)})`);
+  check(parseClaims(allowed.storedToken)?.refreshed === true, 'the refreshed token from /auth/me replaced the stored one');
+  await waitFor(driver, async () => (await gateView()).view === 'login' ? true : null, 'login view for an allowed account');
+  gateReport.allowed = { ...allowed.gate, ...(await gateView()), refreshed: true };
+  check(/allowed-ci/.test(gateReport.allowed.status), `status names the login (${gateReport.allowed.status})`);
+  const denied = await gateWith({ sub: 'denied-ci', id: 102, friend: false });
+  check(denied.gate.mode === 'denied', `denied token -> denied (${JSON.stringify(denied.gate)})`);
+  await waitFor(driver, async () => (await gateView()).view === 'gate' ? true : null, 'gate view for a denied account');
+  gateReport.denied = { ...denied.gate, ...(await gateView()) };
+  check(gateReport.denied.message.includes('melodica is not available for your GitHub account (denied-ci).'), `denied message (${gateReport.denied.message})`);
+  await screenshot(driver, 'gate-denied');
+  const refused = await inPage(driver, `return await browser.runtime.sendMessage({ type: 'stations' });`);
+  check(refused.value && refused.value.ok === false && refused.value.kind === 'gate', `Pandora refused for a denied account (${JSON.stringify(refused)})`);
+  gateReport.deniedRefused = refused.value;
+  const unconfigured = await gateWith({ sub: 'unconfigured', friend: true });
+  check(unconfigured.gate.mode === 'off' && /auth not configured/.test(unconfigured.gate.reason), `503 -> gate off (${JSON.stringify(unconfigured.gate)})`);
+  await waitFor(driver, async () => (await gateView()).view === 'login' ? true : null, 'login view with the gate off');
+  gateReport.unconfigured = { ...unconfigured.gate, ...(await gateView()) };
+  check(/GitHub gate off: auth not configured/.test(gateReport.unconfigured.status), `status says gate off (${gateReport.unconfigured.status})`);
+  const revoked = await gateWith({ sub: 'revoked', friend: true });
+  check(revoked.gate.mode === 'anon' && revoked.storedToken === null, `401 -> signed out, token dropped (${JSON.stringify(revoked)})`);
+  gateReport.revoked = revoked.gate;
+  const expired = await gateWith({ sub: 'allowed-ci', friend: true, exp: Math.floor(Date.now() / 1000) - 60 });
+  check(expired.gate.mode === 'anon' && /expired/.test(expired.gate.reason) && expired.storedToken === null, `expired -> signed out (${JSON.stringify(expired)})`);
+  gateReport.expired = expired.gate;
+  await gateWith({ sub: 'denied-ci', friend: false });
+  await driver.wait(until.elementLocated(By.css('#github-signout')), 20_000);
+  await driver.findElement(By.css('#github-signout')).click();
+  await driver.wait(until.elementLocated(By.css('#github-signin')), 20_000);
+  const afterSignout = await inPage(driver, `return await browser.storage.local.get('github');`);
+  check(afterSignout.value && afterSignout.value.github === undefined, `sign out removes the token (${JSON.stringify(afterSignout)})`);
+  gateReport.signout = await gateView();
+  // Leave an allowed account signed in: part 2 (real Pandora, default endpoint) needs the gate open.
+  const allowedAgain = await gateWith({ sub: 'allowed-ci', id: 101, friend: true });
+  check(allowedAgain.gate.mode === 'allowed', 'allowed token restored for part 2');
+  gateReport.authCalls = fakeAuth.calls.slice();
+  check(fakeAuth.calls.filter((c) => c.path === '/melodica/auth/me').length >= 7, `the fake /auth/me was asked (${fakeAuth.calls.length} calls)`);
+  report.gate = gateReport;
+  console.log(`gate: ${JSON.stringify(gateReport)}`);
+  step('github gate');
+
   // 1. Options: point at the tuner.
+  await goExt(driver, `${ext}/options.html`);
+  await driver.wait(until.elementLocated(By.css('#endpoint')), 30_000);
   const endpointInput = await driver.findElement(By.css('#endpoint'));
   await endpointInput.clear();
   await endpointInput.sendKeys(`${tuner.https}/services/json/`);
@@ -230,6 +310,8 @@ try {
   // 2. Popup as a tab: login, stations.
   await goExt(driver, `${ext}/popup.html`);
   await waitFor(driver, async () => (await loginOutcome(driver)).view === 'login', 'login view');
+  const offStatus = await waitFor(driver, async () => { const t = await driver.executeScript(() => document.getElementById('gate-status')?.textContent || ''); return /GitHub gate off: endpoint is/.test(t) ? t : null; }, 'gate off with the tuner endpoint');
+  report.gate.off = offStatus;
   step('login screen');
   await screenshot(driver, 'login');
   const outcome = await loginAndWait(driver, tuner.user, tuner.password);
@@ -319,7 +401,7 @@ try {
   }
 
   report.ok = true;
-  report.summary = `${report.browser}: temporary add-on ${GECKO_ID} with host permission ${origins.join(' ')}; signed in to the tuner (${tuner.version}), listed ${names.length} stations, played "${now.title}" (readyState ${audio.readyState}); ` +
+  report.summary = `${report.browser}: temporary add-on ${GECKO_ID} with host permission ${origins.join(' ')}; GitHub gate screen shown, allowed/denied/503/401/expired tokens handled against the fake /auth/me; signed in to the tuner (${tuner.version}), listed ${names.length} stations, played "${now.title}" (readyState ${audio.readyState}); ` +
     (report.realPandora.skipped ? 'real Pandora probe skipped' : `real tuner.pandora.com with bogus credentials -> auth.userLogin code ${report.realPandora.code} ("${report.realPandora.message}")`);
 } catch (e) {
   report.ok = false;
@@ -332,6 +414,7 @@ try {
   }
 } finally {
   if (driver) await driver.quit().catch(() => {});
+  if (fakeAuth) await new Promise((ok) => fakeAuth.server.close(ok));
   if (tuner.proc) { tuner.proc.kill('SIGTERM'); tuner.proc = null; }
   if (tuner.dir) await rm(tuner.dir, { recursive: true, force: true }).catch(() => {});
   report.when = new Date().toISOString();

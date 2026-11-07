@@ -2,10 +2,12 @@
 // stable names, no hashing, no inline scripts), copy public/, the wasm core
 // and generated icons, and write one manifest per browser:
 //   dist/chrome/   manifest without Firefox-only keys (self-hosted: carries update_url)
-//   dist/cws/      the Chrome build without update_url, for the Chrome Web Store and Edge Add-ons
 //   dist/firefox/  manifest with browser_specific_settings and background.scripts
-// Also emits build/node/core.js (the Core wrapper for Node) for core/test.mjs and
-// build/node/pandora.js (the Pandora client) for scripts/real-pandora-probe.mjs.
+// There is no store build: the extension is self-hosted only (docs/STORES.md).
+// Also emits build/node/core.js (the Core wrapper for Node) for core/test.mjs,
+// build/node/pandora.js (the Pandora client) for scripts/real-pandora-probe.mjs and
+// build/node/github.js (the GitHub gate's token parsing) for tests/github.test.mjs and
+// build/node/update.js (update awareness) for tests/update.test.mjs.
 //
 //   node scripts/build.mjs [--version 0.1.0] [--core build/core/melodica_core.wasm]
 import { build } from 'esbuild';
@@ -166,15 +168,11 @@ const chrome = structuredClone(manifest);
 delete chrome.browser_specific_settings;
 delete chrome.background.scripts;
 chrome.update_url = `${STORE}/update.xml`;
-// The store copy: the Chrome Web Store rejects a manifest with update_url (the store is the
-// updater), and Edge Add-ons takes the same package.
-const cws = structuredClone(chrome);
-delete cws.update_url;
 const firefox = structuredClone(manifest);
 delete firefox.version_name;
 firefox.browser_specific_settings.gecko.update_url = `${STORE}/updates.json`;
 
-for (const [name, m] of [['chrome', chrome], ['cws', cws], ['firefox', firefox]]) {
+for (const [name, m] of [['chrome', chrome], ['firefox', firefox]]) {
   const dir = resolve(dist, name);
   await cp(common, dir, { recursive: true });
   await writeFile(resolve(dir, 'manifest.json'), JSON.stringify(m, null, 2) + '\n');
@@ -186,6 +184,9 @@ await mkdir(resolve(root, 'build/node'), { recursive: true });
 await bundle('src/core.imba', resolve(root, 'build/node/core.js'), 'node');
 // ...and of the Pandora client, for scripts/real-pandora-probe.mjs (no-account probe against the real tuner).
 await bundle('src/pandora.imba', resolve(root, 'build/node/pandora.js'), 'node');
+// ...and of the GitHub gate's token handling, for tests/github.test.mjs.
+await bundle('src/github.imba', resolve(root, 'build/node/github.js'), 'node');
+await bundle('src/update.imba', resolve(root, 'build/node/update.js'), 'node');
 
 const files = await listFiles(resolve(dist, 'chrome'));
 console.log(`built melodica-extension ${version}: ${files.join(', ')}`);

@@ -22,20 +22,31 @@
   },
   "background": {
     "service_worker": "bg.js",
-    "scripts": ["bg.js"],
+    "scripts": [
+      "bg.js"
+    ],
     "type": "module"
   },
   "content_scripts": [
     {
-      "matches": ["https://spacegho.st/melodica/app/*"],
-      "js": ["content.js"],
+      "matches": [
+        "https://spacegho.st/melodica/app/*"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
-  "permissions": ["storage"],
+  "permissions": [
+    "storage",
+    "identity"
+  ],
   "host_permissions": [
     "https://tuner.pandora.com/*",
-    "https://*.pandora.com/*"
+    "https://*.pandora.com/*",
+    "https://spacegho.st/melodica/auth/*",
+    "https://spacegho.st/extensions/*"
   ],
   "optional_host_permissions": [
     "https://*/*",

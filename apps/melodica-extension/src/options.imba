@@ -2,6 +2,8 @@
 # melodica-tuner), audio quality, remembered password.
 
 import { browser, loadSettings, saveSettings, normalizeEndpoint, SETTINGS_DEFAULTS, send } from './shared.imba'
+import { AUTH_BASE, normalizeAuthBase } from './github.imba'
+import { gateLine, UpdateBanner } from './ui.imba'
 
 const DIAG_LINES = 50
 
@@ -23,6 +25,10 @@ tag Options
 	prop version = ''
 	prop granted = null
 	prop diagnostics = ''
+	prop gate = null
+	prop authBase = AUTH_BASE
+	prop gateBusy = no
+	prop update = null
 	# The form is shown only once the stored settings are in; a value typed
 	# before that would be overwritten when they arrived (seen in Brave, where
 	# the page is interactive before storage answers).
@@ -35,7 +41,62 @@ tag Options
 		remember = s.remember
 		version = browser.runtime.getManifest().version
 		await checkPermission()
+		await loadGate()
+		self.notice = do(msg) onNotice(msg)
+		browser.runtime.onMessage.addListener(self.notice)
 		loaded = yes
+		imba.commit()
+
+	def unmount
+		browser.runtime.onMessage.removeListener(self.notice) if self.notice
+
+	def onNotice msg
+		if msg and msg.type === 'gate'
+			gate = msg.gate
+			imba.commit()
+		if msg and msg.type === 'update'
+			update = msg.update
+			imba.commit()
+		no
+
+	def reloadExtension
+		try
+			await send({type: 'update-reload'})
+		catch e
+			message = String(e.message or e)
+			kind = 'error'
+
+	def updateCheck
+		try
+			update = (await send({type: 'update-check'})).update
+			message = update.banner ? update.banner.text : (update.latest ? "Up to date: {update.current} is the version the store serves." : "Could not read the store feed: {update.error}")
+			kind = update.error and !update.latest ? 'error' : 'info'
+		catch e
+			message = String(e.message or e)
+			kind = 'error'
+
+	# The GitHub gate as the background knows it, and which auth server it asks
+	# (the default Worker, or the `authBase` override the Firefox smoke uses).
+	def loadGate
+		try
+			const got = await browser.storage.local.get({authBase: ''})
+			authBase = normalizeAuthBase(got.authBase)
+			gate = (await send({type: 'gate'})).gate
+			update = (await send({type: 'update'})).update
+		catch e
+			gate = {mode: 'error', reason: String(e.message or e), login: '', exp: null}
+
+	def gateAction type
+		gateBusy = yes
+		imba.commit()
+		try
+			gate = (await send({type})).gate
+			message = type === 'github-signout' ? 'Signed out of GitHub.' : "GitHub gate: {gate.mode}."
+			kind = 'info'
+		catch e
+			message = String(e.message or e)
+			kind = 'error'
+		gateBusy = no
 		imba.commit()
 
 	get origin
@@ -75,6 +136,8 @@ tag Options
 				"melodica-extension {d.version} core {d.core}"
 				"browser {d.ua}"
 				"endpoint {d.endpoint}; signed in: {d.loggedIn ? 'yes' : 'no'}; clock offset {d.syncOffset}s; request User-Agent: {d.userAgent}"
+				"update: running {d.update and d.update.current}, store {d.update and d.update.latest or 'unknown'}, fetched {d.update and d.update.available or 'none'}, feed {d.update and d.update.feed}{d.update and d.update.error ? ' (' + d.update.error + ')' : ''}"
+				"github gate: {d.gate ? d.gate.mode : '?'}{d.gate and d.gate.login ? ' ' + d.gate.login : ''}{d.gate and d.gate.reason ? ' (' + d.gate.reason + ')' : ''}; auth server {d.authBase}"
 				"storage.session: {d.sessionStorage ? 'available' : 'missing (storage.local used)'}; background: {JSON.stringify(d.background)}"
 				"permissions: {JSON.stringify(d.permissions)}"
 				"last {lines.length} background log lines:"
@@ -138,6 +201,10 @@ tag Options
 			color: var(--muted)
 			margin: 0
 			font-size: 13px
+		h2
+			margin: 8px 0 0
+			font-size: 15px
+			color: var(--gold-2)
 		textarea#diagnostics
 			width: 100%
 			min-height: 180px
@@ -151,6 +218,7 @@ tag Options
 				<h1>
 					"melodica options"
 					<small> " {version}"
+				<UpdateBanner update=update @reload=reloadExtension>
 				if !loaded
 					<p.help#options-loading> "Loading settings…"
 				else
@@ -171,6 +239,20 @@ tag Options
 					<label.row>
 						<input#remember type="checkbox" bind=remember>
 						"Remember the password on this device (kept unencrypted in extension storage)"
+					<h2> "GitHub gate"
+					<p.help#options-gate> "melodica requires a GitHub sign-in. GitHub sign-in is used for identity only; nothing is stored. {authBase} is asked whether the signed-in account may use melodica. Status: {gateLine(gate) or 'unknown'}"
+					if authBase !== AUTH_BASE
+						<p.help#options-authbase> "Auth server overridden (storage key authBase): {authBase}. Default: {AUTH_BASE}"
+					<div.actions>
+						if gate and (gate.mode === 'anon' or gate.mode === 'error')
+							<button#options-github-signin type="button" disabled=gateBusy @click=gateAction('github-signin')> "Sign in with GitHub"
+						<button#options-gate-check type="button" disabled=gateBusy @click=gateAction('gate-check')> "Check again"
+						if gate and gate.login
+							<button#options-github-signout type="button" disabled=gateBusy @click=gateAction('github-signout')> "Sign out"
+					<h2> "Updates"
+					<p.help#options-update> "Firefox and .crx or policy installs update themselves from the feeds on spacegho.st/extensions; an unpacked zip only gets the banner. Running {update and update.current or version}; the store serves {update and update.latest or 'unknown'}{update and update.checkedAt ? ', checked ' + new Date(update.checkedAt).toLocaleString() : ''}."
+					<div.actions>
+						<button#options-update-check type="button" @click=updateCheck> "Check for updates"
 					<div.actions>
 						<button#save.primary type="button" @click=save> "Save"
 						<button#reset type="button" @click=reset> "Reset to Pandora"

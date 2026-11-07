@@ -8,6 +8,8 @@
     "build:core": "scripts/build-core.sh",
     "build": "node scripts/build.mjs",
     "test:core": "node core/test.mjs",
+    "test:github": "node tests/github.test.mjs",
+    "test:update": "node tests/update.test.mjs",
     "test:smoke": "playwright test",
     "lint:firefox": "web-ext lint --source-dir dist/firefox --self-hosted",
     "package": "scripts/package.sh",
