@@ -1,0 +1,100 @@
+# Every push and pull request: the Dalamud plugin's manifest check, build, tests and
+# packaging. GitHub-hosted runners only; nothing here touches a machine of the author's,
+# and nothing here needs the game.
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dalamud:
+    name: Dalamud plugin
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read # a private repository: checkout needs it, the empty top-level grant gives none
+    env:
+      DALAMUD_HOME: ${{ github.workspace }}/.dalamud
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # From global.json, not a hand-written 10.0.x: the pin is what the build
+      # actually requires, and a runner image's own 10.0.x may be below it.
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Check the plugin manifest
+        run: tools/check-manifest.py
+
+      - name: Check that CHANGELOG.md matches changelog.json
+        run: tools/changelog.py --check
+
+      - name: Fetch the Dalamud reference assemblies
+        run: tools/fetch-dalamud.sh
+
+      - name: Install native build and headless Windows test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc clang wine64 wine xvfb xauth zip unzip
+          tools/fetch-zig.sh
+
+      - name: Native Linux and Windows DLL smoke tests
+        run: tools/test-melodica-native.sh
+
+      - name: Strict Clang and native allocation/UB checks
+        run: |
+          CC=clang XIVPIANO_NATIVE_BUILD="$PWD/native/build/clang" tools/test-melodica-native.sh --linux
+          tools/test-melodica-sanitizers.sh
+
+      - name: Native packaging regressions
+        run: python3 tools/ci/test_native_packaging.py
+
+      - name: Test
+        run: dotnet test tests/XivPiano.Core.Tests -c Release
+
+      - name: Windows managed tests using the extracted DLL path
+        run: tools/test-melodica-managed-windows.sh
+
+      - name: Build
+        run: dotnet build src/XivPiano.Plugin/XivPiano.Plugin.csproj -c Release
+
+      - name: Package (the release path, run on every push)
+        env:
+          OUT: ${{ runner.temp }}/release
+        run: tools/package.sh
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: xivpiano-plugin-${{ github.sha }}
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Keep native and Windows managed test evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: melodica-tests-${{ github.sha }}
+          path: |
+            native/build/artifacts-*.json
+            native/build/linux-x64/exports.txt
+            native/build/linux-x64/bridge-smoke.log
+            native/build/win-x64/exports.txt
+            native/build/win-x64/bridge-smoke.log
+            native/build/clang/linux-x64/bridge-smoke.log
+            native/build/asan/bridge-smoke.log
+            native/build/managed-windows/managed-smoke.log
+            native/build/managed-windows/managed-proof.json
+          if-no-files-found: error
+          retention-days: 14

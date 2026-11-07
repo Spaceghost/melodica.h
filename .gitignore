@@ -1,0 +1,11 @@
+bin/
+obj/
+artifacts/
+*.user
+.vs/
+node_modules/
+__pycache__/
+.claude/
+.dalamud/
+native/build/
+runtimes/
