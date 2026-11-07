@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "melodica for Pandora",
+  "version": "0.0.0",
+  "description": "Pandora player and relay-free bridge for spacegho.st/melodica/app/: talks to Pandora's JSON API directly from the browser.",
+  "homepage_url": "https://github.com/Spaceghost/melodica-extension",
+  "icons": {
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "melodica",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "background": {
+    "service_worker": "bg.js",
+    "scripts": ["bg.js"],
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://spacegho.st/melodica/app/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://tuner.pandora.com/*",
+    "https://*.pandora.com/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "web_accessible_resources": [],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "melodica-extension@spacegho.st",
+      "strict_min_version": "128.0"
+    }
+  }
+}
