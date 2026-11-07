@@ -192,10 +192,7 @@ test.describe.serial('remote mode (the extension plays, the page is a view)', ()
       await expect(page.locator('#view-login')).toBeHidden();
       await expect(page.locator('#view-github')).toBeHidden();
       await expect(page.locator('#search-form')).toBeHidden();
-      // Nothing plays yet, so the stations sheet opens by itself; its list comes from
-      // the extension's state, with no delete buttons (there is no such command).
-      await expect(page.locator('#stations-sheet')).toHaveAttribute('open', '');
-      await expect(page.locator('#stations-open')).toBeVisible();
+      // The station list comes from the extension's state; no delete buttons (no such command).
       const stations = page.locator('#station-list button.station');
       await expect(stations).toHaveText(['QuickMix', 'Aurora Fields Radio', 'Band Two Radio']);
       await expect(page.locator('#station-list button.delete')).toHaveCount(0);
@@ -204,7 +201,6 @@ test.describe.serial('remote mode (the extension plays, the page is a view)', ()
       // Pick a station: a play command with its token; the pushed state fills now playing.
       await page.locator('#station-list button.station', { hasText: 'Aurora Fields Radio' }).click();
       await expect(page.locator('#np-title')).toHaveText('Slow Light');
-      await expect(page.locator('#stations-sheet')).not.toHaveAttribute('open', '');
       await expect(page.locator('#np-artist')).toHaveText('Aurora Fields');
       await expect(page.locator('#np-station')).toContainText('Aurora Fields Radio');
       await expect(page.locator('#station-list li.active')).toContainText('Aurora Fields Radio');
@@ -236,8 +232,6 @@ test.describe.serial('remote mode (the extension plays, the page is a view)', ()
       await expect.poll(() => page.evaluate(() => window.__remote.commands.at(-1))).toBe('volume 35');
       await page.selectOption('#quality', 'low');
       await expect.poll(() => page.evaluate(() => window.__remote.commands.at(-1))).toBe('quality low');
-      await page.click('#stations-open');
-      await expect(page.locator('#stations-sheet')).toHaveAttribute('open', '');
       await page.click('#refresh-stations');
       await expect(stations).toHaveText(['QuickMix', 'Aurora Fields Radio', 'Band Two Radio', 'New Station']);
       // Play log collects what the extension played.

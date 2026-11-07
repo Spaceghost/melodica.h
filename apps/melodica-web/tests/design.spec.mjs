@@ -1,6 +1,8 @@
-// Design screenshots: every view at phone (390x844) and desktop (1280x800).
-// Not a pass/fail test of looks; it records what the layout is and checks the
-// one-column rule (the content column is at most 520 px wide and centered).
+// Design screenshots: every view at phone (390x844) and desktop (1280x800),
+// light or dark (DESIGN_SCHEME=dark). Not a pass/fail test of looks: it records
+// what each view looks like. DESIGN_CHECK_COLUMN=1 also asserts a one-column
+// layout (content at most 520 px wide and centered); the responsive layout
+// does not use that, so it is off by default.
 // Views: GitHub sign-in, Pandora login, player (remote mode against a fake
 // extension with a track playing), stations sheet. No network.
 // Output: tests/artifacts/design-<view>-<w>x<h>.png (DESIGN_TAG prefixes the name).
@@ -13,11 +15,13 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const DIST = resolve(process.env.MELODICA_DIST || resolve(here, '..', 'dist'));
 const ARTIFACTS = resolve(here, 'artifacts');
-const TAG = process.env.DESIGN_TAG ? `${process.env.DESIGN_TAG}-` : '';
-const CHECK_COLUMN = process.env.DESIGN_CHECK_COLUMN !== '0';
+const TAG = `${process.env.DESIGN_TAG ? `${process.env.DESIGN_TAG}-` : ''}${process.env.DESIGN_SCHEME === 'dark' ? 'dark-' : ''}`;
+const CHECK_COLUMN = process.env.DESIGN_CHECK_COLUMN === '1';
 const APP_PATH = '/melodica/app/';
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.wasm': 'application/wasm' };
 const SIZES = [[390, 844], [1280, 800]];
+// DESIGN_SCHEME=dark renders with prefers-color-scheme: dark.
+const SCHEME = process.env.DESIGN_SCHEME === 'dark' ? 'dark' : 'light';
 let server = null;
 let base = '';
 let gate = 'anonymous';
@@ -90,7 +94,7 @@ function expectColumn(c) {
 
 for (const [w, h] of SIZES) {
   test.describe(`${w}x${h}`, () => {
-    test.use({ viewport: { width: w, height: h } });
+    test.use({ viewport: { width: w, height: h }, colorScheme: SCHEME });
 
     test('GitHub sign-in', async ({ page }) => {
       gate = 'anonymous';

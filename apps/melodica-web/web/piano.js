@@ -254,9 +254,21 @@ export class PianoClient {
     this.fn.init();
   }
   stations() { return this.call({ action: 'stations' }).then((r) => r.stations); }
+  // Songs in order, with each ad item as {isAd: true, adToken} at its place.
   playlist(stationId, quality = 'high') {
-    return this.call({ action: 'playlist', stationId, quality }).then((r) => r.songs);
+    return this.call({ action: 'playlist', stationId, quality }).then((r) => {
+      const songs = Array.isArray(r.songs) ? r.songs.slice() : [];
+      const ads = Array.isArray(r.ads) ? r.ads : [];
+      for (const ad of [...ads].sort((a, b) => b.position - a.position)) {
+        if (ad && ad.adToken) songs.splice(Math.min(Math.max(0, Number(ad.position) || 0), songs.length), 0, { isAd: true, adToken: ad.adToken, stationId });
+      }
+      return songs;
+    });
   }
+  // ad.getAdMetadata: {title, companyName, imageUrl, clickThroughUrl, audioUrl, audioFormat, adTrackingTokens}
+  adMetadata(adToken, quality = 'high') { return this.call({ action: 'adMetadata', adToken, quality }); }
+  // ad.registerAd after the ad started playing.
+  registerAd(stationId, adTrackingTokens) { return this.call({ action: 'registerAd', stationId, adTrackingTokens }); }
   rate(song, rating) {
     return this.call({ action: 'rate', trackToken: song.trackToken, stationId: song.stationId, rating });
   }

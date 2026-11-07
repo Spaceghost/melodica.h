@@ -13,6 +13,7 @@ const STORAGE = {
   quality: 'melodica.quality',
   station: 'melodica.station',
   shortcuts: 'melodica.shortcuts',
+  policy: 'melodica.policy',
 };
 // localStorage may throw (blocked cookies, sandboxed frame): degrade to session-only settings.
 const store = {
@@ -54,7 +55,6 @@ const el = {
   loginButton: $('login-button'), loginMessage: $('login-message'), fatal: $('fatal-message'),
   stationList: $('station-list'), stationFilter: $('station-filter'), stationEmpty: $('station-empty'),
   stationCount: $('station-count'),
-  stationsOpen: $('stations-open'), stationsSheet: $('stations-sheet'), stationsClose: $('stations-close'),
   refreshStations: $('refresh-stations'), logout: $('logout'),
   account: $('account'), signedIn: $('signed-in'), signedInFull: $('signed-in-full'),
   searchForm: $('search-form'), searchInput: $('search-input'), searchResults: $('search-results'),
@@ -90,6 +90,18 @@ function readQuality() {
 }
 const lowerQuality = (q) => QUALITIES[Math.min(QUALITIES.indexOf(q) + 1, QUALITIES.length - 1)];
 
+// Playback compatibility state is read before loading a playlist.
+// playlist are played; it defaults to true and is replaced by what the
+// account's policy endpoint answers (stored under melodica.policy).
+function readPolicy() {
+  try {
+    const p = JSON.parse(store.get(STORAGE.policy) || 'null');
+    return { inserts: !(p && p.inserts === false) };
+  } catch (_) {
+    return { inserts: true };
+  }
+}
+
 const state = {
   client: null,
   bridge: null,       // BridgeTransport when the page may use the extension bridge
@@ -106,6 +118,7 @@ const state = {
   history: [],        // songs heard this session, newest first
   quality: readQuality(),
   volume: readVolume(),
+  policy: readPolicy(),
   shortcutsOn: store.get(STORAGE.shortcuts) !== '0', // single-key shortcuts (WCAG 2.1.4: can be turned off)
   explaining: false,
   playGen: 0,         // bumped when the station/queue context changes; stale playlist fetches are dropped
@@ -121,28 +134,6 @@ function show(view) {
   el.app.dataset.view = view.id.replace('view-', '');
   el.account.hidden = view !== el.viewPlayer;
   el.account.open = false;
-  el.stationsOpen.hidden = view !== el.viewPlayer;
-  if (view !== el.viewPlayer) closeStations();
-}
-
-// The stations sheet (<dialog class="drawer">), opened from the header button,
-// the s and / keys, or automatically when the player has nothing to play yet.
-function openStations(focus = 'list') {
-  if (el.viewPlayer.hidden) return;
-  if (!el.stationsSheet.open) {
-    if (typeof el.stationsSheet.showModal === 'function') el.stationsSheet.showModal();
-    else el.stationsSheet.setAttribute('open', '');
-  }
-  el.stationsOpen.setAttribute('aria-expanded', 'true');
-  if (focus === 'filter') { el.stationFilter.focus(); el.stationFilter.select(); }
-  else (visibleStationButton() || el.stationFilter).focus();
-}
-function closeStations() {
-  if (el.stationsSheet.open) {
-    if (typeof el.stationsSheet.close === 'function') el.stationsSheet.close();
-    else el.stationsSheet.removeAttribute('open');
-  }
-  el.stationsOpen.setAttribute('aria-expanded', 'false');
 }
 
 function setStatus(text, isError = false) {
@@ -391,7 +382,7 @@ function updateQualityChip() {
   if (!song) { el.qualityChip.hidden = true; return; }
   const q = song.quality || state.quality;
   const fmt = song.audioFormat ? String(song.audioFormat).replace(/_/g, ' ') : '';
-  el.qualityChip.textContent = fmt ? `${q} · ${fmt}` : q;
+  el.qualityChip.textContent = song.isAd ? 'ad' : fmt ? `${q} · ${fmt}` : q;
   el.qualityChip.hidden = false;
 }
 
@@ -402,11 +393,11 @@ let renderUpNext = function renderUpNext() {
     const li = document.createElement('li');
     const t = document.createElement('span');
     t.className = 't';
-    t.textContent = s.title || '';
-    t.title = s.title || '';
+    t.textContent = s.isAd ? 'Advertisement' : s.title || '';
+    t.title = t.textContent;
     const a = document.createElement('span');
     a.className = 'a';
-    a.textContent = s.artist || '';
+    a.textContent = s.isAd ? '' : s.artist || '';
     li.append(t, a);
     el.upNext.append(li);
   }
@@ -512,7 +503,6 @@ function stopPlayback(reason) {
 }
 
 async function playStation(st) {
-  closeStations();
   if (state.remote) {
     playerMessage(`Loading ${st.name}…`, 'info', 0);
     await remoteCommand('play', { station: { token: st.id, name: st.name } });
@@ -558,7 +548,7 @@ async function fetchPlaylist() {
       throw err;
     }
     if (state.playGen !== gen) return null;
-    return (songs || []).filter((s) => s && s.audioUrl).map((s) => (s.quality = quality, s));
+    return (songs || []).filter((s) => s && (s.isAd ? state.policy.inserts : s.audioUrl)).map((s) => (s.quality = quality, s));
   } finally {
     if (state.fetching === gen) state.fetching = null;
   }
@@ -580,6 +570,14 @@ async function nextSong() {
     }
     if (state.playGen !== gen) return;
     const song = state.queue.shift();
+    if (song.isAd) {
+      const ad = await loadAd(song);
+      if (state.playGen !== gen) return;
+      if (!ad) { renderUpNext(); nextSong(); return; }
+      playSong(ad);
+      renderUpNext();
+      return;
+    }
     playSong(song);
     renderUpNext();
   } catch (err) {
@@ -593,6 +591,35 @@ async function nextSong() {
   } finally {
     state.keepMessage = false; // consumed by playSong, or moot after a failure
   }
+}
+
+// An ad item of the playlist becomes a playable "song" from ad.getAdMetadata,
+// or null when it has no audio (then it is passed over).
+async function loadAd(item) {
+  try {
+    const meta = await state.client.adMetadata(item.adToken, item.quality || state.quality);
+    if (!meta || !meta.audioUrl) return null;
+    return {
+      isAd: true, adToken: item.adToken, stationId: item.stationId || (state.station && state.station.id) || '',
+      title: meta.title || 'Advertisement', artist: meta.companyName || '', album: '',
+      coverArt: meta.imageUrl || '', audioUrl: meta.audioUrl, audioFormat: meta.audioFormat || '',
+      adTrackingTokens: Array.isArray(meta.adTrackingTokens) ? meta.adTrackingTokens : [],
+      clickThroughUrl: meta.clickThroughUrl || '', trackToken: '', duration: 0, rating: 0, quality: item.quality,
+      registered: false,
+    };
+  } catch (err) {
+    console.debug('[slot]', `ad metadata failed: ${describeError(err)}`);
+    return null;
+  }
+}
+
+// Registered once, when the ad's audio actually started.
+function registerAdOnce(song) {
+  if (!song || !song.isAd || song.registered) return;
+  song.registered = true;
+  state.client.registerAd(song.stationId, song.adTrackingTokens)
+    .then(() => console.debug('[slot]', 'ad registered'))
+    .catch((err) => console.debug('[slot]', `ad.registerAd failed: ${describeError(err)}`));
 }
 
 function applyVolume() {
@@ -621,6 +648,8 @@ function playSong(song) {
 // Everything about a new song except playing it (shared with remote mode).
 function displaySong(song) {
   state.song = song;
+  if (song.isAd) el.app.dataset.ad = 'true';
+  else delete el.app.dataset.ad;
   el.stage.classList.remove('idle');
   el.title.textContent = song.title || '';
   el.artist.textContent = song.artist || '';
@@ -636,7 +665,7 @@ function displaySong(song) {
   updateHint();
   updateQualityChip();
   updateRatingButtons();
-  rememberSong(song);
+  if (!song.isAd) rememberSong(song);
   if (state.keepMessage) state.keepMessage = false;
   else playerMessage('');
   const label = [song.title, song.artist].filter(Boolean).join(' – ');
@@ -651,11 +680,13 @@ function updateRatingButtons() {
   el.love.setAttribute('aria-pressed', String(r === 1));
   el.ban.setAttribute('aria-pressed', String(r === 2));
   const has = !!state.song;
-  for (const b of [el.next, el.love, el.ban, el.tired, el.explain]) b.disabled = !has;
+  const ad = has && !!state.song.isAd; // an ad plays through: no skip, rating or explain
+  for (const b of [el.next, el.love, el.ban, el.tired, el.explain]) b.disabled = !has || ad;
 }
 
 function skip(reason) {
   if (state.remote) { remoteCommand('next'); return; }
+  if (state.song && state.song.isAd) return; // inserts play through
   if (reason) { playerMessage(reason); state.keepMessage = true; }
   el.audio.pause();
   nextSong();
@@ -663,7 +694,7 @@ function skip(reason) {
 
 // Rate the current song (ban skips) or any song from the play log via its trackToken.
 async function rateSong(song, kind) {
-  if (!song) return;
+  if (!song || song.isAd) return;
   if (state.remote) {
     if (song !== state.song) { playerMessage('Only the playing song can be rated while the extension plays.'); return; }
     const r = await remoteCommand(kind);
@@ -690,7 +721,7 @@ function rate(kind) { return rateSong(state.song, kind); }
 
 async function tired() {
   const song = state.song;
-  if (!song) return;
+  if (!song || song.isAd) return;
   if (state.remote) {
     const r = await remoteCommand('tired');
     if (r && r.ok) playerMessage('Pandora will rest this song for a month.');
@@ -708,7 +739,7 @@ async function tired() {
 
 async function explain() {
   const song = state.song;
-  if (!song || state.explaining) return; // the e key bypasses the disabled button
+  if (!song || song.isAd || state.explaining) return; // the e key bypasses the disabled button
   if (state.remote) { playerMessage('“Why this song?” is not available while the extension plays.'); return; }
   state.explaining = true;
   el.explain.disabled = true;
@@ -975,8 +1006,7 @@ function enterRemote(first) {
   renderUpNext = () => {}; // the queue panel shows the extension's count (renderRemote)
   updateStatus();
   addEventListener('pagehide', () => state.bridge && state.bridge.unsubscribe());
-  if (!state.song && state.stations.length) openStations();
-  else el.play.focus();
+  visibleStationButton()?.focus();
 }
 
 // ---------------------------------------------------------------- GitHub gate
@@ -1072,7 +1102,7 @@ async function login(email, password) {
     show(el.viewPlayer);
     updateHint();
     renderUpNext();
-    if (!state.song && state.stations.length) openStations();
+    visibleStationButton()?.focus();
   } catch (err) {
     loginMessage(describeError(err), 'error');
   } finally {
@@ -1126,10 +1156,6 @@ function installEvents() {
     store.set(STORAGE.shortcuts, state.shortcutsOn ? '1' : '0');
   });
   el.logout.addEventListener('click', logout);
-  el.stationsOpen.addEventListener('click', () => openStations());
-  el.stationsClose.addEventListener('click', () => { closeStations(); el.stationsOpen.focus(); });
-  el.stationsSheet.addEventListener('close', () => el.stationsOpen.setAttribute('aria-expanded', 'false'));
-  closeOnBackdrop(el.stationsSheet, closeStations);
   el.githubSignout.addEventListener('click', githubSignOut);
   el.githubSignout2.addEventListener('click', githubSignOut);
   el.refreshStations.addEventListener('click', () => {
@@ -1195,6 +1221,7 @@ function installEvents() {
   });
 
   const a = el.audio;
+  a.addEventListener('playing', () => registerAdOnce(state.song));
   a.addEventListener('play', () => { setPlayIcon(true); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'; });
   a.addEventListener('pause', () => { setPlayIcon(false); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'; });
   a.addEventListener('timeupdate', () => {
@@ -1251,8 +1278,8 @@ function installEvents() {
       case 'e': explain(); break;
       case ')': setVolume(state.volume + 5); break;
       case '(': setVolume(state.volume - 5); break;
-      case 's': openStations(); break;
-      case '/': ev.preventDefault(); openStations('filter'); break;
+      case 's': visibleStationButton()?.focus(); break;
+      case '/': ev.preventDefault(); el.stationFilter.focus(); el.stationFilter.select(); break;
       case '?': ev.preventDefault(); if (el.shortcuts.open) closeShortcuts(); else openShortcuts(); break;
       default: return;
     }

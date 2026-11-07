@@ -5,7 +5,7 @@
   "description": "Pandora client in the browser: melodica.h compiled to WebAssembly",
   "license": "MIT",
   "scripts": {
-    "test": "node tests/node-unit.mjs && node tests/bridge-unit.mjs && node tests/gate-unit.mjs && node tests/node-smoke.mjs",
+    "test": "node tests/node-unit.mjs && node tests/bridge-unit.mjs && node tests/gate-unit.mjs && node tests/inserts-unit.mjs && node tests/node-smoke.mjs",
     "test:browser": "playwright test"
   },
   "devDependencies": {

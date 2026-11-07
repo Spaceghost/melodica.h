@@ -14,16 +14,25 @@
  *   mw_free(ptr)                -> frees a string returned by mw_begin/finish
  *   mw_version()                -> static string
  *
+ * Audio ads are outside libpiano's API (its playlist parser skips ad items, as
+ * upstream does), so they are handled here: a playlist reply also lists each
+ * ad item's adToken and position ("ads"), and the actions adMetadata and
+ * registerAd build authenticated ad.getAdMetadata / ad.registerAd requests the
+ * same way the library builds its own (user auth token in the URL, the body
+ * Blowfish-encrypted with the partner key).
+ *
  * The browser does the HTTP (via the relay) and the audio.
  */
 #include <errno.h>
 #include <stdarg.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "piano.h"
 #include "json.h"
+#include "crypt.h"
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten/emscripten.h>
@@ -163,6 +172,8 @@ typedef enum {
     MW_ACT_SEARCH,
     MW_ACT_CREATE_STATION,
     MW_ACT_DELETE_STATION,
+    MW_ACT_AD_METADATA,
+    MW_ACT_AD_REGISTER,
 } mw_action;
 
 static PianoHandle_t g_ph;
@@ -187,6 +198,7 @@ static char *g_login_user = NULL;
 static char *g_login_pass = NULL;
 static char *g_search_text = NULL;
 static char *g_create_token = NULL;
+static PianoAudioQuality_t g_ad_quality = PIANO_AQ_HIGH;
 
 static void free_tmp_song(void) {
     free(g_tmp_song.trackToken);
@@ -387,6 +399,161 @@ static PianoSong_t *resolve_song(const MelodicaJsonDoc *doc) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Ads (outside libpiano)                                              */
+
+static void buf_url_encoded(mw_buf *b, const char *s) {
+    static const char hex[] = "0123456789ABCDEF";
+    for (; *s; ++s) {
+        unsigned char c = (unsigned char)*s;
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                c == '-' || c == '_' || c == '.' || c == '~') {
+            buf_putc(b, (char)c);
+        } else {
+            buf_putc(b, '%'); buf_putc(b, hex[c >> 4]); buf_putc(b, hex[c & 15]);
+        }
+    }
+}
+
+/* Fill g_req with an authenticated request for `method`; `body` is the JSON
+ * object's members without braces, userAuthToken and syncTime are appended. */
+static char *ad_request(const char *method, const char *body) {
+    if (g_ph.user.authToken == NULL || g_ph.user.listenerId == NULL || g_ph.partner.out == NULL) {
+        return error_reply(PIANO_RET_ERR, "Request could not be built (not logged in?).");
+    }
+    mw_buf url; buf_init(&url);
+    buf_puts(&url, "/services/json/?method=");
+    buf_puts(&url, method);
+    buf_puts(&url, "&auth_token=");
+    buf_url_encoded(&url, g_ph.user.authToken);
+    char tail[64];
+    snprintf(tail, sizeof(tail), "&partner_id=%u&user_id=", g_ph.partner.id);
+    buf_puts(&url, tail);
+    buf_url_encoded(&url, g_ph.user.listenerId);
+    if (url.oom || url.data == NULL || url.len >= sizeof(g_req.urlPath)) {
+        free(url.data);
+        return error_reply(PIANO_RET_OUT_OF_MEMORY, NULL);
+    }
+    memcpy(g_req.urlPath, url.data, url.len + 1);
+    free(url.data);
+
+    mw_buf json; buf_init(&json);
+    buf_putc(&json, '{');
+    buf_puts(&json, body);
+    buf_putc(&json, ',');
+    buf_kv_string(&json, "userAuthToken", g_ph.user.authToken); buf_putc(&json, ',');
+    buf_kv_long(&json, "syncTime", (long)(int)((long)time(NULL) - (long)g_ph.timeOffset));
+    buf_putc(&json, '}');
+    if (json.oom || json.data == NULL) { free(json.data); return error_reply(PIANO_RET_OUT_OF_MEMORY, NULL); }
+    char *encrypted = melodica_piano_encrypt_string((const MelodicaBlowfish *)g_ph.partner.out, json.data);
+    free(json.data);
+    if (encrypted == NULL) return error_reply(PIANO_RET_OUT_OF_MEMORY, NULL);
+    free(g_req.postData);
+    g_req.postData = encrypted;
+    g_req.secure = true;
+    g_pending = 1;
+    return request_reply();
+}
+
+static void emit_json_token_string(mw_buf *b, const MelodicaJsonDoc *doc, size_t obj, const char *key, const char *out) {
+    size_t t = obj == MELODICA_JSON_NONE ? MELODICA_JSON_NONE : melodica_json_object_get(doc, obj, key);
+    char *v = (t == MELODICA_JSON_NONE || melodica_json_is_null(doc, t)) ? NULL : melodica_json_string_dup(doc, t);
+    buf_kv_string(b, out, v);
+    free(v);
+}
+
+/* The ad items of a getPlaylist answer: [{"adToken":..,"position":n}] where n
+ * is the number of songs (items libpiano keeps) before the ad. */
+static void emit_playlist_ads(mw_buf *b, const char *body) {
+    buf_puts(b, "\"ads\":[");
+    MelodicaJsonDoc doc;
+    if (body != NULL && melodica_json_parse(&doc, body)) {
+        size_t result = melodica_json_object_get(&doc, 0, "result");
+        size_t items = result == MELODICA_JSON_NONE ? MELODICA_JSON_NONE : melodica_json_object_get(&doc, result, "items");
+        if (items != MELODICA_JSON_NONE && doc.tokens[items].type == MELODICA_JSON_ARRAY) {
+            long songs = 0;
+            int first = 1;
+            for (size_t item = items + 1u; item < doc.count && doc.tokens[item].start < doc.tokens[items].end; ++item) {
+                if (doc.tokens[item].parent != items) continue;
+                size_t ad = melodica_json_object_get(&doc, item, "adToken");
+                if (ad != MELODICA_JSON_NONE && !melodica_json_is_null(&doc, ad)) {
+                    char *token = melodica_json_string_dup(&doc, ad);
+                    if (token != NULL && token[0] != '\0') {
+                        if (!first) buf_putc(b, ',');
+                        first = 0;
+                        buf_putc(b, '{');
+                        buf_kv_string(b, "adToken", token); buf_putc(b, ',');
+                        buf_kv_long(b, "position", songs);
+                        buf_putc(b, '}');
+                    }
+                    free(token);
+                } else if (melodica_json_object_get(&doc, item, "artistName") != MELODICA_JSON_NONE) {
+                    songs += 1;
+                }
+            }
+        }
+        melodica_json_destroy(&doc);
+    }
+    buf_putc(b, ']');
+}
+
+/* Finish an ad request from Pandora's plain JSON answer. */
+static char *finish_ad(const char *body) {
+    MelodicaJsonDoc doc;
+    if (!melodica_json_parse(&doc, body)) return error_reply(PIANO_RET_INVALID_RESPONSE, NULL);
+    char *stat = json_field(&doc, "stat");
+    int ok = stat != NULL && strcmp(stat, "ok") == 0;
+    free(stat);
+    if (!ok) {
+        long code = json_field_long(&doc, "code", -1);
+        char *msg = json_field(&doc, "message");
+        char *reply = code >= 0 ? error_reply((PianoReturn_t)(PIANO_RET_OFFSET + code), msg) : error_reply(PIANO_RET_ERR, msg);
+        free(msg);
+        melodica_json_destroy(&doc);
+        return reply;
+    }
+    mw_buf b; buf_init(&b);
+    buf_puts(&b, "{\"ok\":true,\"continue\":false,\"status\":1,\"code\":null,\"error\":null,\"result\":{");
+    size_t result = melodica_json_object_get(&doc, 0, "result");
+    if (g_action == MW_ACT_AD_METADATA) {
+        static const char *const qualities[] = {"", "lowQuality", "mediumQuality", "highQuality"};
+        size_t map = result == MELODICA_JSON_NONE ? MELODICA_JSON_NONE : melodica_json_object_get(&doc, result, "audioUrlMap");
+        size_t q = MELODICA_JSON_NONE;
+        /* The asked quality, else the best one there is. */
+        if (map != MELODICA_JSON_NONE) {
+            q = melodica_json_object_get(&doc, map, qualities[g_ad_quality]);
+            for (int i = PIANO_AQ_HIGH; q == MELODICA_JSON_NONE && i >= PIANO_AQ_LOW; --i) q = melodica_json_object_get(&doc, map, qualities[i]);
+        }
+        emit_json_token_string(&b, &doc, result, "title", "title"); buf_putc(&b, ',');
+        emit_json_token_string(&b, &doc, result, "companyName", "companyName"); buf_putc(&b, ',');
+        emit_json_token_string(&b, &doc, result, "imageUrl", "imageUrl"); buf_putc(&b, ',');
+        emit_json_token_string(&b, &doc, result, "clickThroughUrl", "clickThroughUrl"); buf_putc(&b, ',');
+        emit_json_token_string(&b, &doc, q, "audioUrl", "audioUrl"); buf_putc(&b, ',');
+        emit_json_token_string(&b, &doc, q, "encoding", "audioFormat"); buf_putc(&b, ',');
+        buf_puts(&b, "\"adTrackingTokens\":[");
+        size_t toks = result == MELODICA_JSON_NONE ? MELODICA_JSON_NONE : melodica_json_object_get(&doc, result, "adTrackingTokens");
+        if (toks != MELODICA_JSON_NONE && doc.tokens[toks].type == MELODICA_JSON_ARRAY) {
+            int first = 1;
+            for (size_t t = toks + 1u; t < doc.count && doc.tokens[t].start < doc.tokens[toks].end; ++t) {
+                if (doc.tokens[t].parent != toks) continue;
+                char *v = melodica_json_string_dup(&doc, t);
+                if (v != NULL) {
+                    if (!first) buf_putc(&b, ',');
+                    first = 0;
+                    buf_json_string(&b, v);
+                }
+                free(v);
+            }
+        }
+        buf_putc(&b, ']');
+    } else {
+        buf_kv_bool(&b, "registered", 1);
+    }
+    buf_puts(&b, "}}");
+    melodica_json_destroy(&doc);
+    return buf_finish(&b);
+}
+
+/* ------------------------------------------------------------------ */
 /* Exports                                                             */
 
 MW_EXPORT const char *mw_version(void) { return MW_VERSION; }
@@ -563,6 +730,45 @@ MW_EXPORT char *mw_begin(const char *requestJson) {
             g_action = MW_ACT_DELETE_STATION;
             g_type = PIANO_REQUEST_DELETE_STATION;
         }
+    } else if (strcmp(action, "adMetadata") == 0) {
+        char *token = json_field(&doc, "adToken");
+        if (token == NULL) {
+            reply = error_reply(PIANO_RET_ERR, "adMetadata needs an adToken.");
+        } else {
+            mw_buf body; buf_init(&body);
+            buf_kv_string(&body, "adToken", token); buf_putc(&body, ',');
+            buf_kv_bool(&body, "returnAdTrackingTokens", 1); buf_putc(&body, ',');
+            buf_kv_bool(&body, "supportAudioAds", 1);
+            g_ad_quality = quality_from(&doc);
+            g_action = MW_ACT_AD_METADATA;
+            reply = body.oom ? error_reply(PIANO_RET_OUT_OF_MEMORY, NULL) : ad_request("ad.getAdMetadata", body.data);
+            free(body.data);
+            free(token);
+            if (g_pending) { free(action); melodica_json_destroy(&doc); return reply; }
+        }
+    } else if (strcmp(action, "registerAd") == 0) {
+        char *station = json_field(&doc, "stationId");
+        size_t toks = melodica_json_object_get(&doc, 0, "adTrackingTokens");
+        if (station == NULL || toks == MELODICA_JSON_NONE || doc.tokens[toks].type != MELODICA_JSON_ARRAY) {
+            reply = error_reply(PIANO_RET_ERR, "registerAd needs a stationId and adTrackingTokens.");
+        } else {
+            mw_buf body; buf_init(&body);
+            buf_kv_string(&body, "stationId", station); buf_putc(&body, ',');
+            buf_puts(&body, "\"adTrackingTokens\":[");
+            int first = 1;
+            for (size_t t = toks + 1u; t < doc.count && doc.tokens[t].start < doc.tokens[toks].end; ++t) {
+                if (doc.tokens[t].parent != toks) continue;
+                char *v = melodica_json_string_dup(&doc, t);
+                if (v != NULL) { if (!first) buf_putc(&body, ','); first = 0; buf_json_string(&body, v); }
+                free(v);
+            }
+            buf_putc(&body, ']');
+            g_action = MW_ACT_AD_REGISTER;
+            reply = body.oom ? error_reply(PIANO_RET_OUT_OF_MEMORY, NULL) : ad_request("ad.registerAd", body.data);
+            free(body.data);
+            if (g_pending) { free(station); free(action); melodica_json_destroy(&doc); return reply; }
+        }
+        free(station);
     } else {
         reply = error_reply(PIANO_RET_ERR, "Unknown action.");
     }
@@ -580,8 +786,11 @@ MW_EXPORT char *mw_begin(const char *requestJson) {
 MW_EXPORT char *mw_continue(void) {
     if (!g_inited) return error_reply(PIANO_RET_ERR, "mw_init() has not been called.");
     if (g_action == MW_ACT_NONE) return error_reply(PIANO_RET_ERR, "Nothing to continue.");
+    if (g_action == MW_ACT_AD_METADATA || g_action == MW_ACT_AD_REGISTER) return error_reply(PIANO_RET_ERR, "Nothing to continue.");
     return issue();
 }
+
+static const char *g_finish_body = NULL;  /* the response being finished (playlist ads) */
 
 static char *success_reply(int cont) {
     mw_buf b; buf_init(&b);
@@ -606,7 +815,8 @@ static char *success_reply(int cont) {
                 PianoDestroyPlaylist(g_playlist);
                 g_playlist = g_playlist_req.retPlaylist;
                 g_playlist_req.retPlaylist = NULL;
-                emit_songs(&b, "songs", g_playlist);
+                emit_songs(&b, "songs", g_playlist); buf_putc(&b, ',');
+                emit_playlist_ads(&b, g_finish_body);
                 break;
             case MW_ACT_RATE:
                 buf_kv_long(&b, "rating", (long)(g_target_song != NULL ? g_target_song->rating : 0));
@@ -641,6 +851,11 @@ MW_EXPORT char *mw_finish(const char *responseBody) {
         clear_request_state();
         return error_reply(PIANO_RET_INVALID_RESPONSE, "Empty response.");
     }
+    if (g_action == MW_ACT_AD_METADATA || g_action == MW_ACT_AD_REGISTER) {
+        char *ad = finish_ad(responseBody);
+        clear_request_state();
+        return ad;
+    }
     free(g_req.responseData);
     g_req.responseData = mw_strdup(responseBody);
     if (g_req.responseData == NULL) {
@@ -665,7 +880,9 @@ MW_EXPORT char *mw_finish(const char *responseBody) {
         clear_request_state();
         return error_reply(ret, NULL);
     }
+    g_finish_body = responseBody;
     char *reply = success_reply(0);
+    g_finish_body = NULL;
     clear_request_state();
     return reply;
 }

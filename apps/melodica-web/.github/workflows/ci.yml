@@ -35,6 +35,8 @@ jobs:
         run: node tests/bridge-unit.mjs
       - name: Gate unit test (token handling, no network)
         run: node tests/gate-unit.mjs
+      - name: Playlist item unit test (canned answers, no network)
+        run: node tests/inserts-unit.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: dist
