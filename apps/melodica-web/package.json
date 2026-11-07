@@ -1,0 +1,14 @@
+{
+  "name": "melodica-web",
+  "private": true,
+  "type": "module",
+  "description": "Pandora client in the browser: melodica.h compiled to WebAssembly",
+  "license": "MIT",
+  "scripts": {
+    "test": "node tests/node-unit.mjs && node tests/node-smoke.mjs",
+    "test:browser": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}
