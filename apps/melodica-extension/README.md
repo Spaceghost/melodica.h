@@ -43,14 +43,20 @@ checksums, the CI proof and the update feeds.
 Buttons and current steps: <https://spacegho.st/extensions/#melodica-extension>.
 
 - **Firefox:** `melodica-extension-<ver>.xpi`, served there as
-  `application/x-xpinstall` so Firefox offers its install prompt. The file is
-  **not signed by Mozilla** (the repository has no AMO credentials; CI signs
-  with `web-ext sign --channel unlisted` only when the secrets
-  `AMO_JWT_ISSUER` and `AMO_JWT_SECRET` exist). Release Firefox refuses
-  unsigned add-ons: use Developer Edition, Nightly or ESR with
-  `xpinstall.signatures.required=false`, or load it temporarily as below.
+  `application/x-xpinstall` so Firefox offers its install prompt. Since v0.1.4
+  the file is **signed by Mozilla** (CI runs `web-ext sign --channel unlisted`
+  with the repository's AMO credentials; the release notes say "Signed by
+  Mozilla" and the file carries `META-INF/mozilla.rsa`), so release Firefox
+  128+ installs it. If signing ever fails for a version, that release's `.xpi`
+  is unsigned and the notes and `docs/STORES.md` give the fallback routes.
   gecko id `melodica-extension@spacegho.st`; update feed
   `https://spacegho.st/extensions/dl/melodica-extension/updates.json`.
+- **Chrome Web Store / Edge Add-ons:** `docs/STORES.md`. On each tag CI uploads
+  `melodica-extension-<ver>-cws.zip` (the Chrome build without `update_url`)
+  to an unlisted Chrome Web Store item (Chrome, Brave, and Edge with "Allow
+  extensions from other stores") and to a hidden Edge Add-ons product, when
+  the `CWS_*` / `EDGE_*` secrets exist; the listings themselves are created
+  once by hand. The store page shows the store buttons once the ids are set.
 - **Chrome / Edge / Brave:** `melodica-extension-<ver>.crx` is a CRX3 signed
   with the repository's key (secret `CRX_PRIVATE_KEY`; the public half gives
   the Chrome extension id **`obbahflgghfemmpmjppeibnemibgblbd`**, computed by
@@ -80,12 +86,13 @@ and unzip it.
   Firefox quits), or `npx web-ext run --source-dir <folder>`. A permanent
   install needs AMO signing, which has not been done.
 
-Both zips are the same build; the Firefox one keeps
+The `-chrome`, `-cws` and `-firefox` zips are the same build; the Firefox one keeps
 `browser_specific_settings.gecko` (id `melodica-extension@spacegho.st`,
 `update_url` to the store's `updates.json`) and `background.scripts`, the
 Chrome one drops them so Chrome does not warn and carries the top-level
 `update_url` to the store's `update.xml` (ignored for an unpacked load, which
-is how the CI smoke runs).
+is how the CI smoke runs); the `-cws` one is the Chrome build without
+`update_url`, for the Chrome Web Store and Edge Add-ons, which reject it.
 
 ## Layout
 
@@ -101,10 +108,12 @@ is how the CI smoke runs).
 | `public/` | `manifest.json` (one template, two outputs), the three HTML pages (no inline scripts), `theme.css` |
 | `scripts/build-core.sh` | Nelua → C (`--target wasm32-unknown-unknown`) → `clang -nostdlib` → audits exports/imports |
 | `scripts/build.mjs` | esbuild + `imba/compiler` → `dist/chrome`, `dist/firefox`, `build/node/core.js`; generated icons; CSP guards |
-| `scripts/package.sh` | the zips, the `.xpi`, the `.crx` (via `crx3`, key from `$CRX_KEY`), the source tarball, `SHA256SUMS` |
+| `scripts/package.sh` | the zips (`-chrome`, `-cws` without `update_url`, `-firefox`), the `.xpi`, the `.crx` (via `crx3`, key from `$CRX_KEY`), the source tarball, `SHA256SUMS` |
+| `scripts/edge-publish.sh` | upload + publish a package through the Edge Add-ons REST API v1.1 (used by the `publish-edge` job) |
+| `docs/STORES.md` | store publishing: what CI does, the one-time dashboard steps, the privacy text, the Firefox fallback |
 | `scripts/crx-id.mjs` | the Chrome extension id of a key: first 128 bits of SHA-256 over the DER SubjectPublicKeyInfo, hex mapped to a–p |
 | `tests/smoke-extension.spec.mjs` | the Playwright proof (below) in Playwright's Chromium or, with `MELODICA_BROWSER=brave`, an installed Brave; `tests/fixtures/melodica-web-dist` is melodica-web 0.2.0's built page |
-| `.github/workflows/ci.yml` | build → `smoke` (Chromium) and `smoke-brave` (Brave stable from Brave's apt repository) → release on `v*` tags |
+| `.github/workflows/ci.yml` | build (+ AMO signing) → `smoke` (Chromium) and `smoke-brave` (Brave stable from Brave's apt repository) → release on `v*` tags → `publish-cws`, `publish-edge` (skip without their secrets) |
 
 ### Core (wasm) exports
 
@@ -141,7 +150,7 @@ NELUA=/opt/nelua/nelua scripts/build-core.sh      # build/core/melodica_core.was
 node scripts/build.mjs --version 0.1.0            # dist/chrome, dist/firefox, build/node/core.js
 node core/test.mjs                                # 30 checks
 npx web-ext lint --source-dir dist/firefox --self-hosted
-CRX_KEY=/path/to/key.pem scripts/package.sh 0.1.0 # release/*.zip, .xpi, .crx, -src.tar.gz, SHA256SUMS (no .crx without CRX_KEY)
+CRX_KEY=/path/to/key.pem scripts/package.sh 0.1.0 # release/*-{chrome,cws,firefox}.zip, .xpi, .crx, -src.tar.gz, SHA256SUMS (no .crx without CRX_KEY)
 ```
 
 `scripts/remote-sync.sh '<command>'` copies the tree into the container and
@@ -307,9 +316,11 @@ tagged commit; see the release notes for the run of each tag.
   inference, not observation.
 - **Firefox is linted, not run.** `web-ext lint` passes with 0 errors on
   `dist/firefox`; the extension has not been loaded in a running Firefox.
-- **Store publication is not done** (and is not planned here). The `.xpi`
-  and `.crx` are packaged from the same `dist/` and checksummed, but no job
-  installs them in a browser; Firefox's install prompt and Chrome's
+- **Stores.** The `.xpi` is signed by Mozilla on the unlisted channel (the
+  sign step's log and `META-INF/` in the file are the evidence); the Chrome
+  Web Store and Edge Add-ons jobs run only once their secrets exist and prove
+  an accepted upload, not a passed review (`docs/STORES.md`). No job installs
+  the `.xpi` or `.crx` in a browser; Firefox's install prompt and Chrome's
   policy install have not been exercised.
 - The web page's side of the bridge is being implemented in melodica-web; the
   smoke test drives the protocol from the page context itself, so it proves
