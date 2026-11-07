@@ -632,6 +632,9 @@ def publicTrack song
 
 # The engine reported: keep it, persist it, show it on the badge, tell the views.
 def playerChanged next
+	# The engine's states reach the background two ways (its reports and command
+	# replies) and may arrive out of order: an older one never replaces a newer one.
+	return if next and next !== player and next.changedAt and player.changedAt and next.changedAt < player.changedAt
 	player = Object.assign({}, PLAYER_IDLE, next)
 	session.set({player}).catch(do(e) null)
 	badge()

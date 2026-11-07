@@ -21,6 +21,8 @@ export class Engine
 		self.api = host.api
 		self.report = host.report or (do(s) null)
 		self.log = host.log or (do(s) null)
+		# Paused by the user: a track that finishes loading afterwards stays paused.
+		self.held = no
 		self.doc = host.document or document
 		self.state = {
 			status: 'idle', station: null, track: null, position: 0, duration: 0,
@@ -61,12 +63,14 @@ export class Engine
 	def play station
 		return resume() if !station and state.station
 		return unless station
+		held = no
 		generation += 1
 		queue = []
 		set({station: {token: station.token, name: station.name or ''}, track: null, position: 0, duration: 0, status: 'loading', error: ''})
 		await next()
 
 	def resume
+		held = no
 		if state.track and audio.src
 			# Report "playing" at once (views and the web page update without
 			# waiting for the element's play event); a refused play reverts it.
@@ -80,8 +84,12 @@ export class Engine
 		else
 			null
 
+	# Reported at once (the reply and the views say paused without waiting for the
+	# element's pause event); the element's own events agree with it afterwards.
 	def pause
+		held = yes
 		audio.pause()
+		set({status: 'paused'}) if state.track and (state.status === 'playing' or state.status === 'loading')
 
 	def toggle
 		if state.track and !audio.paused
@@ -129,6 +137,10 @@ export class Engine
 		set({track: song, position: 0, duration: song.duration or 0, status: 'loading', error: ''})
 		applyVolume()
 		audio.src = song.audioUrl
+		if held
+			set({status: 'paused'})
+			updateMediaSession()
+			return
 		const p = audio.play()
 		if p and p.catch
 			p.catch do(err)
@@ -149,6 +161,7 @@ export class Engine
 	# Next is not available while an ad plays.
 	def skip
 		return if state.track and state.track.ad
+		held = no
 		audio.pause()
 		await next()
 
@@ -224,6 +237,8 @@ export class Engine
 	# The element pauses on its own when a track ends; that is not a pause.
 	def onPause
 		return if audio.ended
+		# A pause event queued before a resume arrives after it: the element plays.
+		return unless audio.paused
 		set({status: 'paused'}) if state.track and state.status !== 'stopped' and state.status !== 'loading'
 
 	def onTime force = no

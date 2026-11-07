@@ -685,8 +685,51 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     await page.waitForFunction((n) => window.__states.slice(n).some((x) => x.status === 'paused'), mark, { timeout: 15_000 });
     await pop2.click('#play');
     await page.waitForFunction((n) => window.__states.slice(n).some((x) => x.status === 'playing'), mark, { timeout: 15_000 });
+    // Latency of pause and resume from the popup to the page, several rounds: the first
+    // push with the new status, and no older status pushed after it (the page draws
+    // every push as it arrives).
+    await page.evaluate(() => { window.__t = []; window.addEventListener('message', (ev) => { if (ev.source === window && ev.data && ev.data.melodica === 1 && ev.data.type === 'state') window.__t.push({ at: performance.now(), status: ev.data.state.status }); }); });
+    const rounds = [];
+    for (let i = 0; i < 6; i++) {
+      for (const want of ['paused', 'playing']) {
+        await pop2.waitForTimeout(400 + 150 * i);
+        const n = await page.evaluate(() => window.__t.length);
+        const t0 = await page.evaluate(() => performance.now());
+        await pop2.click('#play');
+        await page.waitForFunction(([k, w]) => window.__t.slice(k).some((x) => x.status === w), [n, want], { timeout: 5_000 });
+        await pop2.waitForTimeout(700);
+        const seen = await page.evaluate((k) => window.__t.slice(k), n);
+        const first = seen.find((x) => x.status === want);
+        const lastStatus = seen[seen.length - 1].status;
+        rounds.push({ want, ms: Math.round(first.at - t0), after: seen.slice(seen.indexOf(first)).map((x) => x.status).filter((x, j, a) => j === 0 || x !== a[j - 1]).join('>') });
+        expect(lastStatus, `round ${i} ${want}: last pushed status (${JSON.stringify(seen.map((x) => x.status))})`).toBe(want);
+      }
+    }
+    // The web app's own sequence (melodica-web tests/extension-real.spec.mjs): change
+    // the station, set the volume, then pause and resume straight away, while the new
+    // station may still be loading.
+    const xsend = (m) => pop2.evaluate((mm) => chrome.runtime.sendMessage(mm), m);
+    const sts = (await xsend({ type: 'player-get' })).state.stations;
+    for (let i = 0; i < 4; i++) {
+      const st = sts[(i + 1) % sts.length];
+      await xsend({ type: 'player', action: 'play', station: { token: st.token, name: st.name } });
+      await xsend({ type: 'player', action: 'volume', value: 60 + i });
+      for (const [action, want] of [['pause', 'paused'], ['resume', 'playing']]) {
+        const n = await page.evaluate(() => window.__t.length);
+        const t0 = await page.evaluate(() => performance.now());
+        const reply = await xsend({ type: 'player', action });
+        await page.waitForFunction(([k, w]) => window.__t.slice(k).some((x) => x.status === w), [n, want], { timeout: 5_000 }).catch(() => {});
+        await pop2.waitForTimeout(1500);
+        const seen = await page.evaluate((k) => window.__t.slice(k), n);
+        const first = seen.find((x) => x.status === want);
+        rounds.push({ seq: `station+${action}`, want, reply: reply && reply.state && reply.state.status, ms: first ? Math.round(first.at - t0) : null, after: seen.map((x) => `${x.status}@${Math.round(x.at - t0)}`).filter((x, j, a) => j === 0 || x.split('@')[0] !== a[j - 1].split('@')[0]).join('>') });
+      }
+    }
+    console.log(`popup -> page latency: ${JSON.stringify(rounds)}`);
+    for (const r of rounds) expect(r.ms, `${r.seq || 'popup'} ${r.want} -> page within 500 ms (${JSON.stringify(r)})`).toBeLessThan(500);
+    for (const r of rounds) expect(r.after.split('>').pop().split('@')[0], `${r.seq || 'popup'} ${r.want}: last pushed status (${JSON.stringify(r)})`).toBe(r.want);
     await pop2.close();
-    report.bridge.pushFromPopup = { paused: true, resumed: true };
+    report.bridge.pushFromPopup = { paused: true, resumed: true, rounds };
     step('bridge push from the popup');
 
     // 6. Verify default playback and its fixture counters.
@@ -733,6 +776,14 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     const re1 = await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'access-check' }));
     expect(re1.access.allowed, 'still allowed after the re-check').toBe(true);
     const noSlots = async (label) => {
+      // An ad fetched before the new answer may still be playing: let it finish and
+      // be registered before counting.
+      for (let i = 0; i < 60; i++) {
+        const st = await bgState();
+        const t = await tunerInserts();
+        if (!(st.track && st.track.ad) && t.registered >= t.metadataFetched) break;
+        await new Promise((ok) => setTimeout(ok, 500));
+      }
       const before = await tunerInserts();
       const histStart = (await bgState()).history.length;
       let sawAd = false;
