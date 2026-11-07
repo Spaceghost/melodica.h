@@ -1,0 +1,41 @@
+name: build
+
+on:
+- push
+- pull_request
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+        - ubuntu-latest
+        - macos-latest
+
+        python-version:
+        - "3.8"
+        - "3.9"
+        - "3.10"
+        - "3.11"
+        - "3.12"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Build melodica.h shared library
+        run: make -C vendor/melodica.h shared
+
+      - env:
+          MELODICA_LIBRARY: ${{ github.workspace }}/vendor/melodica.h/build/c/libmelodica.so
+        run: |
+          pip install tox
+          tox -e tests,release

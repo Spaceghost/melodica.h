@@ -1,0 +1,320 @@
+# GitHub release with downloadable builds. This mirror never publishes to PyPI.
+name: release
+
+on:
+  push:
+    tags:
+    - 'release-*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release-* tag to build (defaults to the pushed ref)
+        required: false
+        default: ''
+      publish:
+        description: Also (re)publish the GitHub release for that tag
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write
+
+env:
+  MELODICA_LIBRARY: ${{ github.workspace }}/vendor/melodica.h/build/c/libmelodica.so
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          submodules: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: make -C vendor/melodica.h shared
+
+      - run: |
+          pip install tox
+          tox -e tests
+
+  build:
+    needs: tests
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          submodules: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Release metadata
+        id: meta
+        run: |
+          tag="${{ inputs.tag }}"
+          if [ -z "$tag" ]; then tag="${GITHUB_REF_NAME}"; fi
+          case "$tag" in
+            release-*) ;;
+            *) echo "not a release-* tag: $tag" >&2; exit 1 ;;
+          esac
+          version="${tag#release-}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "melodica=$(git -C vendor/melodica.h describe --tags --always)" >> "$GITHUB_OUTPUT"
+
+      - name: Build melodica.h shared library (linux x86_64)
+        run: |
+          make -C vendor/melodica.h shared
+          python3 -c "import ctypes,os; l=ctypes.CDLL(os.environ['MELODICA_LIBRARY']); assert l.melodica_abi_version()==1"
+
+      - name: Build sdist and wheel
+        run: |
+          pip install build
+          python -m build --sdist --wheel --outdir dist/
+
+      - name: Install the wheel and smoke-test the entry point
+        run: |
+          python -m venv /tmp/venv
+          /tmp/venv/bin/pip install dist/*.whl
+          /tmp/venv/bin/python -c "import pandora, melodica; from pandora.melodica_backend import dumps; assert dumps({'a': 'b\"c'}) == '{\"a\":\"b\\\\\"c\"}'; print(pandora.__version__)"
+          /tmp/venv/bin/pydora --help >/dev/null
+
+      - name: Package shared library, source archive, checksums
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          MELODICA_REV: ${{ steps.meta.outputs.melodica }}
+        run: |
+          set -eu
+          mkdir -p out
+          lib="libmelodica-${VERSION}-linux-x86_64"
+          mkdir -p "stage/$lib"
+          cp vendor/melodica.h/build/c/libmelodica.so "stage/$lib/"
+          cp vendor/melodica.h/include/melodica.h "stage/$lib/"
+          cp vendor/melodica.h/LICENSE.libpiano vendor/melodica.h/THIRD_PARTY_NOTICES.md "stage/$lib/"
+          cat > "stage/$lib/README" <<README
+          libmelodica.so built from https://github.com/Spaceghost/melodica.h (${MELODICA_REV})
+          on $(lsb_release -ds) with $(gcc --version | head -1), glibc $(ldd --version | head -1 | awk '{print $NF}').
+          Platform: linux x86_64.
+
+          Install for pydora: copy libmelodica.so to ~/.local/lib/ or /usr/local/lib/,
+          or point MELODICA_LIBRARY at it.
+          README
+          tar -C stage -czf "out/$lib.tar.gz" "$lib"
+          src="pydora-${VERSION}-src"
+          mkdir -p "stage/$src"
+          git ls-files --recurse-submodules | tar -cf - -T - | tar -C "stage/$src" -xf -
+          tar -C stage -czf "out/$src.tar.gz" "$src"
+          cp dist/* out/
+          (cd out && sha256sum * > SHA256SUMS)
+          ls -l out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: out/
+          if-no-files-found: error
+
+  smoke:
+    # Prove the released artifacts, not the checkout: install the wheel and the
+    # libmelodica tarball from the build artifact into a clean venv, start
+    # pydora under a pty and record what it does. Evidence is uploaded and
+    # attached to the release as smoke-linux.{json,txt} and PNG transcripts.
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      MELODICA_LIBRARY: ''
+    steps:
+      # The driver scripts come from the workflow's own ref; the product under
+      # test comes only from the release-assets artifact.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/smoke
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: out/
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install a headless player and the transcript renderer
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq mpg123 imagemagick fonts-dejavu-core >/dev/null
+          mpg123 --version
+          mpg123 --list-modules | grep -q '^dummy' || { echo "mpg123 has no dummy output module" >&2; exit 1; }
+
+      - name: Install the released wheel and libmelodica into a fresh venv
+        id: install
+        run: |
+          set -eu
+          python -m venv "$HOME/pydora-venv"
+          "$HOME/pydora-venv/bin/pip" install --quiet out/pydora-*.whl
+          mkdir -p "$HOME/.local/lib"
+          tar -xzf out/libmelodica-*.tar.gz --strip-components=1 -C "$HOME/.local/lib" --wildcards '*/libmelodica.so'
+          ls -l "$HOME/.local/lib/libmelodica.so"
+          "$HOME/pydora-venv/bin/python" -c "import melodica, pandora; from pandora.melodica_backend import dumps; assert dumps({'a': 'b\"c'}) == '{\"a\":\"b\\\\\"c\"}'; print('pydora', pandora.__version__)"
+          "$HOME/pydora-venv/bin/pydora" --help >/dev/null
+          echo "wheel=$(cd out && ls pydora-*.whl)" >> "$GITHUB_OUTPUT"
+          echo "lib=$(cd out && ls libmelodica-*.tar.gz)" >> "$GITHUB_OUTPUT"
+
+      - name: Start a Pandora stand-in (melodica-tuner)
+        id: tuner
+        uses: Spaceghost/melodica-tuner@v1
+        with:
+          user: ci@example.com
+          password: ci-secret
+          hosts-override: "true"
+          install-ca: "true"
+
+      - name: Write pydora.cfg pointing at the tuner
+        env:
+          TUNER_USER: ${{ steps.tuner.outputs.user }}
+          TUNER_PASSWORD: ${{ steps.tuner.outputs.password }}
+          HTTPS_PORT: ${{ steps.tuner.outputs.https-port }}
+          HTTP_PORT: ${{ steps.tuner.outputs.http-port }}
+          CA: ${{ steps.tuner.outputs.ca-path }}
+        run: |
+          set -eu
+          # pydora uses https for the login/playlist methods and plain http for
+          # the rest on the same host:port, so the tuner has to sit on 443/80
+          # behind the hosts override; anything else cannot be reached by the
+          # released client unmodified.
+          if [ "$HTTPS_PORT" != 443 ] || [ "$HTTP_PORT" != 80 ]; then
+            echo "tuner bound $HTTPS_PORT/$HTTP_PORT instead of 443/80; pydora cannot reach both schemes" >&2
+            exit 1
+          fi
+          curl -fsS --cacert "$CA" https://tuner.pandora.com/__tuner/health; echo
+          # Keys are the public "pandora one" partner set (the one pydora-configure
+          # offers); it is the only partner Pandora, and the tuner, hands MP3 to,
+          # and mpg123 plays nothing else.
+          cat > "$HOME/pydora-smoke.cfg" <<CFG
+          [api]
+          api_host = tuner.pandora.com/services/json/
+          encryption_key = 2%3WCL*JU\$MP]4
+          decryption_key = U#IO\$RZPAB%VX2
+          partner_user = pandora one
+          partner_password = TVCKIBGS9AO9TSYLNNFUML0743LH82D
+          device = D01
+          audio_quality = highQuality
+          [user]
+          username = $TUNER_USER
+          password = $TUNER_PASSWORD
+          CFG
+
+      - name: Run pydora under a pty against the tuner
+        env:
+          TAG: ${{ needs.build.outputs.tag }}
+          WHEEL: ${{ steps.install.outputs.wheel }}
+          LIB: ${{ steps.install.outputs.lib }}
+          LOG_URL: ${{ steps.tuner.outputs.log-url }}
+          CA: ${{ steps.tuner.outputs.ca-path }}
+        run: |
+          set -eu
+          chmod +x .github/smoke/bin/mpg123
+          export PATH="$PWD/.github/smoke/bin:$HOME/pydora-venv/bin:$PATH"
+          # requests (pydora's API transport) and urllib (the melodica streaming
+          # cache that fetches the audio for the player) both need the tuner CA.
+          export REQUESTS_CA_BUNDLE="$CA" SSL_CERT_FILE="$CA"
+          export MELODICA_OFFLINE_DIR="$HOME/melodica-offline"
+          mkdir -p smoke
+          meta=$(printf '{"release":"%s","wheel":"%s","libmelodica":"%s","runner":"%s","python":"%s","player":"mpg123 -o dummy via .github/smoke/bin/mpg123 (decodes, no audio device)"}' \
+            "$TAG" "$WHEEL" "$LIB" "$ImageOS" "$(python --version | cut -d' ' -f2)")
+          python3 .github/smoke/run.py --out smoke --mode tuner \
+            --cfg "$HOME/pydora-smoke.cfg" --player-log "$PWD/smoke/player.log" \
+            --log-url "$LOG_URL" --ca "$CA" --timeout 150 --meta "$meta"
+
+      - name: Keep the tuner's own log with the evidence
+        if: always()
+        env:
+          WORK: ${{ steps.tuner.outputs.work-dir }}
+        run: |
+          cp "$WORK/tuner.log" smoke/tuner.log 2>/dev/null || true
+          test -f smoke/smoke-linux.json && cat smoke/smoke-linux.json || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-linux
+          path: smoke/
+          if-no-files-found: error
+
+  publish:
+    needs: [build, smoke]
+    if: github.event_name == 'push' || inputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: out/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: smoke-linux
+          path: smoke/
+
+      - name: Attach the smoke evidence and re-checksum
+        run: |
+          set -eu
+          cp smoke/smoke-linux.json smoke/smoke-linux.txt smoke/smoke-linux-*.png out/
+          (cd out && rm -f SHA256SUMS && sha256sum * > SHA256SUMS)
+          ls -l out
+
+      - name: Release notes
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          repo="${{ github.server_url }}/${{ github.repository }}"
+          dl="$repo/releases/download/${{ needs.build.outputs.tag }}"
+          whl=$(cd out && ls *.whl)
+          sdist=$(cd out && ls pydora-*.tar.gz | grep -v -- '-src.tar.gz')
+          lib=$(cd out && ls libmelodica-*.tar.gz)
+          cat > notes.md <<NOTES
+          Built from this mirror of [mcrute/pydora](https://github.com/mcrute/pydora) with
+          [melodica.h](https://github.com/Spaceghost/melodica.h) as the JSON/URL serializer
+          and offline-library backend. Not published to PyPI.
+
+          ## Install
+
+              pip install $dl/$whl
+
+          or from the sdist:
+
+              pip install $dl/$sdist
+
+          The Python package needs the melodica.h shared library at runtime. On Linux x86_64
+          download \`$lib\` and copy \`libmelodica.so\` to \`~/.local/lib/\` (or
+          \`/usr/local/lib/\`), or set \`MELODICA_LIBRARY=/path/to/libmelodica.so\`. On other
+          platforms build it from the \`-src\` archive: \`make -C vendor/melodica.h shared\`.
+
+          \`SHA256SUMS\` covers every asset.
+
+          ## Smoke test
+
+          \`smoke-linux.json\`, \`smoke-linux.txt\` and the \`smoke-linux-*.png\` transcripts are the
+          record of this release's wheel and libmelodica tarball being installed into a clean
+          venv on the release runner and \`pydora\` being driven under a pty (player: mpg123 with
+          the dummy output, so streams are fetched and decoded but nothing is heard). \`ok\` in
+          the JSON is true only when login, the station list and playback were all observed.
+          NOTES
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build.outputs.tag }}
+          name: pydora ${{ needs.build.outputs.version }} (melodica.h)
+          body_path: notes.md
+          files: out/*
+          fail_on_unmatched_files: true
