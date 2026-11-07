@@ -32,7 +32,7 @@ const TAB_ENGINE = !browser.offscreen and (browser.runtime.getManifest().backgro
 # back to the web app page, where a content script hands over the redirect address.
 const SIGNIN_PENDING_FOR = 10 * 60 * 1000
 let engineWaiters = []
-const SESSION_KEYS = {session: null, stations: [], player: null, log: []}
+const SESSION_KEYS = {session: null, stations: [], player: null, log: [], melodica: null}
 const PLAYER_IDLE = {status: 'idle', station: null, track: null, position: 0, duration: 0, volume: 80, quality: 'high', queueLength: 0, error: '', history: [], changedAt: 0}
 const PLAYER_ACTIONS = new Set(['play', 'resume', 'pause', 'toggle', 'next', 'love', 'ban', 'tired', 'sleep', 'stop', 'volume', 'quality'])
 const LOG_MAX = 200
@@ -67,6 +67,14 @@ const ACCESS_RETRY = 5 * 60 * 1000
 const ACCESS_DENIED = 'melodica access is by allow-list. Your request has been sent.'
 const ACCESS_UNAVAILABLE = 'The melodica access check is unavailable right now. Try again in a moment.'
 let access = {email: '', allowed: no, spots: yes, checkedAt: 0, message: '', error: ''}
+# docs/ACCOUNT.md: after the Pandora login, /oauth/melodica/login-ok returns a verified
+# melodica access token (12 h); with it (or the spacegho.st account's token)
+# /oauth/melodica/me names the user and /oauth/melodica/username changes the name.
+# Kept in session storage; never logged; no email is kept here.
+const MELODICA_IDLE = {token: '', exp: 0, username: '', chosen: no, suggested: '', notice: '', later: no}
+const MELODICA_TOKEN_FOR = 11 * 60 * 60 * 1000
+let melodica = Object.assign({}, MELODICA_IDLE)
+let melodicaAsking = null
 let accessChecking = null
 let accessBooted = no
 # Updates: the store feed is read at most every UPDATE_EVERY (on boot, then
@@ -108,6 +116,7 @@ def boot
 	catch e
 		note("permissions.getAll failed: {e and e.message or e}")
 	note("restored session for {client.user.email}") if client.restore(saved.session)
+	melodica = Object.assign({}, MELODICA_IDLE, saved.melodica) if saved.melodica and typeof saved.melodica === 'object'
 	if settings.remember and settings.email and settings.password
 		client.credentials = {email: settings.email, password: settings.password}
 	if saved.player and typeof saved.player === 'object'
@@ -226,7 +235,10 @@ def accountView
 	Object.assign({}, account)
 
 def setAccount patch
+	const joined = patch.signedIn === yes and !account.signedIn
 	account = Object.assign({}, account, patch, {checkedAt: Date.now()})
+	# Signing in with GitHub can rename the user (the GitHub login): ask again.
+	refreshMe(no).catch(do(e) null) if joined and state and state.client.loggedIn
 	broadcast({type: 'account', account: accountView()})
 	playerChanged(player)
 	account
@@ -449,11 +461,118 @@ def denyAccess
 	note('access: not allowed; signing out of Pandora')
 	await stopPlayback('melodica access withdrawn')
 	state.client.logout()
+	await setMelodica(MELODICA_IDLE)
 	await browser.storage.local.set({password: '', remember: no})
 	Object.assign(state.settings, {password: '', remember: no})
 	await persist()
 	await remember('stations', [])
 	playerChanged(player)
+
+# ---- the melodica username (docs/ACCOUNT.md, Usernames)
+
+const USERNAME_RE = /^[a-z0-9][a-z0-9_-]{1,22}[a-z0-9]$/
+const USERNAME_FORMAT = 'Use 3 to 24 letters, digits, - or _, starting and ending with a letter or digit.'
+
+def userView
+	{username: melodica.username, chosen: !!melodica.chosen, suggested: melodica.suggested, notice: melodica.notice, prompt: !!melodica.username and !melodica.chosen and !melodica.later}
+
+def setMelodica patch
+	melodica = Object.assign({}, melodica, patch)
+	await session.set({melodica}).catch(do(e) null)
+	playerChanged(player)
+
+# POST /oauth/melodica/login-ok with the Pandora session just accepted; spacegho.st
+# checks it with Pandora and returns the verified melodica token and the username.
+def melodicaLogin email, prompt = no
+	return await melodicaAsking if melodicaAsking
+	melodicaAsking = runMelodicaLogin(email, prompt)
+	try
+		return await melodicaAsking
+	finally
+		melodicaAsking = null
+
+def runMelodicaLogin email, prompt
+	const client = state and state.client
+	return no unless client and client.loggedIn and client.user and client.partner and email
+	const base = await accountBase()
+	const headers = {'content-type': 'application/json'}
+	const bearer = await accountBearer()
+	headers.authorization = "Bearer {bearer}" if bearer
+	const body = {email, client: 'extension', pandora: {userAuthToken: client.user.authToken, userId: client.user.id, partnerId: String(client.partner.id), syncTimeOffset: Number(state.core.syncOffset) or 0}}
+	const res = await fetch("{base}/oauth/melodica/login-ok", {method: 'POST', headers, body: JSON.stringify(body), credentials: 'omit', cache: 'no-store'})
+	let out = null
+	try
+		out = await res.json()
+	catch e
+		out = null
+	note("login-ok: HTTP {res.status}")
+	return no unless res.status === 200 and out and typeof out.token === 'string' and out.token
+	const patch = {token: out.token, exp: Date.now() + MELODICA_TOKEN_FOR}
+	if typeof out.username === 'string' and out.username
+		patch.username = out.username
+		patch.chosen = out.username_chosen === yes
+	patch.later = no if prompt
+	await setMelodica(patch)
+	await refreshMe(no)
+	yes
+
+# The bearer for /me and /username: the spacegho.st account's token when signed in,
+# else the melodica token from login-ok (asked again once it is old).
+def melodicaBearers
+	const out = []
+	const own = await accountBearer()
+	out.push({kind: 'account', token: own}) if own
+	if !(melodica.token and melodica.exp > Date.now()) and state and state.client.loggedIn
+		const email = state.client.user and state.client.user.email or ''
+		try
+			await melodicaLogin(email) if email
+		catch e
+			null
+	out.push({kind: 'melodica', token: melodica.token}) if melodica.token and melodica.exp > Date.now()
+	out
+
+def melodicaCall path, init = {}
+	const base = await accountBase()
+	for b in await melodicaBearers()
+		let res = null
+		try
+			res = await fetch("{base}{path}", Object.assign({}, init, {headers: Object.assign({authorization: "Bearer {b.token}"}, init.headers or {}), credentials: 'omit', cache: 'no-store'}))
+		catch e
+			return {status: 0, body: null}
+		let body = null
+		try
+			body = await res.json()
+		catch e
+			body = null
+		body = null unless body and typeof body === 'object'
+		const gone = (res.status === 401 and body and body.error === 'invalid_token') or (res.status === 404 and body and body.error === 'unknown_user')
+		if gone and b.kind === 'melodica'
+			await setMelodica({token: '', exp: 0})
+		continue if gone and b.kind === 'account'
+		return {status: res.status, body}
+	{status: 401, body: {error: 'invalid_token'}}
+
+def refreshMe prompt = no
+	const r = await melodicaCall('/oauth/melodica/me')
+	note("me: HTTP {r.status}")
+	const b = r.body
+	return no unless r.status === 200 and b and typeof b.username === 'string' and b.username
+	const patch = {username: b.username, chosen: b.username_chosen === yes, suggested: typeof b.suggested === 'string' ? b.suggested : '', notice: typeof b.notice === 'string' ? b.notice : ''}
+	patch.later = no if prompt or patch.notice
+	await setMelodica(patch)
+	yes
+
+def setUsername raw
+	const name = raw.trim().toLowerCase()
+	throw new PandoraError(USERNAME_FORMAT, null, 0, 'username') unless USERNAME_RE.test(name)
+	const r = await melodicaCall('/oauth/melodica/username', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({username: name})})
+	note("username: HTTP {r.status}")
+	const b = r.body or {}
+	if r.status === 200 and typeof b.username === 'string' and b.username
+		await setMelodica({username: b.username, chosen: yes, notice: '', suggested: '', later: no})
+		return userView()
+	const text = typeof b.error_description === 'string' and b.error_description ? b.error_description : (r.status === 0 ? 'The username service is unavailable; try again.' : (r.status === 401 or r.status === 404 ? 'Your melodica session has ended; log in again.' : "The username was not saved (HTTP {r.status})."))
+	throw new PandoraError(text, null, 0, 'username')
 
 def persist
 	await session.set({session: state.client.loggedIn ? state.client.snapshot() : null})
@@ -503,7 +622,7 @@ def openPlayer
 
 # What every view gets: the engine's state plus the session bits a view needs.
 def playerView
-	Object.assign({}, player, {stations: state and state.saved.stations or [], loggedIn: !!(state and state.client.loggedIn), account: {signedIn: account.signedIn, label: account.label}, access: {allowed: !!access.allowed, message: access.allowed ? '' : String(access.message or '')}})
+	Object.assign({}, player, {stations: state and state.saved.stations or [], loggedIn: !!(state and state.client.loggedIn), account: {signedIn: account.signedIn, label: account.label}, user: userView(), access: {allowed: !!access.allowed, message: access.allowed ? '' : String(access.message or '')}})
 
 def publicTrack song
 	return null unless song
@@ -828,9 +947,12 @@ def handle msg, sender
 			const stations = await client.stations()
 			await remember('stations', stations)
 			playerChanged(player)
+			# Not awaited: the username never holds up playback.
+			melodicaLogin(email, yes).catch(do(e) note("login-ok failed: {e and e.message or e}"))
 			{email, stations}
 		when 'logout'
 			client.logout()
+			await setMelodica(MELODICA_IDLE)
 			await browser.storage.local.set({password: '', remember: no})
 			Object.assign(state.settings, {password: '', remember: no})
 			await persist()
@@ -846,6 +968,14 @@ def handle msg, sender
 			{stations}
 		when 'open-login'
 			{opened: await openLogin()}
+		when 'username-me'
+			await refreshMe(no)
+			{user: userView()}
+		when 'username-set'
+			{user: await setUsername(String(msg.username or ''))}
+		when 'username-later'
+			await setMelodica({later: yes})
+			{user: userView()}
 		when 'playlist'
 			const station = stationByToken(msg.stationToken) or {token: msg.stationToken, name: ''}
 			const quality = QUALITIES.includes(msg.quality) ? msg.quality : state.settings.quality

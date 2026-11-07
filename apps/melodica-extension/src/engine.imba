@@ -68,8 +68,13 @@ export class Engine
 
 	def resume
 		if state.track and audio.src
+			# Report "playing" at once (views and the web page update without
+			# waiting for the element's play event); a refused play reverts it.
+			set({status: 'playing', error: ''}) if audio.paused
 			const p = audio.play()
-			p.catch(do(e) null) if p and p.catch
+			if p and p.catch
+				p.catch do(e)
+					set({status: 'paused'}) if audio.paused and state.status === 'playing'
 		elif state.station
 			await next()
 		else

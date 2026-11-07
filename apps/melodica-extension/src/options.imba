@@ -3,7 +3,7 @@
 
 import { browser, loadSettings, saveSettings, normalizeEndpoint, SETTINGS_DEFAULTS, send } from './shared.imba'
 import { ACCOUNT_BASE, normalizeAccountBase } from './account.imba'
-import { AccountLine, UpdateBanner, Top, Foot, Mark } from './ui.imba'
+import { AccountLine, UpdateBanner, Top, Foot, Mark, UsernameChange } from './ui.imba'
 
 const DIAG_LINES = 50
 
@@ -29,6 +29,7 @@ tag Options
 	prop accountBase = ACCOUNT_BASE
 	prop accountBusy = no
 	prop update = null
+	prop user = null
 	# The form is shown only once the stored settings are in; a value typed
 	# before that would be overwritten when they arrived (seen in Brave, where
 	# the page is interactive before storage answers).
@@ -57,6 +58,10 @@ tag Options
 		if msg and msg.type === 'update'
 			update = msg.update
 			imba.commit()
+		if msg and msg.type === 'player-state' and msg.state and msg.state.user
+			const was = user and user.username
+			user = msg.state.user
+			imba.commit() if user.username !== was
 		no
 
 	def reloadExtension
@@ -83,6 +88,7 @@ tag Options
 			accountBase = normalizeAccountBase(got.accountBase)
 			account = (await send({type: 'account'})).account
 			update = (await send({type: 'update'})).update
+			user = (await send({type: 'username-me'})).user
 		catch e
 			account = null
 
@@ -210,6 +216,9 @@ tag Options
 									if accountBase !== ACCOUNT_BASE
 										<p.fine#options-accountbase> "Account server overridden (storage key accountBase): {accountBase}. Default: {ACCOUNT_BASE}"
 									<AccountLine account=account busy=accountBusy @signin=accountAction('account-signin') @signout=accountAction('account-signout')>
+									if user and user.username
+										<p.fine#options-username> "Your melodica username: {user.username}"
+										<UsernameChange user=user>
 								<section.panel.ext-form>
 									<h3> "Updates"
 									<p.fine#options-update> "Firefox and .crx or policy installs update themselves from the feeds on spacegho.st/extensions; an unpacked zip only gets the banner. Running {update and update.current or version}; the store serves {update and update.latest or 'unknown'}{update and update.checkedAt ? ', checked ' + new Date(update.checkedAt).toLocaleString() : ''}."

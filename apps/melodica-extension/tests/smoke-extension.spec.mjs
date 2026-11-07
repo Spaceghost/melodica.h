@@ -237,6 +237,7 @@ test.afterAll(async () => {
     extension: report.extension,
     access: report.access,
     account: report.account,
+    username: report.username,
     spots: report.spots,
     update: report.update,
     audio: report.audio,
@@ -409,6 +410,38 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     expect(names, 'the fixture station').toContain('Aurora Fields Radio');
     step('stations listed');
     await popup.screenshot({ path: shot('stations') });
+
+    // Username (docs/ACCOUNT.md, Usernames): login-ok with the Pandora session, then
+    // "Pick a username" while the name is generated; the server's 409 shows inline.
+    const pick = popup.locator('#username-pick-form');
+    await expect(pick).toBeVisible({ timeout: 30_000 });
+    const generated = (await popup.locator('#username-pick-current').textContent()).trim();
+    expect(generated, 'a generated name until one is picked').toMatch(/^listener-/);
+    expect(acct.loginOks.at(-1), 'login-ok sent the Pandora session').toEqual({ client: 'extension', pandora: true });
+    await expect(popup.locator('#signed-in')).toHaveText(generated);
+    expect(await popup.locator('body').textContent(), 'the login email is never shown').not.toContain(tuner.user);
+    await popup.fill('#username-pick-input', 'taken_name');
+    await popup.click('#username-pick-save');
+    await expect(popup.locator('#username-pick-message')).toHaveText('That username is taken.');
+    await popup.screenshot({ path: shot('username-pick') });
+    await popup.fill('#username-pick-input', 'Night_Owl');
+    await popup.click('#username-pick-save');
+    await expect(pick).toHaveCount(0);
+    await expect(popup.locator('#signed-in')).toHaveText('night_owl');
+    const optsU = await context.newPage();
+    await optsU.goto(`chrome-extension://${id}/options.html`);
+    await expect(optsU.locator('#options-username')).toHaveText('Your melodica username: night_owl', { timeout: 30_000 });
+    await optsU.fill('#username-change-input', 'x');
+    await optsU.click('#username-change-save');
+    await expect(optsU.locator('#username-change-message')).toHaveText(/^Use 3 to 24 letters/);
+    await optsU.fill('#username-change-input', 'night_owl_2');
+    await optsU.click('#username-change-save');
+    await expect(optsU.locator('#username-change-message')).toHaveText('Saved.');
+    await expect(optsU.locator('#options-username')).toHaveText('Your melodica username: night_owl_2');
+    await expect(popup.locator('#signed-in')).toHaveText('night_owl_2');
+    await optsU.close();
+    report.username = { generated: true, taken: 'That username is taken.', chosen: 'night_owl', changed: 'night_owl_2' };
+    step('username picked and changed');
 
     // 3. Start a station from the popup. No tab opens: the background plays it in
     //    its offscreen document (chrome.offscreen, AUDIO_PLAYBACK) and the popup is

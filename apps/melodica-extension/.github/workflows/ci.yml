@@ -375,6 +375,9 @@ jobs:
           for f in smoke-extension.json smoke-brave.json smoke-firefox.json; do
             node -e 'const f=process.argv[1]; const u=require("./"+f).update; if (f!=="smoke-firefox.json" && (!u || !u.banner || !/99\.0\.0 is available/.test(u.banner.text))) { console.error(f+": update banner missing"); process.exit(1); } const d=(require("./"+f).spots||{}).defaultPolicy; if (!d || !(d.metadataFetched>0) || !(d.audioFetched>0) || !(d.registered>0) || d.nextRefused!==true) { console.error(f+": ad playback not proven"); process.exit(1); } const ac=require("./"+f).access; if (!ac || !ac.notListed || ac.notListed.userLogin!==0 || !ac.withdrawn || ac.withdrawn.loggedIn!==false) { console.error(f+": access check not proven"); process.exit(1); } const acc=require("./"+f).account; if (!acc || acc.label!=="octo-ci") { console.error(f+": spacegho.st sign-in not proven"); process.exit(1); } console.log(f+": ad fetched, played and registered; access and sign-in ok")' "$f"
           done
+          for f in smoke-extension.json smoke-brave.json; do
+            node -e 'const f=process.argv[1]; const u=require("./"+f).username; if (!u || u.chosen!=="night_owl" || u.changed!=="night_owl_2") { console.error(f+": username not proven"); process.exit(1); } console.log(f+": username picked and changed")' "$f"
+          done
           sha256sum smoke-extension.json smoke-extension-*.png smoke-brave.json smoke-brave-*.png smoke-firefox.json smoke-firefox-*.png smoke-firefox-node-probe.json >> SHA256SUMS
           cat SHA256SUMS
       - uses: softprops/action-gh-release@v2
@@ -404,6 +407,7 @@ jobs:
             smoke-extension-options-2560.png
             smoke-extension-options.png
             smoke-extension-bridge.png
+            smoke-extension-username-pick.png
             smoke-brave.json
             smoke-brave-ad.png
             smoke-brave-access-request.png

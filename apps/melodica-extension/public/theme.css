@@ -476,3 +476,9 @@ html.ext-player .login, html.ext-options .login { width: 100%; max-width: calc(v
 .now { position: relative; isolation: isolate; overflow: hidden; }
 html.ext-popup .brand { white-space: nowrap; }
 html.ext-popup .top-right { flex-wrap: nowrap; }
+/* "Pick a username" card and the options page's "Change username" row. */
+.ext-username-pick { padding: 1rem 1.1rem; margin-bottom: 12px; }
+.ext-username-pick h3 { font-size: 1.3rem; margin-bottom: 0.3rem; }
+.ext-username-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.4rem; }
+.ext-username-row { display: flex; gap: 0.5rem; }
+.ext-username-row input { flex: 1; min-width: 0; }

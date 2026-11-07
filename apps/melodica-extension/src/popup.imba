@@ -3,7 +3,7 @@
 # page is a view of the background's player state and sends it commands.
 
 import { browser, send } from './shared.imba'
-import { Login, StationList, NowPlaying, Transport, AccountLine, UpdateBanner, Top, Foot } from "./ui.imba"
+import { Login, StationList, NowPlaying, Transport, AccountLine, UpdateBanner, Top, Foot, UsernamePick } from "./ui.imba"
 
 tag Popup
 	prop view = 'loading'
@@ -162,6 +162,9 @@ tag Popup
 		message = text
 		kind = k
 
+	get user
+		player and player.user or {}
+
 	get now
 		return null unless player and player.track
 		{song: player.track, station: player.station, paused: player.status !== 'playing', position: player.position, duration: player.duration}
@@ -194,8 +197,10 @@ tag Popup
 						<Login busy=busy message=message kind=kind @login=login>
 					else
 						<div.ext-account>
-							<span#signed-in> "Signed in"
+							<span#signed-in> (user.username or "Signed in")
 							<button#logout type="button" @click=logout> "Sign out"
+						if user.prompt
+							<UsernamePick user=user>
 						<div.card.now.ext-compact>
 							<NowPlaying now=now compact=yes>
 							<Transport now=now @control=control>

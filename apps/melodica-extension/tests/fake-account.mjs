@@ -43,6 +43,17 @@ export function createAccountServer({ issuer = 'https://spacegho.st', accessTtl 
   const access = new Map(); // token -> {id, exp}
   const calls = [];
   const tokens = { issued: 0, refreshed: 0, revoked: 0, refused: 0 };
+  // Usernames per login (generated until chosen), names already held by others,
+  // melodica tokens from login-ok, and every login-ok / username call.
+  const users = new Map();
+  const takenNames = new Set(['octo-ci', 'taken_name']);
+  const melodicaTokens = new Map();
+  const loginOks = [];
+  const usernameCalls = [];
+  const userOf = (email) => {
+    if (!users.has(email)) users.set(email, { username: `listener-${sha(email).slice(0, 6).toLowerCase().replace(/[^a-z0-9]/g, '0')}`, chosen: false, suggested: '' });
+    return users.get(email);
+  };
 
   const jwt = (claims) => `${b64u(JSON.stringify({ alg: 'ES256', typ: 'at+jwt' }))}.${b64u(JSON.stringify(claims))}.${rand(16)}`;
   const issue = (id, clientId, scope) => {
@@ -164,6 +175,43 @@ export function createAccountServer({ issuer = 'https://spacegho.st', accessTtl 
       if (!entry) return json(res, 200, { allowed: false, plus: false, message: 'melodica access is by allow-list. Your request has been sent.' });
       return json(res, 200, { allowed: true, plus: !(entry.spots && (!a || a.spots)), token: jwt({ iss: issuer, sub: `melodica:${email}`, iat: Math.floor(Date.now() / 1000) }) });
     }
+    // login-ok: the Pandora session must be present (the real Worker checks it with
+    // Pandora); answers a verified melodica token and the user's username.
+    if (p === '/oauth/melodica/login-ok' && req.method === 'POST') {
+      let q = null;
+      try { q = JSON.parse(body); } catch { q = null; }
+      const email = q && typeof q.email === 'string' ? q.email.trim().toLowerCase() : '';
+      const pd = q && q.pandora;
+      const ok = pd && typeof pd.userAuthToken === 'string' && pd.userAuthToken && typeof pd.userId === 'string' && pd.userId
+        && typeof pd.partnerId === 'string' && pd.partnerId && Number.isInteger(pd.syncTimeOffset);
+      loginOks.push({ client: q && q.client, pandora: !!ok });
+      if (!email || !ok) return json(res, 400, { error: 'invalid_request' });
+      if (!allowList.has(email)) return json(res, 403, { error: 'not_allowed', error_description: 'Not allowed.' });
+      const u = userOf(email);
+      const now = Math.floor(Date.now() / 1000);
+      const t = jwt({ iss: issuer, sub: `melodica:${sha(email)}`, iat: now, exp: now + 12 * 3600 });
+      melodicaTokens.set(t, email);
+      return json(res, 200, { ok: true, plus: !allowList.get(email).spots, token: t, username: u.username, username_chosen: u.chosen, scrobbling: false });
+    }
+    if (p === '/oauth/melodica/me' || (p === '/oauth/melodica/username' && req.method === 'POST')) {
+      const m = /^Bearer (.+)$/.exec(req.headers.authorization || '');
+      const email = m && melodicaTokens.get(m[1]);
+      const u = email ? userOf(email) : null;
+      if (!u) return json(res, 401, { error: 'invalid_token' });
+      usernameCalls.push({ path: p, bearer: 'melodica' });
+      if (p === '/oauth/melodica/me') {
+        return json(res, 200, { username: u.username, username_chosen: u.chosen, github: null, scrobbling: false, ...(u.suggested ? { suggested: u.suggested } : {}) });
+      }
+      let q = null;
+      try { q = JSON.parse(body); } catch { q = null; }
+      const name = q && typeof q.username === 'string' ? q.username.trim().toLowerCase() : '';
+      if (!/^[a-z0-9][a-z0-9_-]{1,22}[a-z0-9]$/.test(name) || /^listener-|melodica|pandora|spaceghost/.test(name)) {
+        return json(res, 422, { error: 'username_invalid', reason: 'format', error_description: 'That username is not allowed.' });
+      }
+      if (takenNames.has(name)) return json(res, 409, { error: 'username_taken', error_description: 'That username is taken.' });
+      Object.assign(u, { username: name, chosen: true });
+      return json(res, 200, { username: name, username_chosen: true });
+    }
     if (p === '/oauth/melodica/policy') {
       if (!req.headers.authorization) return json(res, 200, { playback: { plus: false }, display: { name: null } });
       const a = bearer(req);
@@ -174,7 +222,7 @@ export function createAccountServer({ issuer = 'https://spacegho.st', accessTtl 
   }
 
   return {
-    issuer, accounts, calls, tokens, requests, handle,
+    issuer, accounts, calls, tokens, requests, handle, users, loginOks, usernameCalls,
     allow(email, { ads = true } = {}) { allowList.set(String(email).trim().toLowerCase(), { ads: !!ads }); },
     disallow(email) { allowList.delete(String(email).trim().toLowerCase()); },
     setSlots(which, slots) { accounts[which].spots = !!slots; },

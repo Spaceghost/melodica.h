@@ -3,7 +3,7 @@
 # it stops nothing. It renders `player-state` and sends `player` commands.
 
 import { browser, send, FALLBACK_COVER } from './shared.imba'
-import { StationList, NowPlaying, Transport, AccountLine, UpdateBanner, Top, Foot } from './ui.imba'
+import { StationList, NowPlaying, Transport, AccountLine, UpdateBanner, Top, Foot, UsernamePick } from './ui.imba'
 
 # While this page is open the background is asked for the account's policy this
 # often; it asks spacegho.st again once its last answer is an hour old.
@@ -176,6 +176,9 @@ tag Player
 			when 't' then control('tired')
 			when 'e' then explain()
 
+	get user
+		player and player.user or {}
+
 	get now
 		return null unless player and player.track
 		{song: player.track, station: player.station, paused: player.status !== 'playing', position: player.position, duration: player.duration}
@@ -195,7 +198,7 @@ tag Player
 			<Top label="player">
 				if loggedIn
 					<div.ext-account>
-						<span#status> "Signed in"
+						<span#status> (user.username or "Signed in")
 						<button#logout type="button" @click=logout> "Sign out"
 				else
 					<span#status.fine> "Not signed in"
@@ -214,6 +217,8 @@ tag Player
 							<aside.ext-side>
 								<StationList stations=stations active=(player and player.station and player.station.token) @select=select @refresh=reload @delete=remove>
 							<section.ext-main>
+								if user.prompt
+									<UsernamePick user=user>
 								<div.card.now>
 									<NowPlaying now=now>
 									<Transport now=now @control=control(e.detail)>

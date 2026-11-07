@@ -90,6 +90,17 @@ never change), and the code is exchanged at `/oauth/token`. The tokens live in
 sign-out revokes it. While signed in, the access token goes as the bearer to
 `/oauth/melodica/access` and `/oauth/melodica/policy`, which are asked at boot and
 hourly. The account line shows the account's display name, or "Signed in".
+
+Usernames (docs/ACCOUNT.md, Usernames): right after Pandora accepts the login, the
+background posts the Pandora session to `/oauth/melodica/login-ok`, which checks it
+with Pandora and returns a verified melodica token (kept in session storage) and the
+username. The popup and player tab show the username where they said "Signed in";
+while it is a generated `listener-…` name, a "Pick a username" card offers to change
+it (prefilled with the GitHub login when one is suggested; "Not now" hides it until
+the next login), and the options page has a "Change username" field. The server's
+answers (taken, not allowed, locked, rate limited) show under the field. `/me` and
+`/username` take the spacegho.st account's token when signed in, else the melodica
+token. No email is shown or kept for this.
 `src/account.imba` holds the PKCE, redirect, token and policy parsing
 (`tests/account.test.mjs`); `src/bg.imba` holds the flows. On Safari the sign-in
 opens in a tab (client `melodica-ios`, redirect `https://spacegho.st/melodica/app/`)

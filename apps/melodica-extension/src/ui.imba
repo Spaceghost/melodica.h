@@ -4,7 +4,7 @@
 # the .now card with .stage / .controls / button.round, .panel, .station-list.
 # No scoped css here: the look is the shared stylesheet's.
 
-import { FALLBACK_COVER, fmtTime } from './shared.imba'
+import { FALLBACK_COVER, fmtTime, send } from './shared.imba'
 
 # The concentric-rings mark of the sign-in cards.
 export tag Mark
@@ -194,3 +194,83 @@ export tag Transport
 				<button#tired.round type="button" title="Tired of this song (a month off)" aria-label="Tired" disabled=fixed @click=emit('control', 'tired')>
 					<svg aria-hidden="true" viewBox="0 0 24 24">
 						<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z">
+
+# "Pick a username" (docs/ACCOUNT.md, Usernames): shown while the name is a generated
+# one, until it is saved or "Not now" (asked again at a later login). The server's
+# 409/422/423/429 text is shown under the field. Names render as text only.
+export tag UsernamePick
+	prop user = null
+	prop name = null
+	prop busy = no
+	prop error = ''
+
+	def save
+		busy = yes
+		error = ''
+		try
+			await send({type: 'username-set', username: String(name === null ? (user and user.suggested or '') : name)})
+			name = null
+		catch e
+			error = String(e and e.message or e)
+		busy = no
+		imba.commit()
+
+	def later
+		try
+			await send({type: 'username-later'})
+		catch e
+			null
+
+	def render
+		const u = user or {}
+		name = u.suggested or '' if name === null
+		<self.card.ext-username-pick>
+			<form#username-pick-form autocomplete="off" @submit.prevent=save>
+				<h3#username-pick-head> "Pick a username"
+				if u.notice === 'renamed_github'
+					<p#username-pick-notice.warn role="status"> "Your earlier username belonged to a GitHub account and went to that account. Pick a new one."
+				<p.fine>
+					"It is the name melodica shows for you. Until you pick one, you are "
+					<b#username-pick-current> u.username
+					"."
+				<label.field>
+					<span> "Username"
+					<input#username-pick-input type="text" autocapitalize="none" spellcheck="false" maxlength="24" bind=name>
+				<p#username-pick-message.message .error=!!error role="status"> error
+				<div.ext-username-actions>
+					<button#username-pick-later.quiet type="button" disabled=busy @click=later> "Not now"
+					<button#username-pick-save.primary type="submit" disabled=busy> (busy ? "Saving…" : "Save")
+
+# "Change username" on the options page.
+export tag UsernameChange
+	prop user = null
+	prop name = null
+	prop busy = no
+	prop message = ''
+	prop kind = ''
+
+	def save
+		busy = yes
+		message = ''
+		try
+			await send({type: 'username-set', username: String(name or '')})
+			name = null
+			message = 'Saved.'
+			kind = 'info'
+		catch e
+			message = String(e and e.message or e)
+			kind = 'error'
+		busy = no
+		imba.commit()
+
+	def render
+		const u = user or {}
+		name = u.username or '' if name === null
+		<self.ext-username-change>
+			<form#username-change autocomplete="off" @submit.prevent=save>
+				<label.field>
+					<span> "Change username"
+					<div.ext-username-row>
+						<input#username-change-input type="text" autocapitalize="none" spellcheck="false" maxlength="24" bind=name>
+						<button#username-change-save type="submit" disabled=busy> (busy ? "Saving…" : "Save")
+				<p#username-change-message.message .error=(kind === 'error') .info=(kind === 'info') role="status"> message
