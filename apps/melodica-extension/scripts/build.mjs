@@ -156,11 +156,17 @@ for (const name of await readdir(resolve(root, 'src'))) {
 const manifest = JSON.parse(await readFile(resolve(root, 'public/manifest.json'), 'utf8'));
 manifest.version = version.replace(/-.*$/, '');
 manifest.version_name = version;
+// Self-hosted update feeds on spacegho.st/extensions (written by extensions-site's sync).
+// Chrome ignores update_url for an unpacked load (the CI smoke), honours it for a .crx
+// installed by policy; Firefox reads gecko.update_url for a self-hosted .xpi.
+const STORE = 'https://spacegho.st/extensions/dl/melodica-extension';
 const chrome = structuredClone(manifest);
 delete chrome.browser_specific_settings;
 delete chrome.background.scripts;
+chrome.update_url = `${STORE}/update.xml`;
 const firefox = structuredClone(manifest);
 delete firefox.version_name;
+firefox.browser_specific_settings.gecko.update_url = `${STORE}/updates.json`;
 
 for (const [name, m] of [['chrome', chrome], ['firefox', firefox]]) {
   const dir = resolve(dist, name);
