@@ -94,10 +94,10 @@ jobs:
           else
             xpi_note="**Not signed by Mozilla** (this repository has no AMO credentials). Release Firefox refuses unsigned add-ons; it installs on Firefox Developer Edition, Nightly or ESR with \`xpinstall.signatures.required\` set to \`false\` in about:config, or temporarily (until Firefox quits) through about:debugging → This Firefox → Load Temporary Add-on."
           fi
-          crx_note="CRX3 of the Chrome build, signed with this repository's key; Chrome extension id \`$CRX_ID\`, update feed \`https://spacegho.st/extensions/dl/melodica-extension/update.xml\` (the \`update_url\` in its manifest). On Linux: chrome://extensions → Developer mode on → drag the file onto the page. Windows and macOS Chrome/Edge block off-store .crx installs unless an enterprise policy allows them (\`ExtensionInstallSources\` + \`ExtensionInstallForcelist\` pointing at that update.xml); otherwise use the unpacked zip."
+          crx_note="CRX3 of the Chrome build, signed with this repository's key; Chrome extension id \`$CRX_ID\`, update feed \`https://spacegho.st/extensions/dl/melodica-extension/update.xml\` (the \`update_url\` in its manifest). On Linux: chrome://extensions (brave://extensions, edge://extensions) → Developer mode on → drag the file onto the page. Windows and macOS Chrome, Edge and Brave block off-store .crx installs unless an enterprise policy allows them (\`ExtensionInstallSources\` + \`ExtensionInstallForcelist\` pointing at that update.xml; Brave honours the same Chromium policies); otherwise use the unpacked zip."
           [[ -f release/melodica-extension-$v.crx ]] || crx_note="not built in this run (no CRX_PRIVATE_KEY)."
           {
-            echo "melodica-extension $v: a Pandora WebExtension for Chrome and Firefox (Manifest V3)."
+            echo "melodica-extension $v: a Pandora WebExtension for Chrome, Brave and Firefox (Manifest V3)."
             echo
             echo "UI and extension scripts are written in [Imba](https://imba.io) and bundled to plain ES modules; the protocol core (Blowfish with Pandora's public partner keys, hex, syncTime, the JSON v5 request envelope) is freestanding [Nelua](https://github.com/Spaceghost/nelua-lang) compiled to WebAssembly with no imports. The extension talks to \`tuner.pandora.com\` directly through its host permission, so no relay sees the login, and it bridges the web client at https://spacegho.st/melodica/app/ so that page can skip its relay too."
             echo
@@ -107,15 +107,16 @@ jobs:
             echo
             echo "- \`melodica-extension-$v.xpi\`: the Firefox add-on (Firefox shows its install prompt when served as application/x-xpinstall; gecko id \`melodica-extension@spacegho.st\`, update feed \`https://spacegho.st/extensions/dl/melodica-extension/updates.json\`). $xpi_note"
             echo "- \`melodica-extension-$v.crx\`: $crx_note"
-            echo "- \`melodica-extension-$v-chrome.zip\`: unpacked extension for Chrome/Chromium/Edge. Unzip, then chrome://extensions (edge://extensions) → Developer mode → Load unpacked."
+            echo "- \`melodica-extension-$v-chrome.zip\`: unpacked extension for Chrome/Chromium/Edge/Brave. Unzip, then chrome://extensions (edge://extensions, brave://extensions) → Developer mode → Load unpacked. Brave uses this Chrome build unchanged."
             echo "- \`melodica-extension-$v-firefox.zip\`: the same build with \`browser_specific_settings\` for Firefox (identical bytes to the unsigned .xpi). Unzip, then about:debugging → This Firefox → Load Temporary Add-on (pick manifest.json), or \`web-ext run --source-dir\`."
             echo "- \`melodica-extension-$v-src.tar.gz\`: source tree."
             echo "- \`SHA256SUMS\`"
-            echo "- \`smoke-extension.json\`, \`smoke-extension-login.png\`, \`smoke-extension-stations.png\`, \`smoke-extension-playing.png\`, \`smoke-extension-bridge.png\`: the proof below."
+            echo "- \`smoke-extension.json\`, \`smoke-extension-login.png\`, \`smoke-extension-stations.png\`, \`smoke-extension-playing.png\`, \`smoke-extension-bridge.png\`: the Chromium proof below."
+            echo "- \`smoke-brave.json\`, \`smoke-brave-login.png\`, \`smoke-brave-stations.png\`, \`smoke-brave-playing.png\`, \`smoke-brave-bridge.png\`: the same proof in Brave (its \`browser\` field is the Brave version the job installed)."
             echo
             echo "## Proof"
             echo
-            echo "The \`smoke\` job of this release's workflow loaded this exact Chrome build unpacked into Playwright's Chromium (headed under xvfb) against [melodica-tuner](https://github.com/Spaceghost/melodica-tuner), a stand-in tuner.pandora.com: set the endpoint on the options page, signed in from the popup, listed the fixture's stations, started a station (the player tab opened and the \`<audio>\` element played), and bridged an \`auth.partnerLogin\` for the melodica-web page served locally as https://spacegho.st. \`smoke-extension.json\` is the report. This proves the extension against the tuner, not against Pandora; the Firefox build was linted with web-ext, not run; the .xpi and .crx files were packaged from the same dist/ but no job installed them in a browser. Nothing is published to the Chrome Web Store or AMO listings."
+            echo "The \`smoke\` job of this release's workflow loaded this exact Chrome build unpacked into Playwright's Chromium (headed under xvfb) against [melodica-tuner](https://github.com/Spaceghost/melodica-tuner), a stand-in tuner.pandora.com: set the endpoint on the options page, signed in from the popup, listed the fixture's stations, started a station (the player tab opened and the \`<audio>\` element played), and bridged an \`auth.partnerLogin\` for the melodica-web page served locally as https://spacegho.st. \`smoke-extension.json\` is the report. The \`smoke-brave\` job repeated every step in Brave (the current stable from Brave's apt repository, Shields at their defaults) with the same Chrome build; \`smoke-brave.json\` is its report and its \`blocked\` list holds every request Brave refused (none of them may be the extension's, the tuner's or the page's, or the job fails). This proves the extension against the tuner, not against Pandora; the Firefox build was linted with web-ext, not run; the .xpi and .crx files were packaged from the same dist/ but no job installed them in a browser. Nothing is published to the Chrome Web Store, AMO listings or any Brave listing."
           } > release/RELEASE_BODY.md
           ls -l release
       - uses: actions/upload-artifact@v4
@@ -181,8 +182,69 @@ jobs:
           path: tests/artifacts/playwright/
           if-no-files-found: ignore
 
+  # The same proof in Brave (installed from Brave's apt repository, unpinned, so the
+  # job sees whatever Brave ships today) with Shields at their defaults. The report
+  # lists every request Brave blocked; the job fails if one of them was ours.
+  smoke-brave:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-${{ needs.build.outputs.version }}
+          path: dist
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Brave (brave-browser-apt-release.s3.brave.com) and Playwright
+        timeout-minutes: 15
+        run: |
+          sudo curl -fsSLo /usr/share/keyrings/brave-browser-archive-keyring.gpg https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg] https://brave-browser-apt-release.s3.brave.com/ stable main" | sudo tee /etc/apt/sources.list.d/brave-browser-release.list
+          for i in 1 2 3 4 5; do sudo apt-get update -qq && sudo apt-get install -y -qq brave-browser xvfb && break; sleep 20; done
+          brave-browser --version
+          npm install --no-audit --no-fund
+      - uses: Spaceghost/melodica-tuner@v1
+        id: tuner
+        with:
+          user: ci@example.com
+          password: ci-secret
+          hosts-override: false
+          install-ca: false
+      - name: Browser smoke test (built extension in Brave, melodica-tuner)
+        run: xvfb-run -a --server-args="-screen 0 1280x800x24" npx playwright test
+        env:
+          TUNER_HTTPS_URL: ${{ steps.tuner.outputs.https-url }}
+          TUNER_HTTP_URL: ${{ steps.tuner.outputs.http-url }}
+          TUNER_USER: ${{ steps.tuner.outputs.user }}
+          TUNER_PASSWORD: ${{ steps.tuner.outputs.password }}
+          MELODICA_EXT_DIST: dist/chrome
+          MELODICA_BROWSER: brave
+          MELODICA_BROWSER_PATH: /usr/bin/brave-browser
+      - name: Show the report
+        if: always()
+        run: |
+          cat tests/artifacts/smoke-brave.json || true
+          node -e 'const r=require("./tests/artifacts/smoke-brave.json"); if (r.ok!==true) { console.error("smoke-brave.json is not ok"); process.exit(1); }'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-brave
+          path: |
+            tests/artifacts/smoke-brave.json
+            tests/artifacts/smoke-brave-*.png
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: smoke-brave-playwright
+          path: tests/artifacts/playwright/
+          if-no-files-found: ignore
+
   release:
-    needs: [build, smoke]
+    needs: [build, smoke, smoke-brave]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -192,10 +254,16 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: smoke-extension
-      - name: Check the proof and extend SHA256SUMS
+      - uses: actions/download-artifact@v4
+        with:
+          name: smoke-brave
+      - name: Check both proofs and extend SHA256SUMS
         run: |
-          node -e 'const r=require("./smoke-extension.json"); console.log(r.summary); if (r.ok!==true) { console.error("smoke-extension.json is not ok"); process.exit(1); }'
-          sha256sum smoke-extension.json smoke-extension-*.png >> SHA256SUMS
+          for f in smoke-extension.json smoke-brave.json; do
+            node -e 'const f=process.argv[1]; const r=require("./"+f); console.log(f+": "+r.browser+" :: "+r.summary); if (r.ok!==true) { console.error(f+" is not ok"); process.exit(1); }' "$f"
+          done
+          ls smoke-brave-login.png smoke-brave-stations.png smoke-brave-playing.png smoke-brave-bridge.png
+          sha256sum smoke-extension.json smoke-extension-*.png smoke-brave.json smoke-brave-*.png >> SHA256SUMS
           cat SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
@@ -213,3 +281,8 @@ jobs:
             smoke-extension-stations.png
             smoke-extension-playing.png
             smoke-extension-bridge.png
+            smoke-brave.json
+            smoke-brave-login.png
+            smoke-brave-stations.png
+            smoke-brave-playing.png
+            smoke-brave-bridge.png
