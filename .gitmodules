@@ -1,0 +1,3 @@
+[submodule "vendor/melodica.h"]
+	path = vendor/melodica.h
+	url = https://github.com/Spaceghost/melodica.h.git
