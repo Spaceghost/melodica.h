@@ -1,0 +1,35 @@
+name: ci
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.74
+          actions-cache-folder: emsdk-cache
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build dist/
+        run: scripts/build.sh
+      - name: Static checks
+        run: scripts/check.sh
+      - name: Node smoke test (partner login through the live relay)
+        run: node tests/node-smoke.mjs
+        env:
+          MELODICA_SMOKE_ALLOW_RELAY_BLOCK: '1'
+      - name: Node unit test (canned Pandora responses)
+        run: node tests/node-unit.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/

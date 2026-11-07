@@ -1,0 +1,169 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.74
+          actions-cache-folder: emsdk-cache
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Version
+        id: v
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF_NAME#v}"; else v="0.0.0-$(git rev-parse --short HEAD)"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: Build dist/
+        run: scripts/build.sh
+        env:
+          MELODICA_WEB_VERSION: ${{ steps.v.outputs.version }}
+      - name: Static checks
+        run: scripts/check.sh
+      - name: Node smoke test
+        run: node tests/node-smoke.mjs
+        env:
+          MELODICA_SMOKE_ALLOW_RELAY_BLOCK: '1'
+      - name: Node unit test (canned Pandora responses)
+        run: node tests/node-unit.mjs
+      - name: Package
+        run: |
+          v="${{ steps.v.outputs.version }}"
+          tar -czf "melodica-web-$v.tar.gz" dist
+          tar --exclude=./.git --exclude='./vendor/melodica.h/.git' --exclude=./dist --exclude='./*.tar.gz' \
+              --exclude=./emsdk-cache --exclude=./node_modules --exclude=./RELEASE_BODY.md \
+              --transform "s,^\./,melodica-web-$v/," -czf "$RUNNER_TEMP/melodica-web-$v-src.tar.gz" .
+          mv "$RUNNER_TEMP/melodica-web-$v-src.tar.gz" .
+          sha256sum "melodica-web-$v.tar.gz" "melodica-web-$v-src.tar.gz" > SHA256SUMS
+          cat SHA256SUMS
+          {
+            echo "melodica-web $v: a Pandora client that runs entirely in the browser."
+            echo
+            echo "[melodica.h](https://github.com/Spaceghost/melodica.h)'s portable libpiano-compatible C implementation is compiled to WebAssembly; it speaks Pandora's JSON API (including the Blowfish-encrypted request bodies) while the browser does the HTTP through a small relay and plays the audio with an \`<audio>\` element. No framework, no bundler, no external scripts; it works under a strict CSP (\`script-src 'self' 'wasm-unsafe-eval'\`)."
+            echo
+            echo "## Assets"
+            echo
+            echo "- \`melodica-web-$v.tar.gz\`: the built site. Unpacks to \`dist/\` (index.html, app.js, piano.js, app.css, melodica.js, melodica.wasm, licenses)."
+            echo "- \`melodica-web-$v-src.tar.gz\`: source tree including the vendored melodica.h."
+            echo "- \`SHA256SUMS\`"
+            echo
+            echo "## Self-hosting"
+            echo
+            echo "Serve \`dist/\` as static files (any web server; \`.wasm\` must be served as \`application/wasm\`). The client talks to a relay that forwards \`POST <relay>/?method=...\` to \`https://tuner.pandora.com/services/json/?...\` and returns Pandora's JSON unchanged with CORS enabled. By default it uses \`../api/\` relative to the page; point it elsewhere with \`<script type=\"module\" src=\"app.js\" data-api=\"https://spacegho.st/melodica/api/\">\` or \`?api=https://.../\` in the page URL."
+            echo
+            echo "Hosted copy: https://spacegho.st/melodica/app/"
+            echo
+            echo "## Proof"
+            echo
+            echo "The \`smoke\` job of this release's workflow ran this exact \`dist/\` in headless Chromium (Playwright) against [melodica-tuner](https://github.com/Spaceghost/melodica-tuner), a stand-in tuner.pandora.com: signed in, listed the fixture's stations, picked one and played its audio. \`smoke-web.json\` is the report (\`ok\`, \`steps\`, the audio element's state); \`smoke-web-login.png\`, \`smoke-web-stations.png\` and \`smoke-web-playing.png\` are the screenshots. This proves the client against the tuner, not against Pandora."
+          } > RELEASE_BODY.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: melodica-web-${{ steps.v.outputs.version }}
+          path: |
+            melodica-web-*.tar.gz
+            SHA256SUMS
+            RELEASE_BODY.md
+
+  # Real-browser proof against melodica-tuner: login, station list, playback.
+  smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: melodica-web-${{ needs.build.outputs.version }}
+      - name: Unpack the built dist/
+        run: |
+          tar -xzf "melodica-web-${{ needs.build.outputs.version }}.tar.gz"
+          ls -l dist
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Playwright
+        # No `--with-deps`: it apt-installs only extra fonts on ubuntu-latest
+        # (every library Chromium needs is already there) and the Azure apt
+        # mirror has hung that step for 6 h (run 42105334837) and crawled at
+        # 30 kB/s (run 42277935990). The browser itself comes from
+        # Playwright's CDN.
+        timeout-minutes: 15
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install chromium
+      - uses: Spaceghost/melodica-tuner@v1
+        id: tuner
+        with:
+          user: ci@example.com
+          password: ci-secret
+          hosts-override: false
+          install-ca: false
+      - name: Browser smoke test (built dist, melodica-tuner)
+        run: npx playwright test tests/smoke-tuner.spec.mjs
+        env:
+          TUNER_HTTPS_URL: ${{ steps.tuner.outputs.https-url }}
+          TUNER_HTTP_URL: ${{ steps.tuner.outputs.http-url }}
+          TUNER_USER: ${{ steps.tuner.outputs.user }}
+          TUNER_PASSWORD: ${{ steps.tuner.outputs.password }}
+      - name: Show the report
+        if: always()
+        run: cat tests/artifacts/smoke-web.json || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-web
+          path: |
+            tests/artifacts/smoke-web.json
+            tests/artifacts/smoke-web-*.png
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: smoke-web-playwright
+          path: tests/artifacts/playwright/
+          if-no-files-found: ignore
+
+  release:
+    needs: [build, smoke]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: melodica-web-${{ needs.build.outputs.version }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: smoke-web
+      - name: Check the proof and extend SHA256SUMS
+        run: |
+          node -e 'const r=require("./smoke-web.json"); console.log(r.summary); if (r.ok!==true) { console.error("smoke-web.json is not ok"); process.exit(1); }'
+          sha256sum smoke-web.json smoke-web-*.png >> SHA256SUMS
+          cat SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: melodica-web ${{ needs.build.outputs.version }} (WebAssembly)
+          body_path: RELEASE_BODY.md
+          files: |
+            melodica-web-${{ needs.build.outputs.version }}.tar.gz
+            melodica-web-${{ needs.build.outputs.version }}-src.tar.gz
+            SHA256SUMS
+            smoke-web.json
+            smoke-web-login.png
+            smoke-web-stations.png
+            smoke-web-playing.png
