@@ -6,3 +6,5 @@ tests/artifacts/
 *.tar.gz
 SHA256SUMS
 RELEASE_BODY.md
+*.pem
+release/

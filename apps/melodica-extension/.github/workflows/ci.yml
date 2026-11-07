@@ -11,6 +11,8 @@ permissions:
 env:
   NELUA_REPO: https://github.com/Spaceghost/nelua-lang
   NELUA_SHA: 7fe8132893f9f2bbce3a7b23247ad8bde2c216ed
+  # Chrome extension id derived from CRX_PRIVATE_KEY (scripts/crx-id.mjs); the build fails if the secret derives another.
+  CRX_ID: obbahflgghfemmpmjppeibnemibgblbd
 
 jobs:
   build:
@@ -50,26 +52,70 @@ jobs:
         run: node core/test.mjs
       - name: Firefox manifest lint (web-ext)
         run: npx web-ext lint --source-dir dist/firefox --self-hosted
-      - name: Package
+      - name: Package (zips, .xpi, .crx signed with CRX_PRIVATE_KEY, source tarball)
+        env:
+          CRX_PRIVATE_KEY: ${{ secrets.CRX_PRIVATE_KEY }}
         run: |
-          OUT="$PWD/release" scripts/package.sh "${{ steps.v.outputs.version }}"
           v="${{ steps.v.outputs.version }}"
+          if [[ -n "$CRX_PRIVATE_KEY" ]]; then
+            (umask 077; printf '%s\n' "$CRX_PRIVATE_KEY" > "$RUNNER_TEMP/crx.pem")
+            export CRX_KEY="$RUNNER_TEMP/crx.pem"
+            id="$(node scripts/crx-id.mjs "$CRX_KEY")"
+            [[ "$id" == "$CRX_ID" ]] || { echo "::error::CRX_PRIVATE_KEY derives id $id, expected $CRX_ID"; exit 1; }
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "::error::CRX_PRIVATE_KEY is not set; a release needs the .crx"; exit 1
+          else
+            echo "::warning::CRX_PRIVATE_KEY is not set; no .crx in this branch build"
+          fi
+          OUT="$PWD/release" scripts/package.sh "$v"
+          rm -f "$RUNNER_TEMP/crx.pem"
+      # Mozilla signing happens only when the repository has AMO API credentials
+      # (secrets AMO_JWT_ISSUER + AMO_JWT_SECRET). Without them the .xpi stays unsigned
+      # and the notes say so. `unlisted` keeps it off addons.mozilla.org listings.
+      - name: Sign the .xpi with AMO (only when AMO_JWT_ISSUER/AMO_JWT_SECRET exist)
+        if: env.AMO_JWT_ISSUER != '' && env.AMO_JWT_SECRET != ''
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          v="${{ steps.v.outputs.version }}"
+          npx web-ext sign --channel unlisted --source-dir dist/firefox --artifacts-dir "$RUNNER_TEMP/signed" \
+            --api-key "$AMO_JWT_ISSUER" --api-secret "$AMO_JWT_SECRET"
+          signed="$(ls "$RUNNER_TEMP"/signed/*.xpi | head -1)"
+          [[ -s "$signed" ]] || { echo "::error::web-ext sign produced no .xpi"; exit 1; }
+          cp "$signed" "release/melodica-extension-$v.xpi"
+          echo amo > release/SIGNED
+          ( cd release && sha256sum melodica-extension-*.zip melodica-extension-*.xpi melodica-extension-*.crx melodica-extension-*-src.tar.gz > SHA256SUMS )
+      - name: Release notes
+        run: |
+          v="${{ steps.v.outputs.version }}"
+          if [[ -f release/SIGNED ]]; then
+            xpi_note="Signed by Mozilla (AMO, unlisted channel): installs in any Firefox 128+ from the link above."
+          else
+            xpi_note="**Not signed by Mozilla** (this repository has no AMO credentials). Release Firefox refuses unsigned add-ons; it installs on Firefox Developer Edition, Nightly or ESR with \`xpinstall.signatures.required\` set to \`false\` in about:config, or temporarily (until Firefox quits) through about:debugging → This Firefox → Load Temporary Add-on."
+          fi
+          crx_note="CRX3 of the Chrome build, signed with this repository's key; Chrome extension id \`$CRX_ID\`, update feed \`https://spacegho.st/extensions/dl/melodica-extension/update.xml\` (the \`update_url\` in its manifest). On Linux: chrome://extensions → Developer mode on → drag the file onto the page. Windows and macOS Chrome/Edge block off-store .crx installs unless an enterprise policy allows them (\`ExtensionInstallSources\` + \`ExtensionInstallForcelist\` pointing at that update.xml); otherwise use the unpacked zip."
+          [[ -f release/melodica-extension-$v.crx ]] || crx_note="not built in this run (no CRX_PRIVATE_KEY)."
           {
             echo "melodica-extension $v: a Pandora WebExtension for Chrome and Firefox (Manifest V3)."
             echo
             echo "UI and extension scripts are written in [Imba](https://imba.io) and bundled to plain ES modules; the protocol core (Blowfish with Pandora's public partner keys, hex, syncTime, the JSON v5 request envelope) is freestanding [Nelua](https://github.com/Spaceghost/nelua-lang) compiled to WebAssembly with no imports. The extension talks to \`tuner.pandora.com\` directly through its host permission, so no relay sees the login, and it bridges the web client at https://spacegho.st/melodica/app/ so that page can skip its relay too."
             echo
+            echo "Install page with buttons, checksums and the CI proof: https://spacegho.st/extensions/#melodica-extension"
+            echo
             echo "## Assets"
             echo
-            echo "- \`melodica-extension-$v-chrome.zip\`: unpacked extension for Chrome/Chromium. Unzip, then chrome://extensions → Developer mode → Load unpacked."
-            echo "- \`melodica-extension-$v-firefox.zip\`: the same build with \`browser_specific_settings\` for Firefox. Unzip, then about:debugging → This Firefox → Load Temporary Add-on (pick manifest.json), or \`web-ext run --source-dir\`."
+            echo "- \`melodica-extension-$v.xpi\`: the Firefox add-on (Firefox shows its install prompt when served as application/x-xpinstall; gecko id \`melodica-extension@spacegho.st\`, update feed \`https://spacegho.st/extensions/dl/melodica-extension/updates.json\`). $xpi_note"
+            echo "- \`melodica-extension-$v.crx\`: $crx_note"
+            echo "- \`melodica-extension-$v-chrome.zip\`: unpacked extension for Chrome/Chromium/Edge. Unzip, then chrome://extensions (edge://extensions) → Developer mode → Load unpacked."
+            echo "- \`melodica-extension-$v-firefox.zip\`: the same build with \`browser_specific_settings\` for Firefox (identical bytes to the unsigned .xpi). Unzip, then about:debugging → This Firefox → Load Temporary Add-on (pick manifest.json), or \`web-ext run --source-dir\`."
             echo "- \`melodica-extension-$v-src.tar.gz\`: source tree."
             echo "- \`SHA256SUMS\`"
             echo "- \`smoke-extension.json\`, \`smoke-extension-login.png\`, \`smoke-extension-stations.png\`, \`smoke-extension-playing.png\`, \`smoke-extension-bridge.png\`: the proof below."
             echo
             echo "## Proof"
             echo
-            echo "The \`smoke\` job of this release's workflow loaded this exact Chrome build unpacked into Playwright's Chromium (headed under xvfb) against [melodica-tuner](https://github.com/Spaceghost/melodica-tuner), a stand-in tuner.pandora.com: set the endpoint on the options page, signed in from the popup, listed the fixture's stations, started a station (the player tab opened and the \`<audio>\` element played), and bridged an \`auth.partnerLogin\` for the melodica-web page served locally as https://spacegho.st. \`smoke-extension.json\` is the report. This proves the extension against the tuner, not against Pandora; the Firefox zip was linted with web-ext, not run. Nothing is published to the Chrome Web Store or AMO."
+            echo "The \`smoke\` job of this release's workflow loaded this exact Chrome build unpacked into Playwright's Chromium (headed under xvfb) against [melodica-tuner](https://github.com/Spaceghost/melodica-tuner), a stand-in tuner.pandora.com: set the endpoint on the options page, signed in from the popup, listed the fixture's stations, started a station (the player tab opened and the \`<audio>\` element played), and bridged an \`auth.partnerLogin\` for the melodica-web page served locally as https://spacegho.st. \`smoke-extension.json\` is the report. This proves the extension against the tuner, not against Pandora; the Firefox build was linted with web-ext, not run; the .xpi and .crx files were packaged from the same dist/ but no job installed them in a browser. Nothing is published to the Chrome Web Store or AMO listings."
           } > release/RELEASE_BODY.md
           ls -l release
       - uses: actions/upload-artifact@v4
@@ -158,6 +204,8 @@ jobs:
           files: |
             melodica-extension-${{ needs.build.outputs.version }}-chrome.zip
             melodica-extension-${{ needs.build.outputs.version }}-firefox.zip
+            melodica-extension-${{ needs.build.outputs.version }}.xpi
+            melodica-extension-${{ needs.build.outputs.version }}.crx
             melodica-extension-${{ needs.build.outputs.version }}-src.tar.gz
             SHA256SUMS
             smoke-extension.json

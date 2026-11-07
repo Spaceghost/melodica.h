@@ -10,12 +10,14 @@
     "test:core": "node core/test.mjs",
     "test:smoke": "playwright test",
     "lint:firefox": "web-ext lint --source-dir dist/firefox --self-hosted",
-    "package": "scripts/package.sh"
+    "package": "scripts/package.sh",
+    "crx-id": "node scripts/crx-id.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",
     "esbuild": "^0.25.0",
     "imba": "^2.0.0-alpha.253",
-    "web-ext": "^8.0.0"
+    "web-ext": "^8.0.0",
+    "crx3": "^2.0.0"
   }
 }
