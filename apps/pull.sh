@@ -1,23 +1,29 @@
 #!/bin/sh
-# Refresh the apps/ subtrees from their repositories (squashed). Usage: apps/pull.sh [dir...]
+# Refresh apps/<dir> snapshots from their repositories. Usage: apps/pull.sh [dir...]
+#
+# Each snapshot is the full tree of the app's branch (git read-tree), replacing the previous
+# one, with the source commit recorded in the commit message. Unlike `git subtree pull`
+# this keeps working after the app's branch has been rebased onto its upstream.
 set -eu
-cd "$(dirname "$0")/.."
-list='
-melodica-web https://github.com/Spaceghost/melodica-web master
-pithos https://github.com/Spaceghost/pithos master
-elpis https://github.com/Spaceghost/elpis-melodica master
-epimetheus https://github.com/Spaceghost/epimetheus dev
-pandoroid https://github.com/Spaceghost/pandoroid master
-xivpiano https://github.com/Spaceghost/xivpiano-melodica integration/melodica
-umbra-piano https://github.com/Spaceghost/umbra-piano main
-pianobar https://github.com/Spaceghost/pianobar master
-pianobar-windows https://github.com/Spaceghost/pianobar-windows develop
-pydora https://github.com/Spaceghost/pydora master
-'
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+cd "$ROOT"
+[ -z "$(git status --porcelain)" ] || { echo "working tree not clean" >&2; exit 1; }
 want="$*"
-echo "$list" | while read -r dir url branch; do
+grep -v '^#' apps/apps.tsv | while IFS="$(printf '\t')" read -r dir repo branch _up _upbranch; do
   [ -n "$dir" ] || continue
   if [ -n "$want" ]; then case " $want " in *" $dir "*) ;; *) continue;; esac; fi
-  echo "== apps/$dir <- $url ($branch)"
-  git subtree pull --prefix="apps/$dir" "$url" "$branch" --squash -m "apps/$dir: update from $url ($branch)"
+  echo "== apps/$dir <- $repo ($branch)"
+  git fetch -q "https://github.com/$repo.git" "$branch"
+  new=$(git rev-parse FETCH_HEAD)
+  old=$(git log -1 --format=%B -- "apps/$dir" | sed -n 's/^Source-Commit: //p' | head -1)
+  if [ "$old" = "$new" ]; then echo "   up to date ($new)"; continue; fi
+  git rm -rq --ignore-unmatch "apps/$dir"
+  git read-tree --prefix="apps/$dir/" -u FETCH_HEAD
+  if git diff --cached --quiet; then echo "   tree unchanged ($new)"; continue; fi
+  git commit -q -m "apps/$dir: snapshot of $repo $branch at ${new%????????????????????????????????}
+
+Source-Repo: https://github.com/$repo
+Source-Branch: $branch
+Source-Commit: $new"
+  echo "   $(git log -1 --format=%h) <- $new"
 done

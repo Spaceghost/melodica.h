@@ -25,11 +25,30 @@ is [Spaceghost/melodica-tuner](https://github.com/Spaceghost/melodica-tuner).
 ## Refreshing a snapshot
 
 ```sh
-apps/pull.sh            # pull every client's branch (squashed)
+apps/pull.sh            # re-snapshot every client from its branch
 apps/pull.sh pithos     # one client
 ```
 
-`pull.sh` runs `git subtree pull --squash` against the GitHub repository; it needs
-read access to the client repositories. Changes made here can be sent back with
-`git subtree push --prefix=apps/<dir> <repo> <branch>`, but prefer committing in the
-client repository and pulling.
+`pull.sh` replaces `apps/<dir>` with the full tree of the branch listed in `apps/apps.tsv`
+and records the source commit in the commit message (`Source-Commit:`). It needs read
+access to the client repositories and keeps working after a branch has been rebased.
+Edit in the client repository, not here; this tree is a read-only mirror.
+
+## Tracking upstreams and rebasing
+
+Every client except Melodica Web is a fork of an upstream project, and our melodica.h
+commits sit on top of upstream history. `apps/upstream.sh` keeps one work clone per app
+(in `../melodica-apps-work`, or `$MELODICA_APPS_WORK`) with remotes `origin` (our fork)
+and `upstream`, and drives the rebase:
+
+```sh
+apps/upstream.sh status            # ours/theirs commit counts against each upstream
+apps/upstream.sh rebase pithos     # tag pre-rebase/<stamp>, rebase our branch onto upstream
+# resolve conflicts in the work clone if any: git add …; git rebase --continue
+apps/upstream.sh push pithos       # push --force-with-lease, push the safety tag, re-snapshot apps/pithos
+```
+
+The tag `pre-rebase/<stamp>` is pushed with the branch, so the previous history can always
+be recovered with `git reset --hard pre-rebase/<stamp>`. Only `fetch` and `push` touch a
+remote. Note: Epimetheus upstream rewrote its history in `dev-new-architecture`; our fork
+descends from upstream `dev`, which is what `apps.tsv` tracks.

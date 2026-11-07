@@ -1,0 +1,11 @@
+# dir	repo	branch	upstream-repo	upstream-branch
+melodica-web	Spaceghost/melodica-web	master	-	-
+pithos	Spaceghost/pithos	master	pithos/pithos	master
+elpis	Spaceghost/elpis-melodica	master	adammhaile/Elpis	master
+epimetheus	Spaceghost/epimetheus	dev	EpimetheusMusicPlayer/Epimetheus	dev
+pandoroid	Spaceghost/pandoroid	master	dylanPowers/pandoroid	master
+xivpiano	Spaceghost/xivpiano-melodica	integration/melodica	Spaceghost/xivpiano-dalamud	master
+umbra-piano	Spaceghost/umbra-piano	main	una-xiv/umbra	main
+pianobar	Spaceghost/pianobar	master	PromyLOPh/pianobar	master
+pianobar-windows	Spaceghost/pianobar-windows	develop	thedmd/pianobar-windows	develop
+pydora	Spaceghost/pydora	master	mcrute/pydora	master
