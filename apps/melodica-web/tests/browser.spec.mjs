@@ -24,8 +24,16 @@
 //                      runners) with a challenge page instead of the relay.
 //                      With this set, that outcome skips the login-error test
 //                      as "not provable here" instead of failing it.
+//   MELODICA_RELAY_TOKEN
+//                      An access token for the gated relay (melodica-site's
+//                      scripts/mint-token.mjs; repo secret of the same name).
+//                      It is put in localStorage before the page loads and the
+//                      hosted variant adds ?api= so the GitHub screen is skipped.
+//                      Without it, a 401 from the relay skips the login-error
+//                      test with a clear log line instead of failing it.
 //
-// Artifacts: tests/artifacts/login-screen.png and login-error.png.
+// Artifacts: tests/artifacts/login-screen.png and login-error.png (and
+// hosted-gate.png when MELODICA_APP_URL is set).
 
 import { test, expect } from '@playwright/test';
 import http from 'node:http';
@@ -39,6 +47,8 @@ const DIST = resolve(process.env.MELODICA_DIST || resolve(here, '..', 'dist'));
 const HOSTED = process.env.MELODICA_APP_URL || '';
 const RELAY = process.env.MELODICA_API || 'https://spacegho.st/melodica/api/';
 const ALLOW_RELAY_BLOCK = process.env.MELODICA_BROWSER_ALLOW_RELAY_BLOCK === '1';
+const TOKEN = process.env.MELODICA_RELAY_TOKEN || '';
+const TOKEN_KEY = 'melodica.github';
 const ARTIFACTS = resolve(here, 'artifacts');
 const APP_PATH = '/melodica/app/';
 
@@ -54,10 +64,13 @@ const csp = (nonce) => `default-src 'none'; script-src 'self' 'nonce-${nonce}' '
   `frame-ancestors 'none'; worker-src 'self'`;
 
 let server = null;
-let appUrl = HOSTED;
+// Hosted with a token: ?api= (same origin, so trusted) skips the GitHub screen and the
+// stored token goes to the relay; the gate screen itself is checked by the last test.
+let appUrl = HOSTED && TOKEN ? `${HOSTED}${HOSTED.includes('?') ? '&' : '?'}api=${encodeURIComponent(RELAY)}` : HOSTED;
 
 test.beforeAll(async () => {
   await mkdir(ARTIFACTS, { recursive: true });
+  if (!TOKEN) console.log('MELODICA_RELAY_TOKEN is not set: if the relay is gated (GitHub sign-in), the login-error step is skipped.');
   if (HOSTED) return;
   server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
@@ -85,10 +98,19 @@ test.afterAll(async () => {
   if (server) await new Promise((ok) => server.close(ok));
 });
 
+// Chromium logs "Failed to load resource" for every non-2xx answer, including the
+// ones the gate handles on purpose (/auth/me 503/401, the relay's 401). Those are
+// not errors of the page; everything else is kept.
+function expectedResourceError(msg) {
+  if (msg.type() !== 'error' || !/Failed to load resource/.test(msg.text())) return false;
+  const url = (msg.location() && msg.location().url) || '';
+  return /\/melodica\/auth\//.test(url) || (/status of 401/.test(msg.text()) && /\/melodica\/api\//.test(url));
+}
+
 // Opens the page with instrumentation and returns the collected evidence.
-async function openApp(page) {
+async function openApp(page, url = appUrl, { token = TOKEN } = {}) {
   const evidence = { console: [], errors: [], failed: [], relay: [] };
-  await page.addInitScript(() => {
+  await page.addInitScript(({ key, token: t }) => {
     window.__cspViolations = [];
     document.addEventListener('securitypolicyviolation', (ev) => {
       window.__cspViolations.push({
@@ -96,8 +118,9 @@ async function openApp(page) {
         line: ev.lineNumber, sample: ev.sample,
       });
     });
-  });
-  page.on('console', (msg) => evidence.console.push(`[${msg.type()}] ${msg.text()}`));
+    if (t) localStorage.setItem(key, t); // the access token the relay wants
+  }, { key: TOKEN_KEY, token: token || '' });
+  page.on('console', (msg) => { if (!expectedResourceError(msg)) evidence.console.push(`[${msg.type()}] ${msg.text()}`); });
   page.on('pageerror', (err) => evidence.errors.push(String(err && err.stack || err)));
   page.on('requestfailed', (req) => evidence.failed.push(`${req.method()} ${req.url()} ${req.failure()?.errorText}`));
   page.on('response', async (res) => {
@@ -108,7 +131,7 @@ async function openApp(page) {
     evidence.relay.push({ method: q, status: res.status(), head });
   });
 
-  const res = await page.goto(appUrl, { waitUntil: 'load' });
+  const res = await page.goto(url, { waitUntil: 'load' });
   const title = await page.title();
   const html = await page.content();
   const challenged = /Just a moment|cf-chl|challenge-platform\/h\/|Attention Required/i.test(title + html.slice(0, 4000))
@@ -122,6 +145,7 @@ async function openApp(page) {
 function report(evidence) {
   const lines = [
     `url: ${appUrl}`,
+    `relay token: ${TOKEN ? 'MELODICA_RELAY_TOKEN set' : 'none'}`,
     `http: ${evidence.httpStatus}`,
     `csp: ${evidence.csp}`,
     `challenged: ${evidence.challenged}`,
@@ -139,8 +163,14 @@ async function waitForLoginScreen(page, evidence) {
   expect(evidence.challenged, 'Cloudflare answered with a challenge page instead of the app').toBe(false);
   await expect(page).toHaveTitle(/melodica/);
   await expect(page.locator('header h1')).toContainText('melodica');
-  // data-view="login" is set by app.js only after the wasm module loaded and mw_init returned 0.
-  await expect(page.locator('#app')).toHaveAttribute('data-view', 'login', { timeout: 30_000 });
+  // data-view leaves "loading" only after the wasm module loaded and mw_init returned 0;
+  // "github" means the hosted gate is on and we have no token for it.
+  await expect(page.locator('#app')).not.toHaveAttribute('data-view', 'loading', { timeout: 30_000 });
+  if (await page.locator('#app').getAttribute('data-view') === 'github') {
+    console.log('WARNING: the page shows the GitHub sign-in (the relay is gated) and MELODICA_RELAY_TOKEN is not set; the login path could not be exercised here.');
+    test.skip(true, 'relay gated (GitHub sign-in) and no MELODICA_RELAY_TOKEN');
+  }
+  await expect(page.locator('#app')).toHaveAttribute('data-view', 'login');
   await expect(page.locator('#view-error')).toBeHidden();
   // Regression: .player's display:grid used to override the hidden attribute,
   // so the empty player view showed through under the login form.
@@ -196,6 +226,12 @@ test.describe.serial('melodica-web in Chromium', () => {
         console.log('WARNING: the relay answered HTTP 403 (Cloudflare challenge) from this network; the live login path could not be exercised here.');
         test.skip(true, 'relay blocked by Cloudflare from this network (MELODICA_BROWSER_ALLOW_RELAY_BLOCK=1)');
       }
+      const relayGated = evidence.relay.some((r) => r.status === 401);
+      if (relayGated && !TOKEN) {
+        console.log('WARNING: the relay answered HTTP 401 (GitHub sign-in gate) and MELODICA_RELAY_TOKEN is not set; the live login path could not be exercised here. Mint one with melodica-site/scripts/mint-token.mjs and add it as the MELODICA_RELAY_TOKEN repository secret.');
+        test.skip(true, 'relay gated (GitHub sign-in) and no MELODICA_RELAY_TOKEN');
+      }
+      expect(relayGated, 'the relay rejected MELODICA_RELAY_TOKEN (401): expired, or minted with another AUTH_SECRET').toBe(false);
       expect(text, 'login message').toMatch(/wrong email address or password|invalid (username|password|credentials)/i);
       expect(evidence.relay.map((r) => r.method), 'relay calls').toEqual(
         expect.arrayContaining(['auth.partnerLogin', 'auth.userLogin']),
@@ -207,6 +243,40 @@ test.describe.serial('melodica-web in Chromium', () => {
       expect(evidence.violations, 'CSP violations').toEqual([]);
       // Still on the login screen, nothing leaked into the player.
       await expect(page.locator('#app')).toHaveAttribute('data-view', 'login');
+    } finally {
+      await info.attach('evidence', { body: report(evidence), contentType: 'text/plain' });
+    }
+  });
+
+  // The hosted page as a visitor sees it: no token, no ?api=. Either the gate is on
+  // (GitHub screen, start link to the live /auth/start) or /auth/me says 503 (not yet
+  // configured) and the Pandora login shows. Both are reported; neither is a failure.
+  test('the hosted page shows the GitHub sign-in (or the Pandora login when the gate is not configured yet)', async ({ page }, info) => {
+    test.skip(!HOSTED, 'hosted page only (MELODICA_APP_URL)');
+    const evidence = await openApp(page, HOSTED, { token: '' });
+    try {
+      const me = await fetch(new URL('../auth/me', HOSTED));
+      const meBody = (await me.text()).slice(0, 200);
+      info.annotations.push({ type: 'auth/me', description: `HTTP ${me.status} ${meBody}` });
+      console.log(`GET /melodica/auth/me without a token -> HTTP ${me.status} ${meBody}`);
+      expect(evidence.challenged, 'Cloudflare answered with a challenge page instead of the app').toBe(false);
+      await expect(page.locator('#app')).not.toHaveAttribute('data-view', 'loading', { timeout: 30_000 });
+      const view = await page.locator('#app').getAttribute('data-view');
+      await page.screenshot({ path: resolve(ARTIFACTS, 'hosted-gate.png') });
+      await info.attach('hosted-gate', { path: resolve(ARTIFACTS, 'hosted-gate.png'), contentType: 'image/png' });
+      if (me.status === 503) {
+        console.log('the gate is not configured on the hosted Worker (503): the Pandora login shows directly');
+        expect(view).toBe('login');
+      } else {
+        expect(me.status, '/auth/me without a token').toBe(401);
+        expect(view).toBe('github');
+        const origin = new URL(HOSTED).origin;
+        expect(await page.locator('#github-button').getAttribute('href')).toBe(`${origin}/melodica/auth/start?return_to=${encodeURIComponent(`${origin}/melodica/app/`)}`);
+        await expect(page.locator('#view-github')).toContainText('Sign in with GitHub to use melodica web');
+        await expect(page.locator('#login-email')).toBeHidden();
+      }
+      expect(evidence.errors, 'uncaught page errors').toEqual([]);
+      expect(evidence.console.filter((l) => l.startsWith('[error]')), 'console errors').toEqual([]);
     } finally {
       await info.attach('evidence', { body: report(evidence), contentType: 'text/plain' });
     }

@@ -9,7 +9,9 @@
 // stations, fetch a playlist and HEAD the first audio URL.
 //
 // Env: MELODICA_API (default https://spacegho.st/melodica/api/),
-//      MELODICA_DIST (default ../dist relative to this file).
+//      MELODICA_DIST (default ../dist relative to this file),
+//      MELODICA_RELAY_TOKEN (access token for the gated relay; without it a
+//      401 from the relay ends part 1 as "not provable here", with a log line).
 
 import { strict as assert } from 'node:assert';
 import { pathToFileURL } from 'node:url';
@@ -23,9 +25,10 @@ const apiBase = process.env.MELODICA_API || 'https://spacegho.st/melodica/api/';
 const { PianoClient, PIANO_RPC_PREFIX } = await import(pathToFileURL(resolve(dist, 'piano.js')).href);
 
 const log = (...a) => console.log('[smoke]', ...a);
-const client = new PianoClient({ apiBase, log: (m) => log(' ', m) });
+const token = process.env.MELODICA_RELAY_TOKEN || '';
+const client = new PianoClient({ apiBase, authToken: token, log: (m) => log(' ', m) });
 await client.load();
-log(`module loaded: melodica.h compat ${client.version}, relay ${apiBase}`);
+log(`module loaded: melodica.h compat ${client.version}, relay ${apiBase}${token ? ' (with MELODICA_RELAY_TOKEN)' : ''}`);
 
 // ---- Part 1: partner login through the relay, no account needed ----------
 const req1 = client.begin({ action: 'login', user: 'nobody@example.invalid', password: 'not-a-password' });
@@ -46,6 +49,13 @@ try {
   if (challenged && process.env.MELODICA_SMOKE_ALLOW_RELAY_BLOCK === '1') {
     log('WARNING: the relay answered with a Cloudflare challenge page from this network;');
     log('         the live partnerLogin could not be exercised here (MELODICA_SMOKE_ALLOW_RELAY_BLOCK=1).');
+    process.exit(0);
+  }
+  if (err.kind === 'auth' && !token) {
+    log(`WARNING: the relay answered HTTP 401: ${err.message}`);
+    log('         The relay requires a GitHub sign-in token and MELODICA_RELAY_TOKEN is not set, so the live partnerLogin');
+    log('         could not be exercised here. Mint a token with melodica-site/scripts/mint-token.mjs and');
+    log('         add it as the MELODICA_RELAY_TOKEN repository secret.');
     process.exit(0);
   }
   throw err;

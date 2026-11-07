@@ -57,10 +57,15 @@ jobs:
         run: npx playwright test tests/browser.spec.mjs
         env:
           MELODICA_BROWSER_ALLOW_RELAY_BLOCK: '1'
+          # Access token for the gated relay (melodica-site/scripts/mint-token.mjs); absent = skip with a log line.
+          MELODICA_RELAY_TOKEN: ${{ secrets.MELODICA_RELAY_TOKEN }}
       - name: Browser test (extension bridge with a fake content script)
         run: npx playwright test tests/bridge.spec.mjs
         env:
           MELODICA_BROWSER_ALLOW_RELAY_BLOCK: '1'
+          MELODICA_RELAY_TOKEN: ${{ secrets.MELODICA_RELAY_TOKEN }}
+      - name: Browser test (GitHub sign-in gate against a fake Worker, no network)
+        run: npx playwright test tests/gate.spec.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -144,6 +149,7 @@ jobs:
         env:
           MELODICA_APP_URL: https://spacegho.st/melodica/app/
           MELODICA_BROWSER_ALLOW_RELAY_BLOCK: '1'
+          MELODICA_RELAY_TOKEN: ${{ secrets.MELODICA_RELAY_TOKEN }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
