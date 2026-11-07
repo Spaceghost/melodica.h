@@ -37,6 +37,10 @@ browser                                   relay                     Pandora
   when the queue runs out.
 - The relay only forwards bytes. Pandora's audio URLs are plain https CDN
   links that an `<audio>` element plays cross-origin without CORS.
+- `web/bridge.js` is the extension bridge: the
+  [melodica browser extension](https://spacegho.st/melodica/#melodica-extension)'s
+  content script can carry the API calls straight to tuner.pandora.com
+  instead of the relay (see "Extension bridge" below).
 
 ### Exported C API (`dist/melodica.js`, `createMelodica()`)
 
@@ -78,7 +82,7 @@ scripts/check.sh        # parses the modules, checks relative URLs / no inline s
 (`bak`/`melodica-emsdk` by default), builds and tests there and pulls `dist/`
 back, so nothing is compiled on the workstation.
 
-`dist/` then holds `index.html`, `app.js`, `piano.js`, `app.css`,
+`dist/` then holds `index.html`, `app.js`, `piano.js`, `bridge.js`, `app.css`,
 `melodica.js`, `melodica.wasm`, `LICENSE`, `LICENSE.libpiano`,
 `THIRD_PARTY_NOTICES.md`, `VERSION`.
 
@@ -87,6 +91,7 @@ back, so nothing is compiled on the workstation.
 ```sh
 node tests/node-smoke.mjs
 node tests/node-unit.mjs
+node tests/bridge-unit.mjs
 ```
 
 Runs the compiled module in Node against the live relay. Without an account
@@ -97,7 +102,11 @@ fetches a playlist and HEADs the first audio URL. `MELODICA_API` overrides
 the relay URL. `node-unit.mjs` needs no network: it feeds canned
 Pandora-shaped responses (a `syncTime` produced by `tests/tools/synctime.c`
 with the partner key) to the module and checks request building, result
-serialisation, error mapping and the automatic re-login.
+serialisation, error mapping and the automatic re-login. `bridge-unit.mjs`
+needs no network either: a fake window plays the extension's content script
+and checks the hello/ready handshake, the message filter, request/response
+pairing by id, the timeout with fallback to the relay, HTTP errors through
+the bridge and the `?api=` / bridge / relay precedence in `PianoClient.post`.
 
 GitHub Actions runners are answered by a Cloudflare challenge page instead of
 the relay, so in CI the smoke test runs with
@@ -131,6 +140,15 @@ console errors, no CSP violations, both relay calls HTTP 200, "Wrong email
 address or password." in the form).
 `MELODICA_BROWSER_ALLOW_RELAY_BLOCK=1` turns the challenge-page outcome into
 a skipped test, as the smoke test does.
+
+`tests/bridge.spec.mjs` injects a fake content script into the page world
+(it answers `hello` with `ready` and proxies each bridge `request` to the
+relay with `fetch`), then asserts the status line says
+"direct via melodica extension 0.1.0", that the sign-in round trips were
+carried by the bridge (the script logs each request's method, id and body
+length), and that a page opened with `?api=` never sends `hello` and reports
+"via … relay (?api=)". Screenshots: `bridge-login-screen.png`,
+`bridge-login-error.png`.
 
 ### Full flow against melodica-tuner
 
@@ -187,10 +205,36 @@ request body (`content-type: text/plain`), forwards it to
 unchanged with `access-control-allow-origin: *` (and answers `OPTIONS`). The
 relay must run from a place Pandora serves, i.e. the US. The relay URL is:
 
-1. `?api=https://host/path/` in the page URL, else
-2. `data-api="…"` on the `<script type="module" src="app.js">` tag, else
-3. `../api/` resolved against the page URL (so `/melodica/app/` talks to
+1. `?api=https://host/path/` in the page URL (same origin only, or on a
+   local dev host; it also disables the extension bridge), else
+2. the extension bridge when a content script has answered `ready`, else
+3. `data-api="…"` on the `<script type="module" src="app.js">` tag, else
+4. `../api/` resolved against the page URL (so `/melodica/app/` talks to
    `/melodica/api/`).
+
+The footer status line names the active transport: "via spacegho.st relay"
+or "direct via melodica extension 0.1.0".
+
+### Extension bridge
+
+A WebExtension whose content script runs on the app's URL can offer a direct
+path to Pandora. The page side (`web/bridge.js`) speaks same-window
+`postMessage`, so it needs no `connect-src` change and no extension
+permission from the page:
+
+- On startup the page posts `{melodica: 1, type: 'hello'}` to
+  `location.origin`.
+- The page accepts only `message` events with `event.source === window`,
+  `event.origin === location.origin` and `event.data.melodica === 1`.
+- `{melodica: 1, type: 'ready', name, version}` switches the transport to
+  the bridge; it may also arrive unsolicited (the script loaded late).
+- Each API call is `{melodica: 1, type: 'request', id, search, body}` with
+  `search` the query string (`?method=…&…`) and `body` a `Uint8Array` of the
+  request body; the reply is `{melodica: 1, type: 'response', id, ok,
+  status, body: Uint8Array, error}`.
+- A request with no response after 20 s, or a response with no HTTP status
+  (`status: 0` plus `error`), falls back to the relay for that request. An
+  HTTP or Pandora answer through the bridge is final.
 
 ### Content Security Policy
 
@@ -219,8 +263,9 @@ Node on a workstation reach the relay fine; if real users ever see
 ## Privacy
 
 Your Pandora email and password are encrypted by the wasm module (Blowfish,
-as Pandora's API requires) and sent only to Pandora through the relay. The
-relay forwards and stores nothing. The page keeps your email in
+as Pandora's API requires) and sent only to Pandora, through the relay or
+directly through the melodica browser extension. The relay forwards and
+stores nothing; the login screen says so under the form. The page keeps your email in
 `localStorage`; your password is stored there only if you tick "remember
 password on this device", and the form says so in plain words. Nothing else
 leaves the browser.

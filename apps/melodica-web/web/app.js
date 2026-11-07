@@ -2,6 +2,7 @@
 // Protocol: ./piano.js (melodica.h in wasm). Audio: the <audio> element.
 
 import { PianoClient, PianoError, resolveApiBase } from './piano.js';
+import { BridgeTransport } from './bridge.js';
 
 const VERSION = '__MELODICA_WEB_VERSION__';
 const STORAGE = {
@@ -78,6 +79,9 @@ const lowerQuality = (q) => QUALITIES[Math.min(QUALITIES.indexOf(q) + 1, QUALITI
 
 const state = {
   client: null,
+  bridge: null,       // BridgeTransport when the page may use the extension bridge
+  apiBase: '',
+  apiFromQuery: false,
   stations: [],
   station: null,      // current station object
   queue: [],          // songs not yet played
@@ -107,6 +111,19 @@ function setStatus(text, isError = false) {
   el.status.classList.toggle('error', isError);
 }
 
+// "direct via melodica extension 0.1.0" or "via spacegho.st relay", then the
+// module and page versions once the wasm is up.
+function transportLabel() {
+  if (state.bridge && state.bridge.active) return `direct via ${state.bridge.label}`;
+  let host = state.apiBase;
+  try { host = new URL(state.apiBase).host; } catch (_) { /* keep the raw string */ }
+  return `via ${host} relay${state.apiFromQuery ? ' (?api=)' : ''}`;
+}
+function updateStatus() {
+  const mod = state.client && state.client.version ? `melodica.h ${state.client.version} · web ${VERSION}` : 'loading melodica.h…';
+  setStatus(`${transportLabel()} · ${mod}`);
+}
+
 // One timer per message target so a login message never clears a toast.
 const messageTimers = new Map();
 function message(target, text, kind = 'info', ttl = 8000) {
@@ -131,6 +148,8 @@ function fmtTime(seconds) {
   return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
+// Relay precedence: a trusted ?api= in the page URL (it also disables the
+// extension bridge), else data-api on the script tag, else ../api/.
 function apiBaseFromPage() {
   const params = new URLSearchParams(location.search);
   const tag = document.querySelector('script[type="module"][src$="app.js"]');
@@ -138,8 +157,9 @@ function apiBaseFromPage() {
   // A crafted link must not route credentials elsewhere: ?api= is honoured only
   // for the page's own origin (or on a local dev host).
   if (explicit && !trustedApiParam(explicit)) explicit = '';
+  const fromQuery = !!explicit;
   if (!explicit) explicit = (tag && tag.dataset.api) || '';
-  return resolveApiBase(explicit, location.href);
+  return { apiBase: resolveApiBase(explicit, location.href), fromQuery };
 }
 function trustedApiParam(value) {
   if (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) return true;
@@ -971,14 +991,24 @@ async function main() {
   renderUpNext();
   renderHistory();
 
-  let apiBase;
+  let api;
   try {
-    apiBase = apiBaseFromPage();
+    api = apiBaseFromPage();
   } catch (err) {
     throw new Error(`Bad relay address: ${describeError(err)}`);
   }
-  setStatus(`relay: ${apiBase}`);
-  state.client = new PianoClient({ apiBase, log: (m) => console.debug('[piano]', m) });
+  state.apiBase = api.apiBase;
+  state.apiFromQuery = api.fromQuery;
+  const log = (m) => console.debug('[piano]', m);
+  state.client = new PianoClient({ apiBase: api.apiBase, log });
+  // The extension bridge: say hello now so a content script can answer while
+  // the wasm loads. An explicit ?api= wins over it (the CI smoke relies on that).
+  if (!api.fromQuery) {
+    state.bridge = new BridgeTransport(window, { log, onChange: updateStatus });
+    state.client.bridge = state.bridge;
+    state.bridge.start();
+  }
+  updateStatus();
   try {
     await state.client.load();
   } catch (err) {
@@ -986,7 +1016,7 @@ async function main() {
     setStatus('wasm failed to load', true);
     return;
   }
-  setStatus(`relay: ${apiBase} · melodica.h ${state.client.version} · web ${VERSION}`);
+  updateStatus();
   showLogin();
   if (el.email.value && el.password.value) login(el.email.value, el.password.value);
 }

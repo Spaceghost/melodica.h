@@ -4,6 +4,7 @@
 // moves strings across the boundary and performs HTTP through the relay.
 
 import createMelodica from './melodica.js';
+import { BridgeError, bodyToText } from './bridge.js';
 
 export const PIANO_RPC_PREFIX = '/services/json/?';
 
@@ -65,6 +66,7 @@ export class PianoError extends Error {
 export class PianoClient {
   constructor(options = {}) {
     this.apiBase = options.apiBase;          // URL string ending in '/'
+    this.bridge = options.bridge || null;    // BridgeTransport; used while it is active
     this.fetch = options.fetch || globalThis.fetch.bind(globalThis);
     this.log = options.log || (() => {});
     this.module = null;
@@ -124,7 +126,41 @@ export class PianoClient {
     return `${this.apiBase}?${query}`;
   }
 
+  // 'bridge' while the extension bridge is ready, else 'relay'.
+  get transport() { return this.bridge && this.bridge.active ? 'bridge' : 'relay'; }
+
+  // Sends one libpiano request and returns the response body as text. The
+  // bridge, when active, goes first; a timeout or a bridge-level failure
+  // (no HTTP status at all) falls back to the relay for this request only.
+  // An HTTP or Pandora answer through the bridge is final.
   async post(req) {
+    if (this.transport === 'bridge') {
+      try {
+        return await this.postBridge(req);
+      } catch (err) {
+        if (err instanceof PianoError) throw err;
+        this.log(`bridge: ${err && err.message ? err.message : err}; using the relay for this request`);
+      }
+    }
+    return this.postRelay(req);
+  }
+
+  async postBridge(req) {
+    const q = req.urlPath.indexOf('?');
+    const search = q >= 0 ? req.urlPath.slice(q) : '?';
+    const res = await this.bridge.request(search, new TextEncoder().encode(req.postData));
+    if (!res.status && !res.ok) throw new BridgeError(res.error || 'the extension reported a failure without a status');
+    const text = bodyToText(res.body);
+    if (!res.ok && !text.startsWith('{')) {
+      throw new PianoError({ status: 0, code: null, error: (res.error || text).slice(0, 200) }, {
+        kind: 'relay',
+        message: `Pandora answered HTTP ${res.status} via the ${this.bridge.label}.`,
+      });
+    }
+    return text;
+  }
+
+  async postRelay(req) {
     const url = this.relayUrl(req.urlPath);
     let res;
     try {
