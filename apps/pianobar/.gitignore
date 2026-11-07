@@ -1,0 +1,11 @@
+*.o
+*.lo
+*.d
+# vim swap files
+.*.sw*
+pianobar
+libpiano.a
+libpiano.so*
+waitress-test
+__pycache__/
+*.pyc
