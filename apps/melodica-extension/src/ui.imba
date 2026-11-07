@@ -315,7 +315,7 @@ export tag Transport
 		<self>
 			<div.bar role="group" aria-label="Playback controls">
 				<button#play type="button" data-state=(now and !now.paused ? 'playing' : 'paused') aria-label=(now and !now.paused ? 'Pause' : 'Play') @click=emit('control', 'toggle')> (now and !now.paused ? "❚❚" : "▶")
-				<button#next type="button" title="Next song" aria-label="Next song" disabled=!song @click=emit('control', 'skip')> "⏭"
+				<button#next type="button" title="Next song" aria-label="Next song" disabled=!song @click=emit('control', 'next')> "⏭"
 				<button#love type="button" .on=(rating === 1) aria-pressed=(rating === 1 ? 'true' : 'false') title="Love this song" aria-label="Love" disabled=!song @click=emit('control', 'love')> "♥"
 				<button#ban type="button" .off=(rating === 2) aria-pressed=(rating === 2 ? 'true' : 'false') title="Ban this song (skips)" aria-label="Ban" disabled=!song @click=emit('control', 'ban')> "✕"
 				<button#tired type="button" title="Tired of this song (a month off)" aria-label="Tired" disabled=!song @click=emit('control', 'tired')> "zz"

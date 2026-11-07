@@ -7,9 +7,24 @@
 #   melodica-extension-<ver>.crx           CRX3 of the Chrome build, signed with the key at $CRX_KEY (skipped when unset)
 #   melodica-extension-<ver>-src.tar.gz    source tree
 #   SHA256SUMS
+#
+#   scripts/package.sh safari [ver]   only derives dist/safari from dist/chrome (scripts/safari.mjs) and
+#                                     zips it as melodica-extension-<ver>-safari.zip, the Resources of the
+#                                     iOS app's extension; the .ipa itself is built on macOS by
+#                                     .github/workflows/ios.yml (ios/README.md)
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$here"
+if [ "${1:-}" = safari ]; then
+  shift
+  node scripts/safari.mjs
+  v="${1:-$(cat dist/VERSION)}"
+  out="${OUT:-$here/release}"; mkdir -p "$out"
+  rm -f "$out/melodica-extension-$v-safari.zip"
+  ( cd dist/safari && zip -q -X -r "$out/melodica-extension-$v-safari.zip" . )
+  ls -l "$out/melodica-extension-$v-safari.zip"
+  exit 0
+fi
 v="${1:-$(cat dist/VERSION)}"
 out="${OUT:-$here/release}"
 rm -rf "$out"; mkdir -p "$out"

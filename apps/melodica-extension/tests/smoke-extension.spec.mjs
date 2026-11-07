@@ -11,13 +11,17 @@
 //      shows the update banner, because the same local server serves a
 //      releases.json / updates.json naming version 99.0.0;
 //   2. the popup (opened as an extension tab) signs in with the tuner user,
-//      lists the fixture's stations and starts a station, which opens the
-//      player tab; the player shows the song and the <audio> element plays;
+//      lists the fixture's stations and starts a station: no tab opens, the
+//      background plays it in its offscreen document and the popup shows the
+//      track; with every extension page closed the service worker is asked
+//      and must report the position advancing; a new popup and the optional
+//      player tab show the same track, and closing the tab stops nothing;
 //   3. the bridge: melodica-web's dist (tests/fixtures) is served on a local
 //      https server that Chromium resolves as https://spacegho.st, the page
 //      posts the protocol's `hello` and a `request` for auth.partnerLogin and
 //      must get `ready` and a successful `response` back through the
-//      extension, which the tuner's log confirms.
+//      extension, which the tuner's log confirms; then it subscribes to the
+//      playback state and pauses/resumes the music (docs/BRIDGE.md).
 //
 // Chromium is launched headed (CI wraps it in xvfb-run) with the unpacked
 // extension; the new headless mode is also fine but headed is what the
@@ -34,7 +38,7 @@
 // /usr/bin/brave-browser, driven through the same Playwright `chromium`
 // launcher; Brave's Shields stay at their defaults and every request Brave
 // blocks is listed in the report).
-// Output: tests/artifacts/<name>.json and <name>-{login,stations,playing,bridge}.png
+// Output: tests/artifacts/<name>.json and <name>-{gate,gate-denied,login,stations,playing,popup-playing,player-tab,bridge}.png
 // where <name> is `smoke-extension` for Chromium and `smoke-brave` for Brave.
 
 import { test, expect, chromium } from '@playwright/test';
@@ -285,7 +289,7 @@ async function extensionId() {
   return new URL(sw.url()).host;
 }
 
-test('signs in through the popup, plays a station in the player tab, bridges the web app', async ({}, info) => {
+test('signs in through the popup, plays a station with no tab, bridges the web app', async ({}, info) => {
   test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
   const evidence = { console: [], errors: [], failed: [], api: [] };
   const t0 = Date.now();
@@ -444,48 +448,106 @@ test('signs in through the popup, plays a station in the player tab, bridges the
     step('stations listed');
     await popup.screenshot({ path: shot('stations') });
 
-    // 3. Start a station: the player tab opens and plays.
-    const playerPromise = context.waitForEvent('page', { timeout: 30_000 });
+    // 3. Start a station from the popup. No tab opens: the background plays it in
+    //    its offscreen document (chrome.offscreen, AUDIO_PLAYBACK) and the popup is
+    //    a view of that state.
+    const pagesBefore = context.pages().length;
     const chosen = (await stations.first().textContent()).trim();
     await stations.first().click();
+    await expect(popup.locator('#app')).toHaveAttribute('data-status', 'playing', { timeout: 30_000 });
+    await expect(popup.locator('#np-title')).not.toHaveText(/^(Pick a station)?$/);
+    await expect(popup.locator('#np-artist')).not.toHaveText('');
+    await expect(popup.locator('#np-station')).toContainText(chosen);
+    const now = {
+      title: (await popup.locator('#np-title').textContent()).trim(),
+      artist: (await popup.locator('#np-artist').textContent()).trim(),
+      station: chosen,
+    };
+    console.log(`now playing: ${now.title} – ${now.artist} on ${now.station}`);
+    expect(context.pages().length, 'no tab opened by starting a station').toBe(pagesBefore);
+    await popup.screenshot({ path: shot('playing') });
+    const first = await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'player-get' }).then((r) => { if (!r || !r.ok) throw new Error(`player-get: ${r && r.error}`); return r.state; }));
+    expect(first.status, 'background state').toBe('playing');
+    expect(first.track && first.track.title).toBe(now.title);
+    expect(first.track && first.track.audioUrl, 'the track came from the tuner').toContain('/audio/');
+    const where = await popup.evaluate(async (id) => ({
+      playerTabs: (await chrome.tabs.query({ url: `chrome-extension://${id}/player.html*` })).length,
+      contexts: (await chrome.runtime.getContexts({})).map((c) => `${c.contextType} ${String(c.documentUrl || '').replace(/^chrome-extension:\/\/[^/]+\//, '')}`.trim()),
+    }), id);
+    console.log(`contexts: ${JSON.stringify(where)}`);
+    expect(where.playerTabs, 'player tabs').toBe(0);
+    expect(where.contexts.some((c) => c === 'OFFSCREEN_DOCUMENT offscreen.html'), `an offscreen document holds the audio (${where.contexts.join(', ')})`).toBe(true);
+    step('playing without a tab');
+
+    // Close the popup: no extension page is open. The service worker is asked directly
+    // (Playwright can evaluate in it): its storage.session copy of the state, written on
+    // every engine report, and the offscreen engine itself (the only context that answers
+    // an `engine` message) must both show playback continuing and the position advancing.
+    await popup.close();
+    const sw = context.serviceWorkers()[0];
+    const probe = () => sw.evaluate(async () => {
+      const saved = (await chrome.storage.session.get('player')).player || null;
+      const engine = await chrome.runtime.sendMessage({ type: 'engine', op: 'state' }).catch((e) => ({ error: String(e) }));
+      const tabs = await chrome.tabs.query({ url: `chrome-extension://${chrome.runtime.id}/*` });
+      const contexts = (await chrome.runtime.getContexts({})).map((c) => c.contextType);
+      return {
+        status: saved && saved.status, position: saved && saved.position, title: saved && saved.track && saved.track.title,
+        engine: engine && engine.state ? { status: engine.state.status, position: engine.state.position, title: engine.state.track && engine.state.track.title } : engine,
+        extensionTabs: tabs.map((t) => t.url), contexts,
+      };
+    });
+    // Wait until the audio has actually started (the first probe may land while it buffers).
+    let p1 = await probe();
+    for (let i = 0; i < 30 && !(p1.engine && p1.engine.position > 0.5); i++) { await new Promise((ok) => setTimeout(ok, 500)); p1 = await probe(); }
+    expect(p1.extensionTabs, 'no extension page open').toEqual([]);
+    expect(p1.contexts, 'contexts with every page closed').not.toContain('TAB');
+    await new Promise((ok) => setTimeout(ok, 5000));
+    const p2 = await probe();
+    console.log(`no page open: ${JSON.stringify(p1)} -> ${JSON.stringify(p2)}`);
+    expect(p2.status, 'still playing with no page open').toBe('playing');
+    expect(p2.engine && p2.engine.status, 'offscreen engine still playing').toBe('playing');
+    if (p2.title === p1.title) {
+      expect(p2.position, 'position advanced with no page open').toBeGreaterThan(p1.position + 2);
+      expect(p2.engine.position, 'engine position advanced').toBeGreaterThan(p1.engine.position + 3.5);
+    }
+    report.audio = { ...now, engine: 'offscreen document', noPage: { before: p1, after: p2 } };
+    step('plays with no page open');
+
+    // A new popup shows the same track.
+    const popup2 = await context.newPage();
+    watch(popup2, 'popup2');
+    await popup2.goto(`chrome-extension://${id}/popup.html`);
+    await expect(popup2.locator('#np-title')).toHaveText(now.title, { timeout: 15_000 });
+    await expect(popup2.locator('#app')).toHaveAttribute('data-status', 'playing');
+    await popup2.screenshot({ path: shot('popup-playing') });
+    step('popup shows the track');
+
+    // The player tab is optional: opened from the popup it shows the same track and holds
+    // no <audio>; closing it stops nothing.
+    const playerPromise = context.waitForEvent('page', { timeout: 30_000 });
+    await popup2.click('#open-player');
     const player = await playerPromise;
     watch(player, 'player');
     await player.waitForURL((u) => u.href.startsWith(`chrome-extension://${id}/player.html`), { timeout: 30_000 });
     await player.waitForLoadState('load');
-    expect(player.url(), 'player tab url').toContain(`chrome-extension://${id}/player.html`);
-    await expect(player.locator('#np-title')).not.toHaveText(/^(Pick a station)?$/, { timeout: 30_000 });
-    await expect(player.locator('#np-artist')).not.toHaveText('');
+    await expect(player.locator('#np-title')).toHaveText(now.title, { timeout: 30_000 });
     await expect(player.locator('#np-station')).toContainText(chosen);
-    const now = {
-      title: (await player.locator('#np-title').textContent()).trim(),
-      artist: (await player.locator('#np-artist').textContent()).trim(),
-      station: chosen,
-    };
-    console.log(`now playing: ${now.title} – ${now.artist} on ${now.station}`);
-    await player.waitForFunction(() => {
-      const a = document.getElementById('audio');
-      return a && (a.readyState >= 2 || a.error);
-    }, null, { timeout: 30_000 });
-    await player.waitForFunction(() => {
-      const a = document.getElementById('audio');
-      return a && (a.currentTime > 0.5 || a.error);
-    }, null, { timeout: 15_000 }).catch(() => {});
-    const audio = await player.evaluate(() => {
-      const a = document.getElementById('audio');
-      return { src: a.src, readyState: a.readyState, paused: a.paused, currentTime: a.currentTime, duration: a.duration, error: a.error ? a.error.code : null };
-    });
-    report.audio = { ...audio, ...now };
-    console.log(`audio: ${JSON.stringify(audio)}`);
-    await player.screenshot({ path: shot('playing') });
-    expect(audio.error, 'audio element error').toBeNull();
-    expect(audio.src, 'audio src from the tuner').toContain('/audio/');
-    expect(audio.readyState, 'HTMLMediaElement.readyState').toBeGreaterThanOrEqual(2);
-    expect(audio.paused, 'audio paused').toBe(false);
-    step('playing');
-
-    // The popup mirrors the player's state through the background.
-    await expect(popup.locator('#np-title')).toHaveText(now.title, { timeout: 15_000 });
-    step('popup mirrors now playing');
+    await expect(player.locator('#player-status')).toContainText('Playing in the background');
+    expect(await player.locator('#audio').count(), 'no audio element in the player tab').toBe(0);
+    const shown = await player.evaluate(() => Number(document.getElementById('np-progress').value));
+    await player.waitForFunction((v) => Number(document.getElementById('np-progress').value) > v + 1, shown, { timeout: 15_000 });
+    await player.screenshot({ path: shot('player-tab') });
+    await player.close();
+    const p3 = await probe();
+    await new Promise((ok) => setTimeout(ok, 3000));
+    const p4 = await probe();
+    console.log(`player tab closed: ${JSON.stringify(p3)} -> ${JSON.stringify(p4)}`);
+    expect(p4.status, 'still playing after the player tab closed').toBe('playing');
+    // The tuner's fixture tracks are short: the next track starting also counts as progress.
+    expect(p4.title !== p3.title || p4.position > p3.position + 1, `playback advanced after the tab closed (${p3.title}@${p3.position} -> ${p4.title}@${p4.position})`).toBe(true);
+    report.audio.playerTab = { title: now.title, progressShown: shown, afterClose: p4 };
+    await popup2.close();
+    step('player tab optional');
 
     // 4. The bridge: melodica-web's page on https://spacegho.st (local server).
     const page = await context.newPage();
@@ -553,6 +615,45 @@ test('signs in through the popup, plays a station in the player tab, bridges the
     report.bridge = { announced, ready, roundTrip: { ok: roundTrip.ok, status: roundTrip.status, stat: answer.stat }, refused };
     await page.screenshot({ path: shot('bridge') });
     step('bridge round trip');
+    // Layer 2 (docs/BRIDGE.md): the page subscribes, gets the background's state (without
+    // audio URLs), pauses and resumes the music through `command`.
+    expect(announced.player, 'ready announces the player layer').toBe(true);
+    const bgNow = await sw.evaluate(async () => ((await chrome.storage.session.get('player')).player || {}).track?.title || '');
+    const remote = await page.evaluate(() => new Promise((ok, fail) => {
+      const states = [], results = [];
+      let status = '', sentPause = false, sentResume = false;
+      const t = setTimeout(() => fail(new Error(`remote: timed out at status ${status}; states ${JSON.stringify(states.slice(-3))} results ${JSON.stringify(results)}`)), 30_000);
+      const post = (m) => window.postMessage({ melodica: 1, ...m }, location.origin);
+      window.addEventListener('message', function h(ev) {
+        if (ev.source !== window || !ev.data || ev.data.melodica !== 1) return;
+        const d = ev.data;
+        if (d.type === 'state') {
+          states.push({ status: d.state.status, position: d.state.position, title: d.state.track && d.state.track.title, audioUrl: !!(d.state.track && d.state.track.audioUrl), historyUrls: (d.state.history || []).filter((h) => h.audioUrl).length, stations: Array.isArray(d.state.stations) ? d.state.stations.length : -1, loggedIn: d.state.loggedIn, gate: d.state.gate && d.state.gate.mode });
+          status = d.state.status;
+        } else if (d.type === 'result') {
+          results.push({ id: d.id, ok: d.ok, error: d.error, status: d.state && d.state.status, audioUrl: !!(d.state && d.state.track && d.state.track.audioUrl) });
+          if (d.state && d.state.status) status = d.state.status;
+        } else return;
+        if (!sentPause && status === 'playing') { sentPause = true; post({ type: 'command', id: 'r-pause', action: 'pause' }); }
+        else if (sentPause && !sentResume && status === 'paused') { sentResume = true; post({ type: 'command', id: 'r-resume', action: 'play' }); }
+        else if (sentResume && status === 'playing') { post({ type: 'unsubscribe' }); window.removeEventListener('message', h); clearTimeout(t); ok({ states, results }); }
+      });
+      post({ type: 'subscribe' });
+    }));
+    console.log(`bridge remote: ${remote.states.length} states, results ${JSON.stringify(remote.results)}`);
+    expect(remote.states[0].status, 'first state push').toBe('playing');
+    // The fixture's tracks are short, so the page must name whatever the background plays now.
+    expect(remote.states[0].title, 'first state names a track').toBeTruthy();
+    expect(remote.states.map((x) => x.title), 'the page saw the track the extension was playing').toContain(remote.states[0].title);
+    expect(remote.states[0].loggedIn).toBe(true);
+    expect(remote.states[0].stations).toBeGreaterThan(0);
+    expect(remote.states.every((s) => !s.audioUrl && s.historyUrls === 0), 'no audio URL reaches the page').toBe(true);
+    expect(remote.results.every((r) => r.ok && !r.audioUrl), 'both commands succeeded').toBe(true);
+    expect(remote.states.some((s) => s.status === 'paused'), 'the page paused the music').toBe(true);
+    expect(remote.states[remote.states.length - 1].status, 'the page resumed it').toBe('playing');
+    expect([bgNow, remote.states[remote.states.length - 1].title], 'the page saw the background track').toContain(remote.states[0].title);
+    report.bridge.remote = { backgroundTrack: bgNow, states: remote.states.length, paused: true, resumed: true, results: remote.results, first: remote.states[0] };
+    step('bridge remote');
 
     // 5. The tuner's own record.
     const log = await getJson(`${tuner.http}/__tuner/log`);
@@ -568,6 +669,8 @@ test('signs in through the popup, plays a station in the player tab, bridges the
     const audioGet = log.find((e) => e.protocol === 'audio' && e.httpMethod === 'GET' && String(e.path).startsWith('/audio/'));
     expect(audioGet, 'tuner log shows a GET /audio/ fetch').toBeTruthy();
     step('audio fetched');
+    // The player tab, popup and offscreen document each ran without page errors;
+    // the offscreen document's console reaches the worker channel.
 
     // Anything the browser itself refused (Brave Shields answer net::ERR_BLOCKED_BY_CLIENT)
     // is recorded; the tuner, the audio and the bridge above must have gone through regardless.
@@ -584,7 +687,8 @@ test('signs in through the popup, plays a station in the player tab, bridges the
     report.ok = true;
     report.summary = `melodica-extension ${report.extension.version} (unpacked, ${report.browser}${report.engine && report.engine !== report.browser ? `, ${report.engine}` : ''}) pointed at melodica-tuner ${tuner.version} ` +
       `via the options page, signed in from the popup, listed ${names.length} stations, played "${now.title}" by ${now.artist} on ${now.station} ` +
-      `in the player tab (readyState ${audio.readyState}, ${audio.currentTime.toFixed(1)}s), and bridged a partnerLogin for the melodica-web page on https://${WEB_HOST}; ` +
+      `in the background (offscreen document; no player tab; position ${p1.position.toFixed(1)}s -> ${p2.position.toFixed(1)}s with no extension page open; the optional player tab showed it and its closing changed nothing), ` +
+      `and bridged a partnerLogin for the melodica-web page on https://${WEB_HOST}, which then subscribed, paused and resumed the music over the bridge; ` +
       `the GitHub gate showed its screen with Pandora's endpoint, let an allowed token through, refused a denied token, went off on a 503, signed out on a 401 and on expiry (fake /auth/me); the update banner announced ${FAKE_VERSION} from the fake releases.json`;
   } catch (err) {
     report.summary = `failed after [${report.steps.join(', ')}]: ${String(err && err.message || err).split('\n')[0]}`;

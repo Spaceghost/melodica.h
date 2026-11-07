@@ -5,9 +5,12 @@ A Pandora WebExtension for Chrome, Brave and Firefox (Manifest V3). It
 accounts (see "GitHub gate" below), which is also why it is self-hosted and
 not on any store (`docs/STORES.md`). Two jobs:
 
-- **A standalone player.** Sign in from the toolbar popup, pick a station, and
-  the music plays in an extension tab (`player.html`) that keeps the `<audio>`
-  element alive after the popup closes.
+- **A standalone player that needs no tab.** Sign in from the toolbar popup,
+  pick a station, close the popup: the music plays in the background (an
+  offscreen document in Chromium, the background page in Firefox; "Playback
+  without a tab" below). The popup, the optional player tab (`player.html`)
+  and the options page are views of that one state; media keys and two
+  keyboard shortcuts steer it.
 - **A bridge for the web client** at <https://spacegho.st/melodica/app/>.
   That page normally has to send every Pandora call through a Cloudflare
   Worker relay, because `tuner.pandora.com` sends no CORS headers; the relay
@@ -23,13 +26,14 @@ handshake and the JSON v5 request envelope) is freestanding
 with no imports at all. JSON and HTTP stay on the Imba side.
 
 ```
-popup.html / player.html / options.html         bg.js (service worker)         Pandora
-  Imba tags ── runtime.sendMessage ──────────► Pandora client (pandora.imba)
-                                                │ core.envelope(json) ──► melodica_core.wasm (Nelua)
-                                                │ ◄── Blowfish-ECB hex ──┘
-                                                └─ fetch POST https://tuner.pandora.com/services/json/?method=… ──► 
-                                                   ◄──────────────────────────── JSON unchanged ──────────────────
-  <audio src=audioUrl>  ─────────────────────────────────────────────────────────────────────────► Pandora's CDN
+popup.html / player.html / options.html         bg.js (service worker / background page)      Pandora
+  Imba tags (views) ── {type:'player', action} ─► playerState, the Pandora client (pandora.imba)
+            ◄── {type:'player-state'} broadcast ──┤ core.envelope(json) ──► melodica_core.wasm (Nelua)
+                                                  │ ◄── Blowfish-ECB hex ──┘
+                                                  └─ fetch POST https://tuner.pandora.com/services/json/?method=… ──► 
+                                                     ◄──────────────────────────── JSON unchanged ──────────────────
+offscreen.html (Chromium) / the background page itself (Firefox)
+  Engine (engine.imba): <audio src=audioUrl>, play loop, mediaSession ──────────────────────────► Pandora's CDN
 
 https://spacegho.st/melodica/app/   content.js
   page ── postMessage {melodica:1,…} ──► bridge ── sendMessage ──► bg.js ── fetch ──► Pandora
@@ -123,6 +127,52 @@ Buttons and current steps: <https://spacegho.st/extensions/#melodica-extension>.
   policies); otherwise load the zip unpacked. Brave uses the Chrome build
   unchanged, and CI runs the full smoke in it (below).
 
+### iPhone and iPad
+
+`melodica-<ver>-unsigned.ipa` on the release (and on the store page, as
+"iPhone / iPad (sideload)") is a small app that carries the extension for
+Safari. Requires GitHub sign-in. It is not on the App Store or TestFlight and
+never will be submitted to either; there is no public link of any kind.
+Build, manifest and playback details: `ios/README.md`.
+
+**Free route: SideStore or AltStore with your own Apple ID.**
+
+1. Set up [SideStore](https://sidestore.io) or [AltStore](https://altstore.io)
+   on the iPhone or iPad with your own Apple ID (a free one works).
+2. Download `melodica-<ver>-unsigned.ipa` on the device and open it in
+   SideStore/AltStore (My Apps → +). It signs the app with your Apple ID.
+3. A free Apple ID's signature lasts **7 days**: SideStore/AltStore refresh it
+   (in the background when they can, or tap Refresh). If it lapses the app and
+   the extension stop opening until you refresh; your settings stay. A free
+   Apple ID allows 3 sideloaded apps at a time, and this one counts the app and
+   its extension against the weekly App ID limit.
+4. Settings → Apps → Safari → Extensions → **melodica** → turn it on (older
+   iOS: Settings → Safari → Extensions).
+5. On the same screen, allow it on `tuner.pandora.com` (and the other
+   `pandora.com` hosts) and `spacegho.st`, or answer "Allow" when Safari asks.
+6. In Safari, the extensions menu (puzzle piece in the address bar) →
+   melodica opens the popup. Sign in with GitHub (a tab opens and comes back to
+   spacegho.st/melodica/app/), then Pandora; starting a station opens the
+   player in a Safari tab, which is where the music plays.
+
+**Paid route (not set up): ad hoc or internal TestFlight on Jack's Apple
+Developer account ($99/year).** Ad hoc: up to 100 registered devices per year,
+installed from a signed `-adhoc.ipa` with no sideloading app and no 7-day
+refresh; CI already has the inactive hook for it (`ios/README.md`, "Signing
+hook"). Internal TestFlight: up to 100 named testers who are members of the
+developer team, no App Review, no public listing or link. Either one needs
+Jack's account; neither is configured.
+
+**What is proven:** CI builds the app for devices and for the simulator,
+installs and launches it in the iOS Simulator, checks that the system
+registered the extension, switches it on in Safari and opens
+spacegho.st/melodica/app/, whose status line then reads "direct via
+melodica-extension <version>": the extension's content script ran in iOS
+Safari (`smoke-ios.json`, `smoke-ios-bridge.png`). Not proven: any install on a
+real iPhone or iPad, the popup, the player and the Pandora login on iOS, the
+Safari GitHub sign-in, and playback with Safari in the background or the
+screen locked (`ios/README.md`).
+
 ### Install (unpacked)
 
 Download `melodica-extension-<ver>-chrome.zip` or `-firefox.zip` from the
@@ -155,13 +205,15 @@ is how the CI smoke runs).
 | `core/test.mjs`, `core/ref-blowfish.mjs` | Node unit test: libpiano's vector from melodica.h `tests/crypt.c`, an independent JS Blowfish for cross-checks, hex, syncTime, the envelope, the arena |
 | `src/core.imba` | JS wrapper around the wasm exports |
 | `src/pandora.imba` | JSON API v5 client: partnerLogin, userLogin, station list, playlist, feedback, sleep, explain, search, create/delete station; one re-login on code 1001; errors name the call and code ("Pandora rejected auth.userLogin (code 1002: invalid login). Wrong email address or password."); the client User-Agent (below) |
-| `src/bg.imba` | background: the GitHub gate (check, sign-in flow, refusals), session (in `storage.session`), every Pandora request, player-tab management, the bridge relay, the diagnostics log (last 200 lines in `storage.session`, no tokens) |
+| `src/bg.imba` | background: the GitHub gate (check, sign-in flow, refusals), session (in `storage.session`), every Pandora request, the player state (`playerState`, persisted in `storage.session`, broadcast on every change), the player commands, the badge, the keyboard shortcuts, the offscreen document (Chromium) or the in-page engine (Firefox), the bridge relay, the diagnostics log (last 200 lines in `storage.session`, no tokens) |
+| `src/engine.imba` | the playback engine: the `<audio>` element, playlist queue, track advance, ratings, volume, the play log, `navigator.mediaSession`; talks to Pandora only through the background |
+| `src/offscreen.imba`, `public/offscreen.html` | Chromium's home for the engine: the offscreen document (`chrome.offscreen`, reason `AUDIO_PLAYBACK`) |
 | `src/update.imba`, `tests/update.test.mjs` | update awareness: version compare, the store feeds, the "is available" banner state, and its Node unit test |
 | `src/github.imba`, `tests/github.test.mjs` | the gate's token parsing (claims, expiry, the redirect fragment, auth URLs) and its Node unit test |
 | `tests/fake-auth.mjs` | the smokes' stand-in for the Worker's `/melodica/auth/me`, deciding from the token's claims |
-| `src/popup.imba`, `src/player.imba`, `src/options.imba`, `src/ui.imba`, `src/shared.imba` | the pages and shared tags |
-| `src/content.imba` | the bridge content script for `https://spacegho.st/melodica/app/*` |
-| `public/` | `manifest.json` (one template, two outputs), the three HTML pages (no inline scripts), `theme.css` |
+| `src/popup.imba`, `src/player.imba`, `src/options.imba`, `src/ui.imba`, `src/shared.imba` | the pages (views of the background's state) and shared tags |
+| `src/content.imba`, `docs/BRIDGE.md` | the bridge content script for `https://spacegho.st/melodica/app/*`: the request relay and the playback remote control |
+| `public/` | `manifest.json` (one template, two outputs), the HTML pages (no inline scripts), `theme.css` |
 | `scripts/build-core.sh` | Nelua → C (`--target wasm32-unknown-unknown`) → `clang -nostdlib` → audits exports/imports |
 | `scripts/build.mjs` | esbuild + `imba/compiler` → `dist/chrome`, `dist/firefox`, `build/node/{core,pandora,github}.js`; generated icons; CSP guards |
 | `scripts/real-pandora-probe.mjs` | no-account probe of the client + wasm core against the real `tuner.pandora.com` from Node: partnerLogin, syncTime, userLogin with bogus credentials, expects code 1002 (below) |
@@ -228,11 +280,55 @@ not errors).
 
 - `background`: `{"service_worker": "bg.js", "scripts": ["bg.js"], "type": "module"}` (MDN's cross-browser pattern; Chrome 121+ accepts both keys, Firefox uses `scripts`).
 - `host_permissions`: `https://tuner.pandora.com/*`, `https://*.pandora.com/*`, `https://spacegho.st/melodica/auth/*` (the GitHub gate), `https://spacegho.st/extensions/*` (the update feed). `optional_host_permissions`: `https://*/*`, `http://*/*` for an endpoint override (the options page offers a "Grant access" button; without it the endpoint must allow CORS, which melodica-tuner does).
-- `permissions`: `storage`, `identity` (the GitHub sign-in's `launchWebAuthFlow` / `getRedirectURL`).
+- `permissions`: `storage`, `identity` (the GitHub sign-in's `launchWebAuthFlow` / `getRedirectURL`); the Chromium build adds `offscreen` (the playback document).
+- `commands`: `toggle-play` (Alt+Shift+P) and `next-song` (Alt+Shift+N), handled in the background.
+- The Firefox build has no `service_worker` key and sets `background.persistent: true` (see "Playback without a tab").
 - `content_scripts`: `content.js` on `https://spacegho.st/melodica/app/*`.
 - `content_security_policy.extension_pages`: `script-src 'self' 'wasm-unsafe-eval'; object-src 'self'` (the wasm needs `'wasm-unsafe-eval'`).
 - `browser_specific_settings.gecko.id`: `melodica-extension@spacegho.st`, `strict_min_version` 128.
 - The `browser` namespace is used everywhere with `globalThis.browser = globalThis.chrome` as the only polyfill (promise-returning APIs in MV3 Chrome; `onMessage` listeners answer through `sendResponse`).
+
+## Playback without a tab
+
+The extension plays the music itself; no tab has to be open. The background
+(`src/bg.imba`) owns one `playerState` (`status`, `station`, `track`,
+`position`, `duration`, `volume`, `quality`, `queueLength`, `error`,
+`history`), keeps a copy in `storage.session`, broadcasts
+`{type:'player-state'}` on every change, and answers `player-get` and
+`{type:'player', action}` with `play` (a station token, or none to resume),
+`pause`, `toggle`, `next`, `love`, `ban`, `tired`, `sleep`, `stop`, `volume`,
+`quality`. The popup, the player tab, the options page and a subscribed web
+page (`docs/BRIDGE.md`) are views that send those commands; none of them
+holds an `<audio>` element. The player tab is optional: opening it starts
+nothing and closing it stops nothing. The toolbar badge shows `▶` or `❚❚`
+and its tooltip the track.
+
+Where the audio runs (`src/engine.imba`, the same class in both places):
+
+- **Chromium (Chrome, Brave, Edge):** an offscreen document
+  (`offscreen.html`, `chrome.offscreen.createDocument` with reason
+  `AUDIO_PLAYBACK`, permission `offscreen`), created on the first command and
+  checked with `runtime.getContexts` before every creation. Chrome may close
+  the document about 30 s after audio stops; the next command recreates it and
+  the `engine-hello` handshake hands it the saved state (station, volume,
+  quality, play log, a paused track at its position). Pandora calls from the
+  engine go through the background (`playlist`, `rate`, `tired` messages),
+  since an offscreen document has only runtime messaging.
+- **Firefox:** no offscreen API, so the engine runs in the background page
+  itself (the `scripts` background has a DOM). The gecko manifest sets
+  `background.persistent: true`; Firefox MV3 warns that the key is
+  unsupported and treats the background as an event page, which it may
+  terminate after 30 s of no extension activity. Whether playing audio
+  counts as activity is what the Firefox smoke measures: 45 s with no
+  extension page open, then the state must still be `playing` with the
+  position advanced (`audio.noPage` in `smoke-firefox.json`). If a Firefox
+  build ever fails that check, the fallback is a Manifest V2 build for Firefox
+  with a real persistent background page; it is not implemented.
+
+Media keys: the engine registers `navigator.mediaSession` handlers (play,
+pause, next) and metadata (title, artist, album, cover) where it runs, so the
+keyboard and the OS media controls work while no page is open. The manifest's
+`commands` add Alt+Shift+P (play/pause) and Alt+Shift+N (next).
 
 ## Updates
 
@@ -316,6 +412,14 @@ extension.
 
 ## Bridge protocol (as implemented in `src/content.imba`)
 
+Two layers, both specified in `docs/BRIDGE.md`: the request relay below
+(since 0.1.0) and, since 0.3.0, the remote control: a page that posts
+`{melodica:1, type:'subscribe'}` receives `{type:'state', state}` on every
+change of the background's `playerState` (without audio URLs) and may send
+`{type:'command', id, action, …}` for the player actions above; the `ready`
+announcement carries `player: true`. A page that never subscribes sees exactly
+the old protocol.
+
 The content script listens for `message` events on `window` where
 `event.source === window`, `event.origin === location.origin` and
 `event.data && event.data.melodica === 1`.
@@ -355,15 +459,24 @@ endpoint is Pandora's; see "GitHub gate") and then:
    and `--host-resolver-rules` mapping `spacegho.st` to a local https server;
 3. opens the options page and sets the endpoint to the tuner's https URL;
 4. opens `popup.html` as a tab, signs in with the tuner's user, asserts the
-   fixture's stations render, starts the first station, waits for the player
-   tab, asserts the song title/artist and that the `<audio>` element reaches
-   `readyState >= 2` and is not paused, and that the popup mirrors the song;
+   fixture's stations render, starts the first station and asserts that no
+   tab opened, that the popup shows the song, that the background's state is
+   `playing` with the tuner's audio URL and that an offscreen document exists
+   and no player tab; closes the popup and, with no extension page open,
+   asks the service worker twice five seconds apart (its `storage.session`
+   copy and the offscreen engine's own answer) and requires `playing` with
+   the position advanced; opens a new popup (shows the track), then the
+   player tab from it (same track, "Playing in the background", no `<audio>`
+   element, progress advancing), closes the tab and requires playback to
+   continue;
 5. loads melodica-web 0.2.0's built page (vendored in `tests/fixtures`) as
    `https://spacegho.st/melodica/app/`, asserts the content script's
    `ready` announcement, posts `hello` and gets `ready`, posts a `request`
    for `auth.partnerLogin` and gets a `response` with `ok:true`, `status:200`
    and a `Uint8Array` body whose JSON has `stat:"ok"` and a
    `partnerAuthToken`, and that a request for `?method=../../admin` is refused;
+   then the page `subscribe`s, must receive the playing state with no audio
+   URL in it, and pauses and resumes the music with `command`s;
 6. reads the tuner's `/__tuner/log` and requires successful
    `auth.partnerLogin` (twice: the extension's own and the bridged one),
    `auth.userLogin`, `user.getStationList`, `station.getPlaylist` and a
@@ -373,7 +486,10 @@ It writes `tests/artifacts/smoke-extension.json` (`ok`, `platform:
 "browser-extension"`, `summary`, `when`, `steps`, `tuner`, plus `browser`,
 `engine`, `extension`, `audio`, `bridge`, `blocked`, `failedRequests`) and
 `smoke-extension-login.png`, `smoke-extension-stations.png`,
-`smoke-extension-playing.png`, `smoke-extension-bridge.png`. Step 3 also asks
+`smoke-extension-playing.png` (the popup after starting a station),
+`smoke-extension-popup-playing.png` (a new popup, with every other page
+closed in between), `smoke-extension-player-tab.png`,
+`smoke-extension-bridge.png`. Step 3 also asks
 the background (message `state`) which endpoint it will use and requires the
 tuner's, so a save the worker did not pick up fails there, not at login.
 
@@ -391,8 +507,13 @@ requires `https://tuner.pandora.com/*` among the granted origins (Firefox
 grants MV3 `host_permissions` at install; this checks it for a temporary
 install too), requires `browser.storage.session` and a `background.scripts`
 event page, then repeats the tuner proof: endpoint set, popup login, the
-fixture's stations, the player tab's `<audio>` at `readyState >= 2` and not
-paused (a PulseAudio null sink stands in for a sound card). Then the
+fixture's stations, a station started from the popup with no tab opening and
+the background state `playing`; then the tab leaves the extension for
+`about:blank` for 45 s, longer than Firefox's event-page idle timeout, and a
+new popup must find the state still `playing` with the position advanced by
+about that long (`audio.noPage`); the optional player tab shows the same
+track with no `<audio>` of its own and closing it stops nothing (a PulseAudio
+null sink stands in for a sound card). Then the
 Firefox-only part: the endpoint is reset to Pandora, bogus credentials are
 submitted, and the popup must show "Pandora rejected auth.userLogin (code
 1002: invalid login). Wrong email address or password." while the background
@@ -464,9 +585,16 @@ tagged commit; see the release notes for the run of each tag.
 - Proven by the tag's run: the exact `dist/chrome` build loads in Chromium
   and in Brave and the exact `dist/firefox` build in Mozilla Firefox, their
   options/popup/player pages work, the wasm core frames requests the strict
-  tuner accepts, audio plays from the tuner, the bridge protocol round-trips
-  through the content script and background (Chromium and Brave), and the
-  real Pandora accepts the request framing (the bogus-credentials probe).
+  tuner accepts, audio plays from the tuner in the background with no
+  extension page open (5 s measured in Chromium and Brave, 45 s in Firefox),
+  the player tab is a view that can be closed without stopping it, the
+  bridge protocol round-trips through the content script and background and
+  remote-controls the playback (Chromium and Brave), and the real Pandora
+  accepts the request framing (the bogus-credentials probe).
+- **Background playback is measured for seconds, not hours.** Chrome's
+  closing of an idle offscreen document and its recreation, a Firefox
+  event-page termination later than 45 s, and the behaviour across a browser
+  restart or a system sleep are not exercised in CI.
 - **Brave: the stable of the day, Shields at defaults, on Linux.** The job
   does not pin Brave, so each run proves whatever `brave-browser` apt
   installed then (the version is in the report). Shields were not configured;

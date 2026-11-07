@@ -126,10 +126,10 @@ await rm(common, { recursive: true, force: true });
 await mkdir(resolve(common, 'core'), { recursive: true });
 await mkdir(resolve(common, 'icons'), { recursive: true });
 
-for (const [entry, out] of [['src/bg.imba', 'bg.js'], ['src/popup.imba', 'popup.js'], ['src/player.imba', 'player.js'], ['src/options.imba', 'options.js'], ['src/content.imba', 'content.js']]) {
+for (const [entry, out] of [['src/bg.imba', 'bg.js'], ['src/popup.imba', 'popup.js'], ['src/player.imba', 'player.js'], ['src/options.imba', 'options.js'], ['src/content.imba', 'content.js'], ['src/offscreen.imba', 'offscreen.js']]) {
   await bundle(entry, resolve(common, out));
 }
-for (const name of ['popup.html', 'player.html', 'options.html', 'theme.css']) {
+for (const name of ['popup.html', 'player.html', 'options.html', 'offscreen.html', 'theme.css']) {
   await cp(resolve(root, 'public', name), resolve(common, name));
 }
 await cp(corePath, resolve(common, 'core/melodica_core.wasm'));
@@ -137,14 +137,14 @@ await cp(resolve(root, 'LICENSE'), resolve(common, 'LICENSE'));
 for (const size of [48, 128]) await writeFile(resolve(common, `icons/icon-${size}.png`), iconPng(size));
 
 // Guard: no inline scripts or event handler attributes in the pages (MV3 CSP).
-for (const name of ['popup.html', 'player.html', 'options.html']) {
+for (const name of ['popup.html', 'player.html', 'options.html', 'offscreen.html']) {
   const html = await readFile(resolve(common, name), 'utf8');
   if (/<script(?![^>]*\ssrc=)[^>]*>/.test(html) || /\son[a-z]+=/i.test(html)) throw new Error(`${name}: inline script`);
 }
 // Guard: no eval/new Function in the bundles, no innerHTML in our sources
 // (the Imba runtime keeps an innerHTML path for <template> content and SSR
 // hydration that nothing here calls).
-for (const name of ['bg.js', 'popup.js', 'player.js', 'options.js', 'content.js']) {
+for (const name of ['bg.js', 'popup.js', 'player.js', 'options.js', 'content.js', 'offscreen.js']) {
   const js = await readFile(resolve(common, name), 'utf8');
   for (const bad of [/\beval\(/, /new Function\(/]) {
     if (bad.test(js)) throw new Error(`${name}: forbidden construct ${bad}`);
@@ -164,12 +164,20 @@ manifest.version_name = version;
 // Chrome ignores update_url for an unpacked load (the CI smoke), honours it for a .crx
 // installed by policy; Firefox reads gecko.update_url for a self-hosted .xpi.
 const STORE = 'https://spacegho.st/extensions/dl/melodica-extension';
+// Background playback (README "Playback without a tab"): Chromium hosts the audio in an
+// offscreen document (permission `offscreen`); Firefox has no offscreen API, so the audio
+// lives in the background page, which the gecko manifest marks persistent so it is never
+// suspended mid-song (Firefox treats the key as a request; the Firefox smoke measures
+// whether playback survives 45 s with no page open).
 const chrome = structuredClone(manifest);
 delete chrome.browser_specific_settings;
 delete chrome.background.scripts;
+chrome.permissions = [...chrome.permissions, 'offscreen'];
 chrome.update_url = `${STORE}/update.xml`;
 const firefox = structuredClone(manifest);
 delete firefox.version_name;
+delete firefox.background.service_worker;
+firefox.background.persistent = true;
 firefox.browser_specific_settings.gecko.update_url = `${STORE}/updates.json`;
 
 for (const [name, m] of [['chrome', chrome], ['firefox', firefox]]) {
