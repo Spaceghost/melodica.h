@@ -32,6 +32,25 @@
 
 <main id="app" class="app" data-view="loading">
 
+  <section id="view-github" class="view login" hidden>
+    <div class="card login-card">
+      <div class="mark" aria-hidden="true">
+        <svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="54"/><circle cx="60" cy="60" r="38"/><circle cx="60" cy="60" r="22"/><circle class="dot" cx="60" cy="60" r="7"/></svg>
+      </div>
+      <p class="eyebrow">melodica web</p>
+      <h2>Sign in with GitHub</h2>
+      <p class="intro">Sign in with GitHub to use melodica web, then sign in to Pandora as usual.</p>
+      <a id="github-button" class="button primary" href="#" rel="noopener">Sign in with GitHub</a>
+      <div id="github-denied" class="denied" hidden>
+        <p id="github-denied-text" class="message error" role="alert"></p>
+        <button id="github-signout" type="button" class="quiet">Sign out of GitHub</button>
+      </div>
+      <p id="github-message" class="message" role="status"></p>
+      <p class="fine">GitHub sign-in is used for identity only; nothing is stored. The sign-in token stays in this
+        browser's local storage until you sign out.</p>
+    </div>
+  </section>
+
   <section id="view-login" class="view login" hidden>
     <form id="login-form" class="card login-card" autocomplete="on">
       <div class="mark" aria-hidden="true">
@@ -55,6 +74,8 @@
       </p>
       <button id="login-button" type="submit" class="primary">Sign in</button>
       <p id="login-message" class="message" role="status"></p>
+      <p id="github-line" class="fine github-line" hidden>GitHub: <b id="github-login"></b> ·
+        <button id="github-signout-2" type="button" class="link">sign out of GitHub</button></p>
       <p class="fine">Sign-in and API calls pass through the spacegho.st relay (it forwards them
         unchanged and keeps no logs); audio streams straight from Pandora. Add <code>?api=&lt;url&gt;</code>
         to use your own relay, or install the

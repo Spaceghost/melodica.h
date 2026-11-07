@@ -27,10 +27,14 @@ jobs:
         run: node tests/node-smoke.mjs
         env:
           MELODICA_SMOKE_ALLOW_RELAY_BLOCK: '1'
+          # Access token for the gated relay (melodica-site/scripts/mint-token.mjs); absent = skip with a log line.
+          MELODICA_RELAY_TOKEN: ${{ secrets.MELODICA_RELAY_TOKEN }}
       - name: Node unit test (canned Pandora responses)
         run: node tests/node-unit.mjs
       - name: Bridge unit test (fake window, no network)
         run: node tests/bridge-unit.mjs
+      - name: Gate unit test (token handling, no network)
+        run: node tests/gate-unit.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: dist

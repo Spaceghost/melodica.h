@@ -3,6 +3,7 @@
 
 import { PianoClient, PianoError, resolveApiBase } from './piano.js';
 import { BridgeTransport } from './bridge.js';
+import { GithubGate } from './gate.js';
 
 const VERSION = '__MELODICA_WEB_VERSION__';
 const STORAGE = {
@@ -45,6 +46,9 @@ const $ = (id) => document.getElementById(id);
 const el = {
   app: $('app'), status: $('status'),
   viewLogin: $('view-login'), viewPlayer: $('view-player'), viewError: $('view-error'),
+  viewGithub: $('view-github'), githubButton: $('github-button'), githubMessage: $('github-message'),
+  githubDenied: $('github-denied'), githubDeniedText: $('github-denied-text'), githubSignout: $('github-signout'),
+  githubLine: $('github-line'), githubLogin: $('github-login'), githubSignout2: $('github-signout-2'),
   loginForm: $('login-form'), email: $('login-email'), password: $('login-password'),
   remember: $('login-remember'), rememberWarning: $('remember-warning'),
   loginButton: $('login-button'), loginMessage: $('login-message'), fatal: $('fatal-message'),
@@ -88,6 +92,8 @@ const lowerQuality = (q) => QUALITIES[Math.min(QUALITIES.indexOf(q) + 1, QUALITI
 const state = {
   client: null,
   bridge: null,       // BridgeTransport when the page may use the extension bridge
+  gate: null,         // GithubGate (GitHub sign-in gate)
+  gateStatus: null,   // last GithubGate.check() result
   apiBase: '',
   apiFromQuery: false,
   stations: [],
@@ -108,7 +114,7 @@ const state = {
 // ---------------------------------------------------------------- helpers
 
 function show(view) {
-  for (const v of [el.viewLogin, el.viewPlayer, el.viewError]) v.hidden = v !== view;
+  for (const v of [el.viewGithub, el.viewLogin, el.viewPlayer, el.viewError]) v.hidden = v !== view;
   el.app.dataset.view = view.id.replace('view-', '');
   el.account.hidden = view !== el.viewPlayer;
   el.account.open = false;
@@ -779,12 +785,71 @@ async function createStation(token, label) {
   }
 }
 
+// ---------------------------------------------------------------- GitHub gate
+
+// Where GitHub sends the browser back: the hosted app's address (the Worker accepts
+// exactly https://spacegho.st/melodica/app/, so a self-host needs its own Worker).
+const RETURN_TO = location.origin + '/melodica/app/';
+
+// The GitHub sign-in screen. `gate` is a GithubGate.check() result; `note` is an extra
+// line (a relay 401's own message, or a GitHub-side error code).
+function showGithub(gate, note = '') {
+  el.audio.pause();
+  playerMessage('');
+  show(el.viewGithub);
+  const denied = gate && gate.status === 'denied' && gate.login;
+  el.githubDenied.hidden = !denied;
+  el.githubButton.hidden = !!denied;
+  if (denied) {
+    el.githubDeniedText.textContent = `melodica is not available for your GitHub account (${gate.login}).`;
+  } else {
+    el.githubDeniedText.textContent = '';
+    el.githubButton.href = state.gate ? state.gate.startUrl(RETURN_TO) : '#';
+  }
+  message(el.githubMessage, note, note ? 'error' : 'info', 0);
+  (denied ? el.githubSignout : el.githubButton).focus();
+}
+
+// A relay 401 (token missing or not allowed): back to the GitHub screen with the relay's message.
+let routing = null;
+function onUnauthorized(err) {
+  if (routing) return;
+  stopPlayback();
+  state.client.credentials = null;
+  routing = (state.gate ? state.gate.check() : Promise.resolve({ status: 'anonymous' }))
+    .then((gate) => {
+      state.gateStatus = gate;
+      state.client.authToken = state.gate ? state.gate.token : '';
+      showGithub(gate, describeError(err));
+    })
+    .finally(() => { routing = null; });
+}
+
+async function githubSignOut() {
+  if (!state.gate) return;
+  await state.gate.signOut();
+  state.client.authToken = '';
+  state.gateStatus = { status: 'anonymous', token: '', login: '', allowed: false };
+  stopPlayback();
+  state.client.logout();
+  showGithub(state.gateStatus);
+}
+
+// The small "GitHub: <login> · sign out" line on the Pandora login card.
+function updateGithubLine() {
+  const g = state.gateStatus;
+  const signedIn = !!(g && g.login && (g.status === 'allowed' || g.status === 'denied'));
+  el.githubLine.hidden = !signedIn;
+  el.githubLogin.textContent = signedIn ? g.login : '';
+}
+
 // ---------------------------------------------------------------- login
 
 function showLogin() {
   el.audio.pause();
   playerMessage('');
   show(el.viewLogin);
+  updateGithubLine();
   el.email.value = store.get(STORAGE.email) || '';
   const saved = store.get(STORAGE.password);
   el.password.value = saved || '';
@@ -867,6 +932,8 @@ function installEvents() {
     store.set(STORAGE.shortcuts, state.shortcutsOn ? '1' : '0');
   });
   el.logout.addEventListener('click', logout);
+  el.githubSignout.addEventListener('click', githubSignOut);
+  el.githubSignout2.addEventListener('click', githubSignOut);
   el.refreshStations.addEventListener('click', () => loadStations().catch((e) => playerMessage(describeError(e), 'error')));
   el.stationFilter.addEventListener('input', filterStations);
   el.stationFilter.addEventListener('keydown', (ev) => {
@@ -1010,7 +1077,17 @@ async function main() {
   state.apiBase = api.apiBase;
   state.apiFromQuery = api.fromQuery;
   const log = (m) => console.debug('[piano]', m);
-  state.client = new PianoClient({ apiBase: api.apiBase, log });
+  state.client = new PianoClient({ apiBase: api.apiBase, log, onUnauthorized });
+  // The GitHub sign-in gate: the token arrives in the fragment after the GitHub round
+  // trip and lives in localStorage. With ?api= (local dev, the tuner smoke) the GitHub
+  // screen is skipped; the stored token, if any, is still sent to the relay.
+  const authBase = resolveApiBase('../auth/', location.href);
+  state.gate = new GithubGate({ authBase, store, log: (m) => console.debug('[gate]', m) });
+  const arrived = state.gate.takeTokenFromHash(location, history);
+  state.client.authToken = state.gate.token;
+  const gateCheck = api.fromQuery
+    ? Promise.resolve({ status: 'off', token: state.gate.token, login: '', allowed: false, reason: '?api=' })
+    : state.gate.check().catch((err) => ({ status: 'unknown', token: state.gate.token, login: '', allowed: false, reason: describeError(err) }));
   // The extension bridge: say hello now so a content script can answer while
   // the wasm loads. An explicit ?api= wins over it (the CI smoke relies on that).
   if (!api.fromQuery) {
@@ -1027,6 +1104,14 @@ async function main() {
     return;
   }
   updateStatus();
+  const gate = await gateCheck;
+  state.gateStatus = gate;
+  state.client.authToken = state.gate.token; // /auth/me may have refreshed it
+  if (gate.reason) console.debug('[gate]', `${gate.status} (${gate.reason})`);
+  if (gate.status === 'anonymous' || gate.status === 'denied') {
+    showGithub(gate, arrived.error ? `GitHub sign-in did not complete (${arrived.error}). Try again.` : '');
+    return;
+  }
   showLogin();
   if (el.email.value && el.password.value) login(el.email.value, el.password.value);
 }
