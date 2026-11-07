@@ -15,6 +15,10 @@ Each native protocol archive implements its own public functions. Codin consumes
 its Odin dialect source through the actual compiler parser; its generated C does
 not forward protocol operations to the C compatibility implementation.
 
+## Clients
+
+Every Pandora client rebuilt on melodica.h is vendored under [`apps/`](apps/) as a git subtree (Melodica Web, Pithos, Elpis, Epimetheus, Pandoroid, XivPiano, Umbra, pianobar, pianobar for Windows, pydora). Downloads and CI login proof: <https://spacegho.st/melodica/>.
+
 ## Historical libpiano API
 
 `include/piano.h` preserves the upstream structs, enum values, ownership model and
