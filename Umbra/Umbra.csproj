@@ -1,0 +1,44 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+    <PropertyGroup>
+        <OutputPath>..\out\$(Configuration)\</OutputPath>
+		<EnableDefaultNoneItems>true</EnableDefaultNoneItems>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <Authors>Una</Authors>
+        <Company>Una-XIV</Company>
+        <Version>3.1.18</Version>
+        <Description>Umbra UI</Description>
+        <Copyright>(C)2025, by Una</Copyright>
+        <PackageProjectUrl>https://github.com/una-xiv/umbra</PackageProjectUrl>
+        <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
+        <IsPackable>false</IsPackable>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Content Include="Umbra.json" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <EmbeddedResource Include="images\*.png"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <EmbeddedResource Include="udt\**\*.*"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Update="i18n\*.json" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Umbra.Common\Umbra.Common.csproj" />
+        <ProjectReference Include="..\Umbra.Game\Umbra.Game.csproj" />
+        <ProjectReference Include="..\drawing\Una.Drawing\Una.Drawing.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="System.Reflection.MetadataLoadContext" Version="9.0.4" />
+    </ItemGroup>
+</Project>

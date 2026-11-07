@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0-windows7.0": {
+      "DalamudPackager": {
+        "type": "Direct",
+        "requested": "[15.0.0, )",
+        "resolved": "15.0.0",
+        "contentHash": "411vwC8/X8Z/sQ2TI6v3SvOn66xFPeOjFn3Zn+h0d3Ox2t1kFm66AhDvmx/qcMwVrR+Hidxj0dadpQ2dgyXMBQ=="
+      },
+      "DotNet.ReproducibleBuilds": {
+        "type": "Direct",
+        "requested": "[1.2.39, )",
+        "resolved": "1.2.39",
+        "contentHash": "fcFN01tDTIQqDuTwr1jUQK/geofiwjG5DycJQOnC72i1SsLAk1ELe+apBOuZ11UMQG8YKFZG1FgvjZPbqHyatg=="
+      },
+      "System.Reflection.MetadataLoadContext": {
+        "type": "Direct",
+        "requested": "[9.0.4, )",
+        "resolved": "9.0.4",
+        "contentHash": "ygCfi3h1L1f2NCzd8YtTbV6D/+w/pwawzFcAGaN9jevN0/0GvhH1bTAWgZ5qj2tb9hZ/pISv43w8ENe5nkiX0w=="
+      },
+      "SkiaSharp": {
+        "type": "Transitive",
+        "resolved": "3.118.0-preview.1.2",
+        "contentHash": "0ee/n3BGXKjwPGPr4/uOtoAsUWHUrqMnyyJrdxB5NCZ1VjuJA5u++CtY5W0zziBhzpmb8llws+Vgop1KNv9zsQ==",
+        "dependencies": {
+          "SkiaSharp.NativeAssets.Win32": "3.118.0-preview.1.2",
+          "SkiaSharp.NativeAssets.macOS": "3.118.0-preview.1.2"
+        }
+      },
+      "SkiaSharp.NativeAssets.macOS": {
+        "type": "Transitive",
+        "resolved": "3.118.0-preview.1.2",
+        "contentHash": "08uDbkHlSe0NhMmVn9V+KenxiGWU79KONBE3nd+gPh6IwXMSQbWS/j5Di3Gg5vVKDxI8n+m3igBDqQy4ngW9IA=="
+      },
+      "SkiaSharp.NativeAssets.Win32": {
+        "type": "Transitive",
+        "resolved": "3.118.0-preview.1.2",
+        "contentHash": "pjcuvrYCJ74gPdz+W327JcwJKyy5QVXOfVXxAKnih+n1d8b6A0m41LNqlOMhUzfbpl4TDnqB19KraMWZqiaVjg=="
+      },
+      "umbra.common": {
+        "type": "Project"
+      },
+      "umbra.game": {
+        "type": "Project",
+        "dependencies": {
+          "Umbra.Common": "[1.0.0, )"
+        }
+      },
+      "una.drawing": {
+        "type": "Project",
+        "dependencies": {
+          "SkiaSharp": "[3.118.0-preview.1.2, )"
+        }
+      }
+    }
+  }
+}

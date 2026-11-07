@@ -1,0 +1,119 @@
+# On a v* tag: build this private Umbra development snapshot on the bak self-hosted
+# runner and publish it as a GitHub pre-release. See PRIVATE-STATUS.md: this is an
+# unfinished snapshot of Umbra customizations for XivPiano's wheel controls, not a
+# release-ready plugin.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.repository == 'Spaceghost/umbra-piano'
+    runs-on: [self-hosted, linux, x64, bak]
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      DALAMUD_HOME: ${{ github.workspace }}/.dalamud
+      OUT: ${{ github.workspace }}/release
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      DOTNET_NOLOGO: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install build and release tools
+        run: |
+          # The xivpiano-melodica runner shares this host's apt: wait out its lock.
+          apt() { for i in $(seq 1 60); do sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 "$@" && return 0; sleep 15; done; return 1; }
+          apt update
+          apt install -y --no-install-recommends zip unzip curl ca-certificates gh jq
+
+      - uses: actions/setup-dotnet@v4
+        env:
+          # the self-hosted runner cannot write /usr/share/dotnet; the SDK goes in its tool cache
+          DOTNET_INSTALL_DIR: ${{ runner.tool_cache }}/dotnet
+        with:
+          dotnet-version: |
+            9.0.x
+            10.0.x
+
+      - name: Fetch the Dalamud reference assemblies
+        run: |
+          set -euo pipefail
+          mkdir -p "$DALAMUD_HOME"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/dalamud.zip" https://goatcorp.github.io/dalamud-distrib/latest.zip
+          unzip -q -o "$RUNNER_TEMP/dalamud.zip" -d "$DALAMUD_HOME"
+          test -f "$DALAMUD_HOME/Dalamud.dll"
+
+      - name: Restore
+        run: dotnet restore Umbra.sln
+
+      - name: Build
+        run: dotnet build Umbra.sln -c Release --no-restore
+
+      - name: Package
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          mkdir -p "$OUT"
+          bin=out/Release
+          ls -R "$bin" | head -80
+          stage="$RUNNER_TEMP/umbra-stage"
+          rm -rf "$stage"; mkdir -p "$stage"
+          if [[ -f "$bin/Umbra/latest.zip" ]]; then
+            # DalamudPackager's own plugin folder zip
+            unzip -q "$bin/Umbra/latest.zip" -d "$stage"
+          else
+            ( cd "$bin" && find . -maxdepth 1 -type f \( -name '*.dll' -o -name 'Umbra.json' \) ! -name '*.pdb' -exec cp {} "$stage/" \; )
+            [[ -d "$bin/i18n" ]] && cp -r "$bin/i18n" "$stage/"
+          fi
+          test -f "$stage/Umbra.dll"
+          test -f "$stage/Umbra.json"
+          ( cd "$stage" && find . -type f | LC_ALL=C sort | sed 's|^\./||' | TZ=UTC zip -X -D -q "$OUT/Umbra-piano-$version.zip" -@ )
+          cd "$OUT"
+          unzip -l "Umbra-piano-$version.zip"
+          sha256sum -- * >SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish the pre-release for this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          title="Umbra piano $version (development snapshot)"
+          {
+            printf '> [!WARNING]\n> **Development snapshot, not release-ready.** This is an unfinished snapshot of Umbra customizations for XivPiano'"'"'s mouse-wheel controls (scroll direction forwarded through DTR interactions in the combined and single DTR widgets), preserved as described in [PRIVATE-STATUS.md](https://github.com/%s/blob/%s/PRIVATE-STATUS.md). It has not been reviewed, cleaned up, or verified in the game.\n\n' "$GH_REPO" "$SHA"
+            printf 'Built from commit %s on the release runner with `dotnet build Umbra.sln -c Release` against the current Dalamud distribution. Upstream: [una-xiv/umbra](https://github.com/una-xiv/umbra), base commit `cbd0052`; the AGPL-3.0-or-later license and attribution are retained.\n\n' "${SHA:0:7}"
+            printf '## Files\n\n* `Umbra-piano-%s.zip`: the plugin folder (Umbra.dll, Umbra.Common.dll, Umbra.Game.dll, Una.Drawing.dll, Umbra.json, i18n). Install as a dev plugin only; it uses the same InternalName as the published Umbra and must not be loaded beside it.\n* `SHA256SUMS`\n' "$version"
+          } >"$RUNNER_TEMP/notes.md"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$OUT"/* --clobber
+            gh release edit "$TAG" --prerelease --latest=false --title "$title" --notes-file "$RUNNER_TEMP/notes.md"
+          else
+            gh release create "$TAG" "$OUT"/* --verify-tag --prerelease --latest=false \
+              --title "$title" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: umbra-piano-${{ github.ref_name }}
+          path: ${{ github.workspace }}/release
+          if-no-files-found: error
+          retention-days: 30
