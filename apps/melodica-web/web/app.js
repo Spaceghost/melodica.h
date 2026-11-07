@@ -25,6 +25,14 @@ const IDLE_TITLE = 'melodica — Pandora in the browser';
 const RATING_WORD = { 1: 'loved', 2: 'banned', 3: 'tired' };
 const QUALITIES = ['high', 'medium', 'low'];
 
+// Pandora hands out album-art links with an http:// scheme; the page is https and its
+// CSP only allows https images, so upgrade them (the image hosts all serve https).
+function artUrl(song) {
+  const u = (song && song.coverArt) || '';
+  // Only on an https page: a plain-http page (local dev, the CI smoke) can load http art as is.
+  return location.protocol === 'https:' ? u.replace(/^http:\/\//i, 'https://') : u;
+}
+
 // Fallback cover: a gold record on ink, used whenever Pandora sends no art.
 const FALLBACK_COVER = 'data:image/svg+xml;utf8,' + encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">' +
@@ -291,6 +299,7 @@ async function deleteStation(st) {
 function setCover(url) {
   el.cover.src = url || FALLBACK_COVER;
   el.wash.src = url || 'data:,';
+  if (url) el.cover.addEventListener('error', () => { el.cover.src = FALLBACK_COVER; el.wash.src = 'data:,'; }, { once: true });
 }
 
 function setPlayIcon(playing) {
@@ -396,7 +405,8 @@ function renderHistory() {
     img.className = 'hist-cover';
     img.alt = '';
     img.loading = 'lazy';
-    img.src = song.coverArt || FALLBACK_COVER;
+    img.src = artUrl(song) || FALLBACK_COVER;
+    img.addEventListener('error', () => { img.src = FALLBACK_COVER; }, { once: true });
     const meta = document.createElement('div');
     meta.className = 'hist-meta';
     const t = document.createElement('span');
@@ -557,7 +567,7 @@ function playSong(song) {
   el.station.textContent = state.station ? `on ${state.station.name}` : '';
   el.miniTitle.textContent = song.title || '';
   el.miniArtist.textContent = song.artist || '';
-  setCover(song.coverArt || '');
+  setCover(artUrl(song));
   el.cover.alt = song.coverArt && song.album ? `Cover of ${song.album}` : '';
   lastLen = -1;
   setProgress(0, song.duration || 0);
@@ -701,7 +711,7 @@ function updateMediaSession(song) {
       title: song.title || '',
       artist: song.artist || '',
       album: song.album || '',
-      artwork: song.coverArt ? [{ src: song.coverArt }] : [],
+      artwork: artUrl(song) ? [{ src: artUrl(song) }] : [],
     });
     navigator.mediaSession.playbackState = 'playing';
   } catch (_) { /* ignore */ }
