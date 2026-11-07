@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""Pianobar event command that retains completed streams with rich metadata."""
+
+import os
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve()
+for binding in (
+    HERE.parents[1] / "vendor/melodica.h/bindings/python",
+    Path("/usr/local/share/pianobar/python"),
+    Path("/usr/share/pianobar/python"),
+):
+    if binding.is_dir():
+        sys.path.insert(0, str(binding))
+        break
+
+from melodica import OfflineLibrary
+
+
+def read_event():
+    values = {}
+    for line in sys.stdin:
+        key, separator, value = line.rstrip("\n").partition("=")
+        if separator:
+            values[key] = value
+    return values
+
+
+def main():
+    event = read_event()
+    event_name = sys.argv[1] if len(sys.argv) >= 2 else ""
+    if event_name not in ("songstart", "songfinish"):
+        return 0
+
+    child = os.fork()
+    if child:
+        return 0
+
+    os.setsid()
+    devnull = os.open(os.devnull, os.O_RDWR)
+    for fd in (0, 1, 2):
+        os.dup2(devnull, fd)
+
+    metadata = {
+        "artist": event.get("artist"),
+        "album": event.get("album"),
+        "title": event.get("title"),
+        "duration": int(event.get("songDuration") or 0),
+        "station": event.get("songStationName") or event.get("stationName"),
+        "station_id": event.get("stationId"),
+        "music_id": event.get("musicId"),
+        "rating": event.get("rating"),
+        "album_art_url": event.get("coverArt"),
+        "detail_url": event.get("detailUrl"),
+        "client": "pianobar",
+        "protocol": "melodica.h",
+    }
+    try:
+        library = OfflineLibrary()
+        if event_name == "songfinish":
+            library.record_play(metadata, "pianobar")
+        elif event.get("audioUrl") and library.lookup(metadata) is None:
+            library.capture(event["audioUrl"], metadata)
+    finally:
+        os._exit(0)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
