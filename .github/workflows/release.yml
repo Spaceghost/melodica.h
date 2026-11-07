@@ -1,0 +1,370 @@
+# On a v* tag: build the melodica.h-backed XivPiano Dalamud plugin on the bak self-hosted
+# runner, run the native and managed checks, package it, prove the released core headless
+# (the smoke job), and publish a GitHub Release. A workflow_dispatch runs the build and the
+# smoke test only: nothing is published.
+#
+# This is the private melodica.h mirror of Spaceghost/xivpiano-dalamud. Tags look like
+# v0.1.2-melodica.1: the public sibling's version plus a melodica build number. A tag
+# with -test. in it is published as a prerelease; every other tag is a normal release.
+#
+# Nothing here needs the game or a Dalamud install: the reference assemblies come from
+# goatcorp's public distribution, and the Windows x64 bridge DLL is cross-compiled with
+# the pinned Zig and exercised under Wine. The plugin's own windows are Dalamud ImGui
+# windows drawn by the game: no job here can render them, and none claims to.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+
+jobs:
+  build:
+    if: github.repository == 'Spaceghost/xivpiano-melodica'
+    runs-on: [self-hosted, linux, x64, bak]
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    env:
+      DALAMUD_HOME: ${{ github.workspace }}/.dalamud
+      OUT: ${{ github.workspace }}/release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install native build, headless Windows test and release tools
+        run: |
+          sudo apt-get -o DPkg::Lock::Timeout=900 update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=900 install -y --no-install-recommends \
+            gcc clang binutils libc6-dev wine64 wine xvfb xauth zip unzip curl ca-certificates \
+            python3 gh jq
+          tools/fetch-zig.sh
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        env:
+          # the self-hosted runner cannot write /usr/share/dotnet; the SDK goes in its tool cache
+          DOTNET_INSTALL_DIR: ${{ runner.tool_cache }}/dotnet
+        with:
+          global-json-file: global.json
+
+      - name: Name this build
+        id: tag
+        env:
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          RUN: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          if [[ "$REF" == refs/tags/* ]]; then
+            tools/check-manifest.py --tag "$REF_NAME"
+            tag="$REF_NAME"
+          else
+            tools/check-manifest.py
+            version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["AssemblyVersion"].rsplit(".", 1)[0])' src/XivPiano.Plugin/XivPiano.json)"
+            tag="v$version-dispatch.$RUN"
+          fi
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "building $tag"
+
+      - name: Fetch the Dalamud reference assemblies
+        run: tools/fetch-dalamud.sh
+
+      - name: Native Linux and Windows DLL smoke tests
+        run: tools/test-melodica-native.sh
+
+      - name: Strict Clang and native allocation/UB checks
+        run: |
+          CC=clang XIVPIANO_NATIVE_BUILD="$PWD/native/build/clang" tools/test-melodica-native.sh --linux
+          tools/test-melodica-sanitizers.sh
+
+      - name: Native packaging regressions
+        run: python3 tools/ci/test_native_packaging.py
+
+      - name: Test
+        run: dotnet test tests/XivPiano.Core.Tests -c Release
+
+      - name: Windows managed tests using the extracted DLL path
+        run: tools/test-melodica-managed-windows.sh
+
+      - name: Build
+        run: dotnet build src/XivPiano.Plugin/XivPiano.Plugin.csproj -c Release
+
+      - name: Package
+        env:
+          TESTING: '0'
+        run: tools/package.sh
+
+      - name: Name the release files
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          cd "$OUT"
+          for f in latest.zip pluginmaster.json; do
+            [[ -s "$f" ]] || { echo "::error::$f is missing"; exit 1; }
+          done
+          python3 -c 'import json,sys; json.load(open(sys.argv[1]))' pluginmaster.json
+          # The self-describing zip carries the tag, not just the four-part AssemblyVersion.
+          rm -f XivPiano-*.zip
+          cp latest.zip "XivPiano-${TAG#v}.zip"
+          unzip -Z1 "XivPiano-${TAG#v}.zip" | grep -qxF XivPiano.dll
+          unzip -Z1 "XivPiano-${TAG#v}.zip" | grep -qxF runtimes/win-x64/native/xivpiano_melodica.dll
+          sha256sum -- *
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: xivpiano-plugin-${{ steps.tag.outputs.tag }}
+          path: ${{ github.workspace }}/release
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Keep native and Windows managed test evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: melodica-tests-${{ steps.tag.outputs.tag }}
+          path: |
+            native/build/artifacts-*.json
+            native/build/linux-x64/exports.txt
+            native/build/linux-x64/bridge-smoke.log
+            native/build/win-x64/exports.txt
+            native/build/win-x64/bridge-smoke.log
+            native/build/clang/linux-x64/bridge-smoke.log
+            native/build/asan/bridge-smoke.log
+            native/build/managed-windows/managed-smoke.log
+            native/build/managed-windows/managed-proof.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  # The headless proof of the released core: XivPiano.Core.dll out of the zip the build job
+  # packaged, loading the melodica native bridge, driven by tools/smoke/XivPiano.Smoke. The
+  # report (smoke-core.json, smoke-core.txt) is published with the release whatever it says;
+  # ok is true only when login, station list and playlist all went through.
+  smoke:
+    needs: build
+    runs-on: [self-hosted, linux, x64, bak]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ needs.build.outputs.tag }}
+      OUT: ${{ github.workspace }}/smoke
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the native build tools
+        run: |
+          sudo apt-get -o DPkg::Lock::Timeout=900 update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=900 install -y --no-install-recommends \
+            gcc binutils libc6-dev wine64 wine xvfb xauth unzip python3 ca-certificates
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.tool_cache }}/dotnet
+        with:
+          global-json-file: global.json
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: xivpiano-plugin-${{ needs.build.outputs.tag }}
+          path: ${{ github.workspace }}/release
+
+      # A Pandora-protocol server on this runner: tuner.pandora.com and internal-tuner.pandora.com
+      # are pointed at 127.0.0.1 in /etc/hosts and its CA goes into the system store (both with sudo;
+      # the cleanup step below takes them out again, this runner is not disposable). The harness
+      # on Linux trusts the CA through XIVPIANO_CA_BUNDLE; under Wine, whose crypt32 cannot build
+      # that custom-root chain, the released bridge DLL run relies on Wine's own root store, which
+      # imports the system store, and on the hosts name (its SChannel does not match IP certificates).
+      - uses: Spaceghost/melodica-tuner@v1
+        id: tuner
+        with:
+          hosts-override: 'true'
+          install-ca: 'true'
+          # explicit, uncommon ports: this runner is shared with other repositories' tuner jobs
+          https-port: '8743'
+          http-port: '8780'
+
+      - name: Run the released core headless against melodica-tuner
+        id: harness
+        env:
+          XIVPIANO_SMOKE_WINE: '1'
+          XIVPIANO_SMOKE_WINE_REQUIRED: '1'
+          XIVPIANO_SMOKE_EXPECT_TUNER: '1'
+          XIVPIANO_API_HOST: tuner.pandora.com:${{ steps.tuner.outputs.https-port }}
+          XIVPIANO_CA_BUNDLE: ${{ steps.tuner.outputs.ca-path }}
+          XIVPIANO_TUNER_USER: ${{ steps.tuner.outputs.user }}
+          XIVPIANO_TUNER_PASSWORD: ${{ steps.tuner.outputs.password }}
+          XIVPIANO_TUNER_URL: ${{ steps.tuner.outputs.url }}
+          HEALTH_URL: ${{ steps.tuner.outputs.http-url }}/__tuner/health
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT"
+          curl -fsS "$HEALTH_URL"; echo
+          XIVPIANO_TUNER_VERSION="$(curl -fsS "$HEALTH_URL" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version", "unknown"))')"
+          export XIVPIANO_TUNER_VERSION
+          tools/smoke-core.sh "release/XivPiano-${TAG#v}.zip" "$OUT"
+
+      - name: Check the tuner's request log against the reports
+        if: always() && steps.tuner.outcome == 'success'
+        env:
+          LOG_URL: ${{ steps.tuner.outputs.log-url }}
+          HEALTH_URL: ${{ steps.tuner.outputs.http-url }}/__tuner/health
+        run: |
+          set -euo pipefail
+          reports=()
+          for r in "$OUT/smoke-core.json" "$OUT/wine/smoke-core.json"; do [[ -f "$r" ]] && reports+=("$r"); done
+          [[ ${#reports[@]} -gt 0 ]] || { echo "::error::the harness wrote no report"; exit 1; }
+          tools/smoke-assert-tuner.py --log-url "$LOG_URL" --health-url "$HEALTH_URL" --out "$OUT/tuner-log.json" "${reports[@]}"
+
+      - name: Show the reports
+        if: always()
+        run: |
+          [[ -f "$OUT/smoke-core.json" ]] && cat "$OUT/smoke-core.json" || echo "no smoke-core.json was written"
+          [[ -f "$OUT/wine/smoke-core.json" ]] && cat "$OUT/wine/smoke-core.json" || true
+
+      - name: Stop the tuner and undo its hosts and trust-store changes
+        if: always() && steps.tuner.outcome != 'skipped'
+        env:
+          PID: ${{ steps.tuner.outputs.pid }}
+          CA: ${{ steps.tuner.outputs.ca-path }}
+        # Only what this job added: the runner is shared, other repositories' tuner jobs may be
+        # running beside this one with their own line, CA file and process.
+        run: |
+          set -uo pipefail
+          # the step shell is bash -e: a pkill with no children, or an already-exited tuner, must not end it
+          if [[ -n "$PID" ]]; then sudo pkill -P "$PID" 2>/dev/null || true; sudo kill "$PID" 2>/dev/null || true; fi
+          sudo sed -i '0,/^127\.0\.0\.1 tuner\.pandora\.com www\.pandora\.com internal-tuner\.pandora\.com$/{//d}' /etc/hosts
+          if [[ -n "$CA" ]] && cmp -s "$CA" /usr/local/share/ca-certificates/melodica-tuner.crt; then
+            sudo rm -f /usr/local/share/ca-certificates/melodica-tuner.crt
+            sudo update-ca-certificates --fresh >/dev/null || true
+          fi
+          grep -c 'tuner\.pandora\.com' /etc/hosts || true
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: smoke-core-${{ needs.build.outputs.tag }}
+          path: ${{ github.workspace }}/smoke
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    needs: [build, smoke]
+    if: always() && needs.build.result == 'success' && startsWith(github.ref, 'refs/tags/')
+    runs-on: [self-hosted, linux, x64, bak]
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.ref_name }}
+      OUT: ${{ github.workspace }}/release
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: xivpiano-plugin-${{ github.ref_name }}
+          path: ${{ github.workspace }}/release
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        continue-on-error: true
+        with:
+          name: smoke-core-${{ github.ref_name }}
+          path: ${{ github.workspace }}/smoke
+
+      - name: Collect the smoke report, and write SHA256SUMS
+        env:
+          SMOKE_RESULT: ${{ needs.smoke.result }}
+        run: |
+          set -euo pipefail
+          cd "$OUT"
+          if [[ -f ../smoke/smoke-core.json ]]; then
+            cp ../smoke/smoke-core.json ../smoke/smoke-core.txt .
+          else
+            python3 - "$SMOKE_RESULT" <<'PY'
+          import json, sys, datetime
+          json.dump({"ok": False, "platform": "core (headless)", "summary": "the smoke job (" + sys.argv[1] + ") wrote no report; in-game UI not observed",
+                     "when": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "steps": [], "tuner": "none"},
+                    open("smoke-core.json", "w"), indent=2)
+          open("smoke-core.txt", "w").write("the smoke job ended " + sys.argv[1] + " without writing a report\n")
+          PY
+          fi
+          if [[ -f ../smoke/wine/smoke-core.json ]]; then
+            cp ../smoke/wine/smoke-core.json smoke-core-wine.json
+            cp ../smoke/wine/smoke-core.txt smoke-core-wine.txt
+          fi
+          [[ -f ../smoke/tuner-log.json ]] && cp ../smoke/tuner-log.json .
+          rm -f SHA256SUMS
+          sha256sum -- * >SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Write the release notes
+        env:
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          printf 'XivPiano %s (melodica.h)\n' "$version" >"$RUNNER_TEMP/title.txt"
+          smoke="$(python3 - "$OUT/smoke-core.json" <<'PY'
+          import json, sys
+          r = json.load(open(sys.argv[1]))
+          steps = ", ".join(r.get("steps", [])) or "none"
+          print(("passed" if r.get("ok") else "did not pass") + " (" + r.get("platform", "?") + "): " + r.get("summary", "") + ". Steps: " + steps + ".")
+          PY
+          )"
+          {
+            printf 'XivPiano built from this mirror with the Pandora protocol backend provided by [melodica.h](https://github.com/Spaceghost/melodica.h): the vendored libpiano C implementation, cross-compiled to a Windows x64 bridge (`runtimes/win-x64/native/xivpiano_melodica.dll`) that the plugin loads on Windows and under Wine.\n\n'
+            printf 'Commit %s, tag `%s`. The public sibling is [Spaceghost/xivpiano-dalamud](https://github.com/Spaceghost/xivpiano-dalamud).\n\n' "${SHA:0:7}" "$TAG"
+            printf '## Install\n\n'
+            printf '* **Dev plugin:** unzip `XivPiano-%s.zip` into a folder (for example `%%APPDATA%%\\XIVLauncher\\devPlugins\\XivPiano\\`, or `~/.xlcore/devPlugins/XivPiano/` under XIVLauncher.Core), then enable it from Dalamud'"'"'s *Plugin Installer* > *Dev Tools*.\n' "$version"
+            printf '* **Custom repository:** add `https://github.com/%s/releases/latest/download/pluginmaster.json` as a custom plugin repository in Dalamud settings; this is a private repository, so that URL only resolves for an account that can read it.\n\n' "$REPO"
+            printf '## Files\n\n'
+            printf '* `XivPiano-%s.zip` and `latest.zip`: the same plugin folder (XivPiano.dll, XivPiano.Core.dll, XivPiano.json, NAudio, NLayer, the melodica bridge DLL and its licenses).\n' "$version"
+            printf '* `pluginmaster.json`: one-entry Dalamud repository listing pointing at `latest.zip`.\n'
+            printf '* `smoke-core.json`, `smoke-core.txt`: the headless smoke test of the released core (below) on Linux; `smoke-core-wine.*`: the same under Wine with the released win-x64 bridge DLL; `tuner-log.json`: the melodica-tuner request log of both.\n'
+            printf '* `SHA256SUMS`\n\n'
+            printf '## Verification\n\n'
+            printf 'This build passed the native bridge smoke tests on Linux and under Wine, the ASan/UBSan run, the managed test suite on Linux and as an extracted win-x64 deployment under Wine, and the Dalamud API 15 Release build, all on the release runner.\n\n'
+            printf 'Headless smoke test of the released core: %s\n\n' "$smoke"
+            printf 'It has not been loaded in the game as part of this release; the plugin'"'"'s windows are drawn by the game, so no job here renders or observes them.\n'
+          } >"$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+
+      - name: Publish the release for this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          title="$(cat "$RUNNER_TEMP/title.txt")"
+          kind=(--latest)
+          [[ "$TAG" == *-test.* ]] && kind=(--prerelease --latest=false)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$OUT"/* --clobber
+            gh release edit "$TAG" --title "$title" --notes-file "$RUNNER_TEMP/notes.md"
+          else
+            gh release create "$TAG" "$OUT"/* --verify-tag --title "$title" \
+              --notes-file "$RUNNER_TEMP/notes.md" "${kind[@]}"
+          fi
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: xivpiano-release-${{ github.ref_name }}
+          path: ${{ github.workspace }}/release
+          if-no-files-found: error
+          retention-days: 30
