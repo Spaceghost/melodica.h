@@ -999,9 +999,10 @@ function renderRemote(rs) {
   if (rs.status === 'error' && rs.error && !needsLogin) playerMessage(rs.error, 'error', 0);
   else if (rs.status === 'loading') playerMessage('Loading…', 'info', 0);
   else if (el.playerMessage.textContent === 'Loading…' || /^Loading .*…$/.test(el.playerMessage.textContent)) playerMessage('');
-  const who = rs.gate && rs.gate.login ? `Playing in the melodica extension (${rs.gate.login})` : 'Playing in the melodica extension';
-  el.signedIn.textContent = 'melodica extension';
-  el.signedInFull.textContent = who;
+  // The extension's username (0.5.4+ sends user: {username, …}); never an email.
+  const name = !needsLogin && rs.user && typeof rs.user.username === 'string' ? rs.user.username : '';
+  el.signedIn.textContent = name || 'melodica extension';
+  el.signedInFull.textContent = name ? `Playing in the melodica extension as ${name}` : 'Playing in the melodica extension';
 }
 
 function enterRemote() {

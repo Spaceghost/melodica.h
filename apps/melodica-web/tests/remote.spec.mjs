@@ -96,7 +96,7 @@ function fakeExtension(opts) {
   const st = {
     status: 'idle', station: null, track: null, position: 0, duration: 0, volume: 70, quality: 'high',
     queueLength: 0, error: '', history: [], changedAt: Date.now(), loggedIn: opts.loggedIn !== false,
-    gate: { mode: 'allowed', login: 'alice' },
+    user: { username: 'moonlit', chosen: true, suggested: '', notice: '', prompt: false },
     stations: opts.loggedIn === false ? [] : [
       { token: 'QM', name: 'QuickMix', isQuickMix: true, allowDelete: false },
       { token: 'S1', name: 'Aurora Fields Radio', isQuickMix: false, allowDelete: true },
@@ -208,6 +208,10 @@ test.describe.serial('remote mode (the extension plays, the page is a view)', ()
       await expect(page.locator('#status')).toContainText('playing in melodica extension 0.3.0');
       await expect(page.locator('#view-login')).toBeHidden();
       await expect(page.locator('#search-form')).toBeHidden();
+      // The extension's username in the account chip (0.5.4+ state.user), never an email.
+      await expect(page.locator('#signed-in')).toHaveText('moonlit');
+      await expect(page.locator('#signed-in-full')).toHaveText('Playing in the melodica extension as moonlit');
+      await expect(page.locator('#username-change')).toBeHidden();
       // The station list comes from the extension's state; no delete buttons (no such command).
       const stations = page.locator('#station-list button.station');
       await expect(stations).toHaveText(['QuickMix', 'Aurora Fields Radio', 'Band Two Radio']);
