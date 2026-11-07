@@ -59,6 +59,8 @@ jobs:
           {
             echo "melodica-web $v: a Pandora client that runs entirely in the browser."
             echo
+            echo "With the melodica browser extension 0.3.0 or later installed, the extension plays in the background and this page is a view of it and a remote for it (no tab needed for playback); without it the page plays by itself as before."
+            echo
             echo "The hosted copy and its relay require signing in with GitHub (identity only, no scopes, nothing stored server-side); the player says so on its sign-in screen."
             echo
             echo "[melodica.h](https://github.com/Spaceghost/melodica.h)'s portable libpiano-compatible C implementation is compiled to WebAssembly; it speaks Pandora's JSON API (including the Blowfish-encrypted request bodies) while the browser does the HTTP through a small relay and plays the audio with an \`<audio>\` element. No framework, no bundler, no external scripts; it works under a strict CSP (\`script-src 'self' 'wasm-unsafe-eval'\`)."

@@ -255,21 +255,26 @@ test.describe.serial('melodica-web in Chromium', () => {
     test.skip(!HOSTED, 'hosted page only (MELODICA_APP_URL)');
     const evidence = await openApp(page, HOSTED, { token: '' });
     try {
+      // Node's fetch from a datacenter may be answered by Cloudflare's challenge page
+      // (the browser above was not); then only what the browser shows is evidence.
       const me = await fetch(new URL('../auth/me', HOSTED));
       const meBody = (await me.text()).slice(0, 200);
-      info.annotations.push({ type: 'auth/me', description: `HTTP ${me.status} ${meBody}` });
-      console.log(`GET /melodica/auth/me without a token -> HTTP ${me.status} ${meBody}`);
+      const meChallenged = me.status === 403 && /Just a moment|cf-chl|challenge/i.test(meBody);
+      info.annotations.push({ type: 'auth/me', description: `HTTP ${me.status} ${meChallenged ? '(Cloudflare challenge)' : meBody}` });
+      console.log(`GET /melodica/auth/me without a token -> HTTP ${me.status} ${meChallenged ? '(Cloudflare challenge page; not evidence of the Worker)' : meBody}`);
       expect(evidence.challenged, 'Cloudflare answered with a challenge page instead of the app').toBe(false);
       await expect(page.locator('#app')).not.toHaveAttribute('data-view', 'loading', { timeout: 30_000 });
       const view = await page.locator('#app').getAttribute('data-view');
+      console.log(`the hosted page settled on data-view="${view}"`);
       await page.screenshot({ path: resolve(ARTIFACTS, 'hosted-gate.png') });
       await info.attach('hosted-gate', { path: resolve(ARTIFACTS, 'hosted-gate.png'), contentType: 'image/png' });
-      if (me.status === 503) {
-        console.log('the gate is not configured on the hosted Worker (503): the Pandora login shows directly');
-        expect(view).toBe('login');
+      if (!meChallenged) expect([401, 503], '/auth/me without a token').toContain(me.status);
+      if (view === 'login') {
+        console.log('the Pandora login shows directly: the gate is not configured on the hosted Worker (503 from /auth/me)');
+        if (!meChallenged) expect(me.status).toBe(503);
       } else {
-        expect(me.status, '/auth/me without a token').toBe(401);
         expect(view).toBe('github');
+        if (!meChallenged) expect(me.status).toBe(401);
         const origin = new URL(HOSTED).origin;
         expect(await page.locator('#github-button').getAttribute('href')).toBe(`${origin}/melodica/auth/start?return_to=${encodeURIComponent(`${origin}/melodica/app/`)}`);
         await expect(page.locator('#view-github')).toContainText('Sign in with GitHub to use melodica web');

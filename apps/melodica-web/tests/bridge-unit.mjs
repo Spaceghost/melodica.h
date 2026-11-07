@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = resolve(process.env.MELODICA_DIST || resolve(here, '..', 'dist'));
-const { BridgeTransport, BridgeError, BRIDGE_TIMEOUT_MS, bodyToText } = await import(pathToFileURL(resolve(dist, 'bridge.js')).href);
+const { BridgeTransport, BridgeError, BRIDGE_TIMEOUT_MS, SUBSCRIBE_TIMEOUT_MS, bodyToText } = await import(pathToFileURL(resolve(dist, 'bridge.js')).href);
 const { PianoClient, PianoError } = await import(pathToFileURL(resolve(dist, 'piano.js')).href);
 
 const log = (...a) => console.log('[bridge-unit]', ...a);
@@ -206,6 +206,61 @@ assert.equal(bodyToText(undefined), '');
   assert.equal(relayCalls.length, 4);
   assert.equal(client.transport, 'bridge');
   log('PianoClient.post precedence and fallback ok');
+}
+
+// --- remote control: subscribe / state / command / result ------------------------
+{
+  assert.equal(SUBSCRIBE_TIMEOUT_MS, 1_000, 'remote mode is decided within 1 s of subscribing');
+  const win = fakeWindow();
+  const bridge = new BridgeTransport(win).start();
+  win.inject({ melodica: 1, type: 'ready', name: 'melodica-extension', version: '0.3.0', player: true });
+  assert.equal(bridge.player, true, 'ready says player: true');
+
+  // A 0.3.0 extension: answers subscribe with a state at once, then pushes more.
+  const pushed = [];
+  const p = bridge.subscribe((st) => pushed.push(st), 200);
+  assert.deepEqual(win.posted.at(-1).data, { melodica: 1, type: 'subscribe' });
+  win.inject({ melodica: 1, type: 'state', state: { status: 'idle', n: 1 } });
+  assert.deepEqual(await p, { status: 'idle', n: 1 }, 'the first state resolves subscribe');
+  win.inject({ melodica: 1, type: 'state', state: { status: 'playing', n: 2 } });
+  win.inject({ melodica: 1, type: 'state' }); // no state object: ignored
+  win.inject({ melodica: 1, type: 'state', state: { n: 3 } }, { origin: 'https://evil.example' }); // filtered
+  assert.deepEqual(pushed, [{ status: 'playing', n: 2 }]);
+
+  // Commands carry action and fields; results pair by id; a 'response' with that id does not resolve a command.
+  const c = bridge.command('play', { station: { token: 'S1', name: 'One' } }, 200);
+  const cmd = win.posted.at(-1).data;
+  assert.equal(cmd.type, 'command');
+  assert.equal(cmd.action, 'play');
+  assert.deepEqual(cmd.station, { token: 'S1', name: 'One' });
+  assert.equal(typeof cmd.id, 'string');
+  win.inject({ melodica: 1, type: 'response', id: cmd.id, ok: true, status: 200 });
+  win.inject({ melodica: 1, type: 'result', id: cmd.id, ok: true, state: { status: 'loading' } });
+  assert.deepEqual(await c, { ok: true, error: '', state: { status: 'loading' } });
+  const bad = bridge.command('next', {}, 200);
+  win.inject({ melodica: 1, type: 'result', id: win.posted.at(-1).data.id, ok: false, error: 'not signed in' });
+  assert.deepEqual(await bad, { ok: false, error: 'not signed in', state: null });
+  // A request is not resolved by a 'result'.
+  const r = bridge.request('?method=x', enc(''));
+  win.inject({ melodica: 1, type: 'result', id: win.posted.at(-1).data.id, ok: true });
+  win.inject({ melodica: 1, type: 'response', id: win.posted.at(-1).data.id, ok: true, status: 200, body: enc('R') });
+  assert.equal(bodyToText((await r).body), 'R');
+  await assert.rejects(bridge.command('pause', {}, 50), (err) => err instanceof BridgeError && err.kind === 'timeout');
+
+  bridge.unsubscribe();
+  assert.deepEqual(win.posted.at(-1).data, { melodica: 1, type: 'unsubscribe' });
+  win.inject({ melodica: 1, type: 'state', state: { n: 4 } });
+  assert.equal(pushed.length, 1, 'no states after unsubscribe');
+
+  // An older extension ignores subscribe: null after the timeout, and an unsubscribe is sent.
+  const old = new BridgeTransport(fakeWindow()).start();
+  old.win.inject({ melodica: 1, type: 'ready', name: 'melodica extension', version: '0.1.0' });
+  assert.equal(old.player, false);
+  const t0 = Date.now();
+  assert.equal(await old.subscribe(() => {}, 100), null);
+  assert.ok(Date.now() - t0 >= 90);
+  assert.deepEqual(old.win.posted.at(-1).data, { melodica: 1, type: 'unsubscribe' });
+  log('remote control ok');
 }
 
 log('ALL OK');

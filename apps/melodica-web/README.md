@@ -89,7 +89,8 @@ browser                                   relay                     Pandora
 - `web/bridge.js` is the extension bridge: the
   [melodica browser extension](https://spacegho.st/melodica/#melodica-extension)'s
   content script can carry the API calls straight to tuner.pandora.com
-  instead of the relay (see "Extension bridge" below).
+  instead of the relay (see "Extension bridge" below), and since extension
+  0.3.0 play in the background with this page as its remote ("Remote mode").
 - `web/gate.js` is the client side of the GitHub sign-in gate (see above):
   token in, `/auth/me`, token out.
 
@@ -226,6 +227,20 @@ header; with `?api=` the screen is skipped and the token still reaches the
 relay. Screenshots: `gate-anonymous.png`, `gate-denied.png`,
 `gate-relay-401.png`.
 
+`tests/remote.spec.mjs` is remote mode in Chromium against a fake extension
+(a page-world script answering hello with `ready` + `player: true`, subscribe
+with a state, and playing a small fake background player that changes state
+on commands and pushes every 200 ms while playing; no network): the page
+enters remote mode with the status "playing in melodica extension 0.3.0", the
+stations come from the state, picking one sends `play` with its token and the
+pushed track fills now playing, position advances, play/pause, love, next,
+tired, the `n` key, volume, quality and station reload each send the expected
+command and the view follows the answer; the `<audio>` element never gets a
+source and no relay request is made. An extension without a Pandora session
+gets the "sign in in the extension" hint; an extension that ignores subscribe
+leaves the page in local mode (hello, subscribe, unsubscribe; then the Pandora
+login). Screenshots: `remote-player.png`, `remote-signed-out.png`.
+
 `tests/bridge.spec.mjs` injects a fake content script into the page world
 (it answers `hello` with `ready` and proxies each bridge `request` to the
 relay with `fetch`, sending `MELODICA_RELAY_TOKEN` as the real extension sends
@@ -328,6 +343,36 @@ permission from the page:
 - A request with no response after 20 s, or a response with no HTTP status
   (`status: 0` plus `error`), falls back to the relay for that request. An
   HTTP or Pandora answer through the bridge is final.
+
+### Remote mode (extension 0.3.0+)
+
+The melodica extension 0.3.0 and later plays music in its background, with no
+tab needed. When it is installed the page is an optional view of that
+playback and a remote for it, instead of running its own loop. The protocol
+is melodica-extension's `docs/BRIDGE.md` ("Remote control"); the page side is
+in `web/bridge.js` (`subscribe`, `command`) and `web/app.js` ("remote mode"):
+
+- After the hello/ready handshake (within 1 s of startup) the page sends
+  `{melodica: 1, type: 'subscribe'}`. If a `state` arrives within 1 s the page
+  enters remote mode; otherwise it sends `unsubscribe` and plays locally as
+  before (no extension, or one older than 0.3.0). The wasm loads meanwhile, so
+  local mode is not slowed by more than that probe.
+- Remote mode shows the player view (`#app[data-mode="remote"]`) drawn from
+  the pushed `state` (station list, now playing, position, play/pause, rating,
+  volume, quality, queue length) and sends `{type: 'command', id, action, …}`
+  for the controls and keyboard shortcuts: `play` (with `station: {token,
+  name}`), `toggle`, `next`, `love`, `ban`, `tired`, `volume` (`value`),
+  `quality` (`value`), `stations`. Failed `result`s are shown as messages.
+- There is no local `<audio>`, no relay request and no Pandora or GitHub
+  sign-in on the page in remote mode: the extension holds both sessions and
+  gates itself. When it has no Pandora session the page says to sign in in the
+  extension.
+- Not available remotely (the protocol has no command for them): "why this
+  song?", station search/creation, station deletion, and rating earlier songs
+  in the play log. The play log lists the songs seen while the page was open.
+- The footer reads "playing in melodica extension 0.3.0 · web …".
+- The decision is made once, at page load: an extension installed or updated
+  later takes effect on the next reload.
 
 ### Content Security Policy
 
