@@ -1,0 +1,13 @@
+bin/*
+.DS_Store
+hs_err_pid*.log
+R.java
+consoleTesting
+# ndk-build / gradle outputs
+libs/
+obj/
+build/
+.gradle/
+local.properties
+*.keystore
+build.env

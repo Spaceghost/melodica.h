@@ -1,0 +1,214 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to release (empty = build + smoke only, no release)
+        required: false
+        default: ''
+      probe_hosts:
+        description: Also verify the emulator can reach a port-80 server on the runner as www.pandora.com (no release)
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.build.outputs.version }}
+      abis: ${{ steps.build.outputs.abis }}
+      apk: ${{ steps.build.outputs.apk }}
+      melodica: ${{ steps.build.outputs.melodica }}
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then t="${{ inputs.tag }}"; else t="${GITHUB_REF_NAME}"; fi
+          echo "tag=$t" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Install SDK platform and NDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-34" "build-tools;34.0.0" "ndk;27.2.12479018" >/dev/null
+          echo "$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_PATH"
+      - name: Build
+        id: build
+        run: |
+          tools/build-release.sh
+          cat build.env >> "$GITHUB_OUTPUT"
+          echo "melodica=$(git -C vendor/melodica rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  # Installs the built APK on an Android emulator and proves it opens to the
+  # login screen (and, when the melodica-tuner test server is available, that
+  # it logs in and lists stations). Evidence is uploaded even when it fails.
+  smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      API_LEVEL: '30'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.build.outputs.tag }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Start a stand-in server on port 80 (probe only)
+        if: inputs.probe_hosts
+        run: |
+          mkdir -p probe/__tuner && echo '{"ok":true,"stand-in":true}' > probe/__tuner/health
+          (cd probe && nohup python3 -m http.server 18080 --bind 127.0.0.1 >../probe.log 2>&1 &)
+          sleep 1
+          tools/host-port80.sh 18080
+          curl -fsS http://127.0.0.1/__tuner/health
+      - name: Start the melodica-tuner test server (XML-RPC v3x on port 80)
+        id: tuner
+        if: ${{ !inputs.probe_hosts }}
+        uses: Spaceghost/melodica-tuner@v1
+        with:
+          user: ci@example.com
+          password: ci-secret
+          hosts-override: 'false'
+          http-port: '80'
+          install-ca: 'false'
+      - name: Check the tuner
+        if: steps.tuner.outputs.http-url != ''
+        run: |
+          echo "http-url=${{ steps.tuner.outputs.http-url }} log-url=${{ steps.tuner.outputs.log-url }} http-port=${{ steps.tuner.outputs.http-port }}"
+          curl -fsS "${{ steps.tuner.outputs.http-url }}/__tuner/health"; echo
+          curl -fsS -H 'Host: www.pandora.com' http://127.0.0.1/__tuner/health; echo
+      # The guest ignores a hosts file bind-mounted over /system/etc/hosts (run
+      # 42278354776: ping still resolved the real 208.85.41.59), so the emulator
+      # is started with -dns-server pointing at this resolver, which answers
+      # www.pandora.com with 10.0.2.2 (the runner as seen from the guest).
+      - name: Start a DNS resolver that maps www.pandora.com to the runner
+        id: dns
+        run: |
+          ip=$(hostname -I | awk '{print $1}')
+          [ -n "$ip" ] || { echo "no host ip"; exit 1; }
+          sudo python3 tools/smoke-dns.py --serve --bind "$ip" --answer 10.0.2.2 > smoke-dns.log 2>&1 &
+          sleep 2
+          echo "ip=$ip" >> "$GITHUB_OUTPUT"
+          cat smoke-dns.log
+          a=$(python3 tools/smoke-dns.py --query www.pandora.com --server "$ip")
+          echo "www.pandora.com -> $a"; [ "$a" = "10.0.2.2" ]
+          echo "github.com -> $(python3 tools/smoke-dns.py --query github.com --server "$ip")"
+      - name: Smoke test on emulator
+        id: smoke
+        env:
+          TUNER_URL: ${{ steps.tuner.outputs.http-port == '80' && steps.tuner.outputs.http-url || '' }}
+          TUNER_LOG_URL: ${{ steps.tuner.outputs.http-port == '80' && steps.tuner.outputs.log-url || '' }}
+          TUNER_USER: ${{ steps.tuner.outputs.user }}
+          TUNER_PASSWORD: ${{ steps.tuner.outputs.password }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ env.API_LEVEL }}
+          arch: x86_64
+          target: google_apis
+          force-avd-creation: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -dns-server ${{ steps.dns.outputs.ip }}
+          disable-animations: true
+          emulator-boot-timeout: 600
+          script: |
+            adb wait-for-device
+            SMOKE_OUT=smoke SMOKE_API_LEVEL=${{ env.API_LEVEL }} SMOKE_MAP_HOST=${{ inputs.probe_hosts && '1' || '' }} tools/smoke-android.sh
+      - name: Show result
+        if: always()
+        run: |
+          cat smoke/smoke-android.json || true
+          ls -l smoke || true
+          echo "===== smoke-dns.log ====="; cat smoke-dns.log || true
+          cp smoke-dns.log smoke/smoke-android-dns.log 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-android
+          path: smoke/
+          if-no-files-found: warn
+
+  release:
+    needs: [build, smoke]
+    if: always() && needs.build.result == 'success' && (startsWith(github.ref, 'refs/tags/') || inputs.tag != '') && !inputs.probe_hosts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.build.outputs.tag }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: actions/download-artifact@v4
+        if: needs.smoke.result != 'skipped'
+        continue-on-error: true
+        with:
+          name: smoke-android
+          path: smoke
+      - name: Checksums and release notes
+        run: |
+          mkdir -p smoke
+          (cd dist && sha256sum -- *.apk *-src.tar.gz > SHA256SUMS)
+          for f in smoke/*; do [ -f "$f" ] && (cd smoke && sha256sum -- "$(basename "$f")") >> dist/SHA256SUMS; done
+          smoke_ok=$(python3 -c 'import json;print(json.load(open("smoke/smoke-android.json"))["ok"])' 2>/dev/null || echo "not run")
+          smoke_summary=$(python3 -c 'import json;print(json.load(open("smoke/smoke-android.json"))["summary"])' 2>/dev/null || echo "smoke job produced no result")
+          smoke_steps=$(python3 -c 'import json;print(", ".join(json.load(open("smoke/smoke-android.json"))["steps"]))' 2>/dev/null || echo "-")
+          cat > notes.md <<EOF2
+          Pandoroid ${{ needs.build.outputs.version }} built from this melodica.h-integrated mirror of the original Pandoroid Android client.
+
+          - Native library: \`libmelodica.so\` built from [melodica.h](https://github.com/Spaceghost/melodica.h) @ \`${{ needs.build.outputs.melodica }}\` via \`build-native.sh\` (ndk-build).
+          - ABIs: ${{ needs.build.outputs.abis }}; minSdk 21, targetSdk 23.
+          - Built on GitHub Actions by \`.github/workflows/release.yml\` from \`${{ needs.build.outputs.tag }}\` ([run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})).
+
+          **Emulator smoke test** (job \`smoke\`: ${{ needs.smoke.result }}; ok=$smoke_ok): $smoke_summary. Steps observed: $smoke_steps. Evidence: \`smoke-android.json\`, \`smoke-android.txt\` (step log + logcat) and the \`smoke-android-*.png\` screenshots attached below. The app talks XML-RPC v32 to \`http://www.pandora.com/radio/xmlrpc/v32\`; inside the emulator that name resolves to the runner (the emulator runs with \`-dns-server\` pointing at \`tools/smoke-dns.py\`), where [melodica-tuner](https://github.com/Spaceghost/melodica-tuner) answers on port 80, and its request log (in \`smoke-android.txt\`) must show \`listener.authenticateListener\` and \`station.getStations\` for the test to pass.
+
+          **Signing:** the APK is signed with a throwaway keystore generated inside the workflow run and discarded afterwards. Every release has a different key, so you must uninstall the previous build before installing a new one (Android will refuse the update otherwise). Not published to any store.
+
+          Verify downloads with \`sha256sum -c SHA256SUMS\`.
+          EOF2
+          cat notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build.outputs.tag }}
+          name: Pandoroid ${{ needs.build.outputs.version }} (melodica.h)
+          body_path: notes.md
+          files: |
+            dist/*.apk
+            dist/*-src.tar.gz
+            dist/SHA256SUMS
+            smoke/smoke-android.json
+            smoke/smoke-android.txt
+            smoke/smoke-android-*.png
