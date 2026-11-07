@@ -6,7 +6,7 @@
 // There is no store build: the extension is self-hosted only (docs/STORES.md).
 // Also emits build/node/core.js (the Core wrapper for Node) for core/test.mjs,
 // build/node/pandora.js (the Pandora client) for scripts/real-pandora-probe.mjs and
-// build/node/github.js (the GitHub gate's token parsing) for tests/github.test.mjs and
+// build/node/account.js (the spacegho.st account's PKCE, redirect and policy parsing) for tests/account.test.mjs and
 // build/node/update.js (update awareness) for tests/update.test.mjs.
 //
 //   node scripts/build.mjs [--version 0.1.0] [--core build/core/melodica_core.wasm]
@@ -192,8 +192,8 @@ await mkdir(resolve(root, 'build/node'), { recursive: true });
 await bundle('src/core.imba', resolve(root, 'build/node/core.js'), 'node');
 // ...and of the Pandora client, for scripts/real-pandora-probe.mjs (no-account probe against the real tuner).
 await bundle('src/pandora.imba', resolve(root, 'build/node/pandora.js'), 'node');
-// ...and of the GitHub gate's token handling, for tests/github.test.mjs.
-await bundle('src/github.imba', resolve(root, 'build/node/github.js'), 'node');
+// ...and of the spacegho.st account helpers, for tests/account.test.mjs.
+await bundle('src/account.imba', resolve(root, 'build/node/account.js'), 'node');
 await bundle('src/update.imba', resolve(root, 'build/node/update.js'), 'node');
 
 const files = await listFiles(resolve(dist, 'chrome'));

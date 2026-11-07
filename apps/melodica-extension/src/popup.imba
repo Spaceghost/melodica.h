@@ -3,7 +3,7 @@
 # page is a view of the background's player state and sends it commands.
 
 import { browser, send } from './shared.imba'
-import { Login, StationList, NowPlaying, Transport, Gate, UpdateBanner, Top, Foot, gateAllowed, gateLine } from "./ui.imba"
+import { Login, StationList, NowPlaying, Transport, AccountLine, UpdateBanner, Top, Foot } from "./ui.imba"
 
 tag Popup
 	prop view = 'loading'
@@ -14,7 +14,9 @@ tag Popup
 	prop kind = ''
 	prop busy = no
 	prop version = ''
-	prop gate = null
+	prop account = null
+	prop accountBusy = no
+	prop accountError = ''
 	prop loggedIn = no
 	prop update = null
 
@@ -31,10 +33,13 @@ tag Popup
 		if msg.type === 'player-state'
 			player = msg.state
 			stations = msg.state.stations if Array.isArray(msg.state.stations) and msg.state.stations.length
+			if msg.state.loggedIn === no and loggedIn
+				loggedIn = no
+				pickView()
+				accessMessage(msg.state.access)
 			imba.commit()
-		if msg.type === 'gate'
-			gate = msg.gate
-			pickView()
+		if msg.type === 'account'
+			account = msg.account
 			imba.commit()
 		if msg.type === 'update'
 			update = msg.update
@@ -47,10 +52,14 @@ tag Popup
 		catch e
 			toast(String(e.message or e), 'error')
 
-	# The gate screen whenever the gate is closed; the Pandora login or the player
-	# otherwise.
+	# Signed out because melodica access was withdrawn: the login card says so.
+	def accessMessage a
+		if a and !a.allowed and a.message
+			message = a.message
+			kind = 'error'
+
 	def pickView
-		view = !gateAllowed(gate) ? 'gate' : (loggedIn ? 'player' : 'login')
+		view = loggedIn ? 'player' : 'login'
 
 	def refresh
 		try
@@ -59,11 +68,12 @@ tag Popup
 			stations = s.stations
 			player = s.player
 			version = s.version
-			gate = s.gate
+			account = s.account
 			update = s.update
 			loggedIn = s.loggedIn
 			pickView()
-			if s.loggedIn and gateAllowed(gate) and stations.length === 0
+			accessMessage(s.access) unless s.loggedIn
+			if s.loggedIn and stations.length === 0
 				stations = (await send({type: 'stations'})).stations
 		catch e
 			view = 'error'
@@ -89,7 +99,6 @@ tag Popup
 		catch err
 			message = String(err.message or err)
 			kind = 'error'
-			await gateRefresh() if err.kind === 'gate'
 		busy = no
 		console.debug("melodica popup login -> view={view} message={message}")
 		imba.commit()
@@ -101,36 +110,18 @@ tag Popup
 		loggedIn = no
 		pickView()
 
-	def gateRefresh
-		try
-			gate = (await send({type: 'gate'})).gate
-		catch e
-			null
-		pickView()
-
-	# The three gate actions; the background runs the identity flow itself.
-	def gateAction type
-		busy = yes
-		message = ''
-		kind = ''
+	# The optional spacegho.st sign-in; the background runs the identity flow itself
+	# (the popup may close while the window is open; the result arrives as a notice).
+	def accountAction type
+		accountBusy = yes
+		accountError = ''
 		imba.commit()
 		try
-			gate = (await send({type})).gate
+			account = (await send({type})).account
 		catch err
-			message = String(err.message or err)
-			kind = 'error'
-		busy = no
-		pickView()
+			accountError = String(err.message or err)
+		accountBusy = no
 		imba.commit()
-
-	def githubSignin
-		gateAction('github-signin')
-
-	def gateCheck
-		gateAction('gate-check')
-
-	def githubSignout
-		gateAction('github-signout')
 
 	def reload
 		try
@@ -199,8 +190,6 @@ tag Popup
 						<div.card>
 							<h2> "melodica could not start"
 							<p.message.error#status role="alert"> message
-					elif view === 'gate'
-						<Gate gate=gate busy=busy message=(kind === 'error' ? message : '') @signin=githubSignin @check=gateCheck @signout=githubSignout>
 					elif view === 'login'
 						<Login busy=busy message=message kind=kind @login=login>
 					else
@@ -214,6 +203,6 @@ tag Popup
 						<StationList stations=stations active=(player and player.station and player.station.token) compact=yes @select=select @refresh=reload @delete=remove>
 						<p.message#player-message .error=(kind === 'error') .info=(kind === 'info')> message
 			<Foot version=version>
-				<span#gate-status.ext-gate-status> gateLine(gate)
+				<AccountLine account=account busy=accountBusy message=accountError @signin=accountAction('account-signin') @signout=accountAction('account-signout')>
 
 imba.mount <Popup>

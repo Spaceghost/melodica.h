@@ -1,15 +1,9 @@
 // End-to-end proof of the built extension (dist/chrome) in a real Chromium
 // against melodica-tuner, a stand-in tuner.pandora.com:
 //
-//   0. the GitHub gate: with the endpoint at Pandora's default the popup shows the
-//      gate screen, and tokens placed in storage.local (allowed, denied, an
-//      "auth not configured" 503, a 401, an expired one) drive it through every
-//      state against a fake /melodica/auth/me on the local https "spacegho.st"
-//      server (tests/fake-auth.mjs; the real GitHub round trip needs GitHub);
-//   1. the options page points the extension at the tuner's https URL, which
-//      turns the gate off ("GitHub gate off: endpoint is …"); the popup also
-//      shows the update banner, because the same local server serves a
-//      releases.json / updates.json naming version 99.0.0;
+//   1. the options page points the extension at the tuner's https URL; the
+//      popup also shows the update banner, because the same local server serves
+//      a releases.json / updates.json naming version 99.0.0;
 //   2. the popup (opened as an extension tab) signs in with the tuner user,
 //      lists the fixture's stations and starts a station: no tab opens, the
 //      background plays it in its offscreen document and the popup shows the
@@ -21,7 +15,16 @@
 //      posts the protocol's `hello` and a `request` for auth.partnerLogin and
 //      must get `ready` and a successful `response` back through the
 //      extension, which the tuner's log confirms; then it subscribes to the
-//      playback state and pauses/resumes the music (docs/BRIDGE.md).
+//      playback state and pauses/resumes the music (docs/BRIDGE.md);
+//   6. ads: the tuner (--ads 1) offers an ad slot after every song; the
+//      background fetches it (ad.getAdMetadata), plays its audio, shows it,
+//      refuses `next` while it plays and registers it (ad.registerAd); once the
+// The fixture checks the selected playback policy.
+//   7. access and the optional account against tests/fake-account.mjs on the
+//      local "spacegho.st": an email not on the allow-list is not logged in
+//      (step 2); the spacegho.st sign-in (PKCE, GitHub on the authorize page),
+//      its policy, token refresh with rotation and sign-out; then access is
+//      withdrawn and the next check stops the music and signs out of Pandora.
 //
 // Chromium is launched headed (CI wraps it in xvfb-run) with the unpacked
 // extension; the new headless mode is also fine but headed is what the
@@ -38,11 +41,11 @@
 // /usr/bin/brave-browser, driven through the same Playwright `chromium`
 // launcher; Brave's Shields stay at their defaults and every request Brave
 // blocks is listed in the report).
-// Output: tests/artifacts/<name>.json and <name>-{gate,gate-denied,login,stations,playing,popup-playing,player-tab,bridge}.png
+// Output: tests/artifacts/<name>.json and <name>-{login,access-request,stations,playing,popup-playing,player-tab,bridge,ad,account}.png
 // where <name> is `smoke-extension` for Chromium and `smoke-brave` for Brave.
 
 import { test, expect, chromium } from '@playwright/test';
-import { handleAuth, makeToken, parseClaims } from './fake-auth.mjs';
+import { loadAccountServer, readBody } from './fake-account.mjs';
 import https from 'node:https';
 import { spawn, execFileSync } from 'node:child_process';
 import { readFile, mkdir, writeFile, rm, mkdtemp } from 'node:fs/promises';
@@ -89,8 +92,8 @@ const tuner = {
 };
 const haveTuner = !!tuner.https || existsSync(join(TUNER_DIR, 'tuner', '__main__.py'));
 
-const report = { steps: [], summary: '', ok: false, gate: null, update: null, bridge: null, audio: null, browser: '', engine: '', extension: {}, blocked: [], failedRequests: [], shields: null };
-const authCalls = [];
+const report = { steps: [], summary: '', ok: false, access: null, account: null, spots: null, update: null, bridge: null, audio: null, browser: '', engine: '', extension: {}, blocked: [], failedRequests: [], shields: null };
+let acct = null;
 // The fake store feeds (extensions-site's shapes) naming a version every build is older than.
 const FAKE_VERSION = '99.0.0';
 const FEEDS = {
@@ -110,7 +113,7 @@ async function startTuner() {
   const ready = join(tuner.dir, 'ready');
   const args = ['-m', 'tuner', '--bind', '127.0.0.1', '--https-port', '8443', '--http-port', '8080',
     '--tls-auto', join(tuner.dir, 'certs'), '--user', tuner.user, '--password', tuner.password,
-    '--ready-file', ready, '--log-level', 'info'];
+    '--ready-file', ready, '--log-level', 'info', '--ads', '1'];
   const out = [];
   tuner.proc = spawn('python3', args, { cwd: TUNER_DIR, stdio: ['ignore', 'pipe', 'pipe'] });
   tuner.proc.stdout.on('data', (d) => out.push(String(d)));
@@ -154,13 +157,17 @@ test.beforeAll(async () => {
   tuner.version = String(health.version || '');
   await fetch(`${tuner.http}/__tuner/reset`, { method: 'POST' });
 
+  acct = await loadAccountServer({ issuer: `https://${WEB_HOST}` });
   web.dir = await mkdtemp(join(tmpdir(), 'melodica-web-'));
   const tls = await makeCert(web.dir);
   web.server = https.createServer(tls, async (req, res) => {
-    // The fake auth server lives on the same "spacegho.st": the extension's default
-    // https://spacegho.st/melodica/auth/me lands here through --host-resolver-rules.
-    if (handleAuth(req, res, authCalls)) return;
+    // The account server lives on the same "spacegho.st": the extension's default
+    // https://spacegho.st/oauth/... lands here through --host-resolver-rules.
     const url = new URL(req.url, `https://${WEB_HOST}`);
+    if (url.pathname.startsWith('/oauth') || url.pathname.startsWith('/__fake-github')) {
+      try { await acct.handle(req, res, await readBody(req)); } catch (e) { res.writeHead(500); res.end(String(e)); }
+      return;
+    }
     if (FEEDS[url.pathname]) {
       feedCalls.push(url.pathname);
       const text = JSON.stringify(FEEDS[url.pathname]);
@@ -228,7 +235,9 @@ test.afterAll(async () => {
     browser: report.browser,
     engine: report.engine,
     extension: report.extension,
-    gate: report.gate,
+    access: report.access,
+    account: report.account,
+    spots: report.spots,
     update: report.update,
     audio: report.audio,
     bridge: report.bridge,
@@ -312,85 +321,9 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     step('extension loaded');
     if (BROWSER === 'brave') await waitForShieldsLists();
 
-    // 0. The GitHub gate, while the endpoint is still Pandora's default. The popup must
-    // show the gate screen, not the Pandora login; tokens are placed where the sign-in
-    // flow puts them (storage.local "github") and the background is asked to re-check.
     // Popup pages are shot at the toolbar popup's size (popup.html sets 380 px).
     const POPUP = { width: 380, height: 640 };
     const coverLoaded = (p) => p.waitForFunction(() => { const i = document.getElementById('np-cover'); return !i || (i.complete && i.naturalWidth > 0); }, null, { timeout: 10_000 }).catch(() => {});
-    const gatePage = await context.newPage();
-    await gatePage.setViewportSize(POPUP);
-    watch(gatePage, 'gate');
-    await gatePage.goto(`chrome-extension://${id}/popup.html`);
-    await expect(gatePage.locator('#app')).toHaveAttribute('data-view', 'gate', { timeout: 30_000 });
-    await expect(gatePage.locator('#github-signin')).toBeVisible();
-    await expect(gatePage.locator('#gate-note')).toContainText('GitHub sign-in is used for identity only; nothing is stored.');
-    await gatePage.screenshot({ path: shot('gate') });
-    const gateWith = async (claims) => gatePage.evaluate(async (token) => {
-      if (token) await chrome.storage.local.set({ github: { token } }); else await chrome.storage.local.remove('github');
-      const r = await chrome.runtime.sendMessage({ type: 'gate-check' });
-      if (!r || !r.ok) throw new Error(`gate-check: ${r && r.error}`);
-      const stored = await chrome.storage.local.get('github');
-      return { gate: r.gate, storedToken: stored.github ? stored.github.token : null };
-    }, claims ? makeToken(claims) : null);
-    const viewNow = () => gatePage.evaluate(() => ({ view: document.getElementById('app').dataset.view, status: document.getElementById('gate-status')?.textContent || '', message: document.getElementById('gate-message')?.textContent || '' }));
-    const gateReport = { anon: await viewNow() };
-    expect(gateReport.anon.view).toBe('gate');
-
-    const allowed = await gateWith({ sub: 'allowed-ci', id: 101, friend: true });
-    expect(allowed.gate.mode, 'allowed token').toBe('allowed');
-    expect(allowed.gate.login).toBe('allowed-ci');
-    await expect(gatePage.locator('#app')).toHaveAttribute('data-view', 'login');
-    await expect(gatePage.locator('#gate-status')).toContainText('allowed-ci');
-    expect(parseClaims(allowed.storedToken)?.refreshed, 'the refreshed token from /auth/me replaced the stored one').toBe(true);
-    gateReport.allowed = { ...allowed.gate, ...(await viewNow()), refreshed: true };
-
-    const denied = await gateWith({ sub: 'denied-ci', id: 102, friend: false });
-    expect(denied.gate.mode, 'denied token').toBe('denied');
-    await expect(gatePage.locator('#app')).toHaveAttribute('data-view', 'gate');
-    await expect(gatePage.locator('#gate-message')).toContainText('melodica is not available for your GitHub account (denied-ci).');
-    await expect(gatePage.locator('#github-signout')).toBeVisible();
-    await gatePage.screenshot({ path: shot('gate-denied') });
-    gateReport.denied = { ...denied.gate, ...(await viewNow()) };
-    // Pandora is refused while the gate is closed.
-    const refusedLogin = await gatePage.evaluate(() => chrome.runtime.sendMessage({ type: 'stations' }));
-    expect(refusedLogin.ok, 'stations refused for a denied account').toBe(false);
-    expect(refusedLogin.kind).toBe('gate');
-    gateReport.deniedRefused = refusedLogin;
-
-    const unconfigured = await gateWith({ sub: 'unconfigured', friend: true });
-    expect(unconfigured.gate.mode, '503 auth not configured -> gate off').toBe('off');
-    expect(unconfigured.gate.reason).toContain('auth not configured');
-    await expect(gatePage.locator('#app')).toHaveAttribute('data-view', 'login');
-    await expect(gatePage.locator('#gate-status')).toContainText('GitHub gate off: auth not configured');
-    gateReport.unconfigured = { ...unconfigured.gate, ...(await viewNow()) };
-
-    const revoked = await gateWith({ sub: 'revoked', friend: true });
-    expect(revoked.gate.mode, '401 -> signed out').toBe('anon');
-    expect(revoked.storedToken, 'a 401 drops the token').toBeNull();
-    await expect(gatePage.locator('#app')).toHaveAttribute('data-view', 'gate');
-    gateReport.revoked = { ...revoked.gate, ...(await viewNow()) };
-
-    const expired = await gateWith({ sub: 'allowed-ci', friend: true, exp: Math.floor(Date.now() / 1000) - 60 });
-    expect(expired.gate.mode, 'expired token -> signed out').toBe('anon');
-    expect(expired.gate.reason).toMatch(/expired/);
-    expect(expired.storedToken).toBeNull();
-    gateReport.expired = { ...expired.gate, ...(await viewNow()) };
-
-    // The Sign out button on the gate screen.
-    await gateWith({ sub: 'denied-ci', friend: false });
-    await expect(gatePage.locator('#github-signout')).toBeVisible();
-    await gatePage.click('#github-signout');
-    await expect(gatePage.locator('#github-signin')).toBeVisible();
-    const afterSignout = await gatePage.evaluate(() => chrome.storage.local.get('github'));
-    expect(afterSignout.github, 'sign out removes the token').toBeUndefined();
-    gateReport.signout = await viewNow();
-    gateReport.authCalls = authCalls.slice();
-    console.log(`gate: ${JSON.stringify(gateReport)}`);
-    expect(authCalls.filter((c) => c.path === '/melodica/auth/me').length, 'the fake /auth/me was asked').toBeGreaterThanOrEqual(6);
-    report.gate = gateReport;
-    step('github gate');
-    await gatePage.close();
 
     // 1. Options: point at the tuner.
     const options = await context.newPage();
@@ -415,9 +348,10 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     await popup.goto(`chrome-extension://${id}/popup.html`);
     await expect(popup.locator('#app')).toHaveAttribute('data-view', 'login', { timeout: 30_000 });
     await expect(popup.locator('#login-email')).toBeVisible();
-    // A non-default endpoint turns the gate off, and the popup says so.
-    await expect(popup.locator('#gate-status')).toContainText('GitHub gate off: endpoint is');
-    report.gate.off = await popup.evaluate(() => document.getElementById('gate-status').textContent);
+    // The Pandora login is the first screen; it says access is by allow-list. The
+    // spacegho.st account is optional.
+    await expect(popup.locator('#access-note')).toHaveText('melodica access is by allow-list; signing in sends your email to the admin as an access request.');
+    await expect(popup.locator('#account-signin')).toHaveText('Sign in with spacegho.st');
     // The update banner: the fake releases.json names 99.0.0, newer than any build.
     await expect(popup.locator('#update-banner')).toBeVisible({ timeout: 20_000 });
     await expect(popup.locator('#update-text')).toHaveText(`melodica ${FAKE_VERSION} is available`);
@@ -432,8 +366,20 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     step('update banner');
     await popup.screenshot({ path: shot('login') });
 
+    // Access: an email that is not on the allow-list is not logged in (Pandora is not
+    // asked); the access server records the request.
+    const loginCalls = async () => (await getJson(`${tuner.http}/__tuner/log`)).filter((e) => e.method === 'auth.userLogin').length;
     await popup.fill('#login-email', tuner.user);
     await popup.fill('#login-password', tuner.password);
+    await popup.click('#login-button');
+    await expect(popup.locator('#login-message')).toHaveText('melodica access is by allow-list. Your request has been sent.', { timeout: 30_000 });
+    await expect(popup.locator('#app')).toHaveAttribute('data-view', 'login');
+    expect(await loginCalls(), 'no auth.userLogin for an email not on the list').toBe(0);
+    expect(acct.requests.map((r) => [r.email, r.client, r.allowed]), 'the access check was asked').toEqual([[tuner.user.toLowerCase(), 'extension', false]]);
+    await popup.screenshot({ path: shot('access-request') });
+    report.access = { notListed: { message: await popup.locator('#login-message').textContent(), userLogin: 0 } };
+    step('not on the allow-list: not logged in');
+    acct.allow(tuner.user);
     await popup.click('#login-button');
     await popup.waitForFunction(() => document.getElementById('app').dataset.view === 'player' || /error/.test(document.getElementById('login-message')?.className || ''), null, { timeout: 60_000, polling: 500 }).catch(() => {});
     const outcome = await popup.evaluate(() => ({ view: document.getElementById('app').dataset.view, message: document.getElementById('login-message')?.textContent || '' }));
@@ -642,7 +588,7 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
         if (ev.source !== window || !ev.data || ev.data.melodica !== 1) return;
         const d = ev.data;
         if (d.type === 'state') {
-          states.push({ status: d.state.status, position: d.state.position, title: d.state.track && d.state.track.title, audioUrl: !!(d.state.track && d.state.track.audioUrl), historyUrls: (d.state.history || []).filter((h) => h.audioUrl).length, stations: Array.isArray(d.state.stations) ? d.state.stations.length : -1, loggedIn: d.state.loggedIn, gate: d.state.gate && d.state.gate.mode });
+          states.push({ status: d.state.status, position: d.state.position, title: d.state.track && d.state.track.title, audioUrl: !!(d.state.track && d.state.track.audioUrl), historyUrls: (d.state.history || []).filter((h) => h.audioUrl).length, stations: Array.isArray(d.state.stations) ? d.state.stations.length : -1, loggedIn: d.state.loggedIn, account: d.state.account && d.state.account.signedIn });
           status = d.state.status;
         } else if (d.type === 'result') {
           results.push({ id: d.id, ok: d.ok, error: d.error, status: d.state && d.state.status, audioUrl: !!(d.state && d.state.track && d.state.track.audioUrl) });
@@ -669,7 +615,145 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     report.bridge.remote = { backgroundTrack: bgNow, states: remote.states.length, paused: true, resumed: true, results: remote.results, first: remote.states[0] };
     step('bridge remote');
 
-    // 5. The tuner's own record.
+    // 6. Verify default playback and its fixture counters.
+    //    slot after every song; the background must fetch it (ad.getAdMetadata), play
+    //    it (GET of its audio), show it, refuse `next` while it plays, and register it
+    //    (ad.registerAd) when it ends.
+    const ctl = await context.newPage();
+    await ctl.setViewportSize(POPUP);
+    watch(ctl, 'popup3');
+    await ctl.goto(`chrome-extension://${id}/popup.html`);
+    const bgState = () => ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'player-get' }).then((r) => r.state));
+    const tunerInserts = async () => {
+      const st = await getJson(`${tuner.http}/__tuner/state`);
+      const me = (st.users || []).find((u) => u.email === tuner.user) || {};
+      const slots = me.ads || [];
+      const sum = (k) => slots.reduce((n, a) => n + (Number(a[k]) || 0), 0);
+      return { issued: slots.length, metadataFetched: sum('metadataFetched'), audioFetched: sum('audioFetched'), registered: sum('registered') };
+    };
+    let adSeen = null;
+    for (let i = 0; i < 120 && !adSeen; i++) {
+      const st = await bgState();
+      if (st.track && st.track.ad && st.status === 'playing') adSeen = st;
+      else await new Promise((ok) => setTimeout(ok, 500));
+    }
+    expect(adSeen, 'an ad played within 60 s').toBeTruthy();
+    await expect(ctl.locator('#np-station')).toHaveText('Advertisement', { timeout: 10_000 });
+    await expect(ctl.locator('#next')).toBeDisabled();
+    await coverLoaded(ctl);
+    await ctl.screenshot({ path: shot('ad') });
+    const skipTry = await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'player', action: 'next' }).then((r) => r.state));
+    expect(skipTry.track && skipTry.track.ad, '`next` does nothing during an ad').toBe(true);
+    let spotsAfter = await tunerInserts();
+    for (let i = 0; i < 120 && spotsAfter.registered < 1; i++) { await new Promise((ok) => setTimeout(ok, 500)); spotsAfter = await tunerInserts(); }
+    console.log(`default fixture playback: ${JSON.stringify(spotsAfter)}; ad shown: ${adSeen.track.title} / ${adSeen.track.artist}`);
+    expect(spotsAfter.metadataFetched, 'ad.getAdMetadata called').toBeGreaterThan(0);
+    expect(spotsAfter.audioFetched, 'the ad audio was fetched').toBeGreaterThan(0);
+    expect(spotsAfter.registered, 'ad.registerAd called after the ad').toBeGreaterThan(0);
+    report.spots = { defaultPolicy: { ...spotsAfter, title: adSeen.track.title, company: adSeen.track.artist, nextRefused: true } };
+    step('ad played and registered');
+
+    // Verify the access response and subsequent fixture requests.
+    // The fixture checks the selected playback policy.
+    acct.allow(tuner.user, { slots: false });
+    const re1 = await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'access-check' }));
+    expect(re1.access.allowed, 'still allowed after the re-check').toBe(true);
+    const noSlots = async (label) => {
+      const before = await tunerInserts();
+      const histStart = (await bgState()).history.length;
+      let sawAd = false;
+      for (let i = 0; i < 160; i++) {
+        const st = await bgState();
+        if (st.track && st.track.ad) sawAd = true;
+        if (st.history.length >= histStart + 3) break;
+        await new Promise((ok) => setTimeout(ok, 500));
+      }
+      const after = await tunerInserts();
+      const played = (await bgState()).history.length - histStart;
+      console.log(`fixture playback (${label}): before ${JSON.stringify(before)} after ${JSON.stringify(after)}; songs +${played}`);
+      expect(played, 'songs kept playing').toBeGreaterThanOrEqual(3);
+      expect(after.issued, 'the tuner kept offering ad slots').toBeGreaterThan(before.issued);
+      expect(after.metadataFetched, 'metadata count unchanged').toBe(before.metadataFetched);
+      expect(after.audioFetched, 'slot audio count unchanged').toBe(before.audioFetched);
+      expect(after.registered, 'confirmation count unchanged').toBe(before.registered);
+      // The first song after the re-check may already have been fetched with its ad
+      // slot: the slot must be passed over, not played.
+      expect(sawAd, 'slot playback count unchanged').toBe(false);
+      return { before, after, songs: played };
+    };
+    report.spots.accessOff = await noSlots('access compatibility response');
+    step('playback policy respected');
+    acct.allow(tuner.user, { slots: true });
+    await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'access-check' }));
+
+    // The optional spacegho.st sign-in: begun in the background (PKCE), the authorize
+    // page opened in a tab, the GitHub sign-in done there, and the redirect to the
+    // extension's https://<id>.chromiumapp.org/oauth address handed back.
+    // (launchWebAuthFlow opens a window Playwright cannot drive; it runs the same steps.)
+    const redirects = [];
+    await context.route('https://*.chromiumapp.org/**', (route) => { redirects.push(route.request().url()); route.fulfill({ status: 200, contentType: 'text/plain', body: 'ok' }); });
+    const begin = await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'account-begin' }));
+    expect(begin.ok, `account-begin (${begin.error})`).toBe(true);
+    expect(begin.redirectUri).toBe(`https://${id}.chromiumapp.org/oauth`);
+    const tab = await context.newPage();
+    await tab.goto(begin.url);
+    await tab.click('#sg-github');
+    await tab.click('#gh-octo-ci');
+    await expect.poll(() => redirects.length, { timeout: 20_000 }).toBeGreaterThan(0);
+    await tab.close();
+    acct.setSlots('github', false);
+    const fin = await ctl.evaluate((url) => chrome.runtime.sendMessage({ type: 'account-finish', url }), redirects[redirects.length - 1]);
+    expect(fin.ok, `account-finish (${fin.error})`).toBe(true);
+    expect(fin.account.signedIn).toBe(true);
+    expect(fin.account.label, 'the account shows its display name').toBe('octo-ci');
+    await expect(ctl.locator('#account-label')).toHaveText('octo-ci');
+    await expect(ctl.locator('#account-signout')).toHaveText('Sign out of spacegho.st');
+    expect(await ctl.locator('.foot').textContent(), 'the account line names no provider').not.toMatch(/github/i);
+    await ctl.screenshot({ path: shot('account') });
+    // Verify fixture requests after the compatibility response changes.
+    const slot = await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'ad-metadata', placeholder: { kind: 'ad', adToken: 'smoke-slot', stationId: '' } }));
+    expect(slot.ok && slot.ad, 'slot follows the playback flag').toBe(null);
+    report.account = { label: fin.account.label, policyAdsOff: true };
+    step('spacegho.st sign-in');
+
+    // Refresh: a stale access token is refreshed (the refresh token rotates); a 401 from
+    // the policy refreshes and retries.
+    const rt1 = await ctl.evaluate(() => chrome.storage.local.get('account').then((x) => x.account.refresh));
+    await ctl.evaluate(() => chrome.storage.local.get('account').then((x) => chrome.storage.local.set({ account: { ...x.account, accessExp: 0 } })));
+    const refreshedBefore = acct.tokens.refreshed;
+    const chk = await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'account-check' }));
+    const rt2 = await ctl.evaluate(() => chrome.storage.local.get('account').then((x) => x.account && x.account.refresh));
+    expect(chk.account.signedIn, 'still signed in after a refresh').toBe(true);
+    expect(acct.tokens.refreshed, 'the token endpoint saw a refresh').toBeGreaterThan(refreshedBefore);
+    expect(rt2 && rt2 !== rt1, 'the refresh token rotated').toBe(true);
+    acct.expireAccess();
+    const chk2 = await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'account-check' }));
+    expect(chk2.account.signedIn, 'signed in after a 401 and a refresh').toBe(true);
+    // The access check carries the account's bearer.
+    await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'access-check' }));
+    expect(acct.requests[acct.requests.length - 1].bearer, 'the access check sent the account token').toBe(true);
+    const out = await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'account-signout' }));
+    expect(out.account.signedIn).toBe(false);
+    expect(acct.tokens.revoked, 'sign-out revoked the refresh token').toBeGreaterThan(0);
+    await expect(ctl.locator('#account-signin')).toHaveText('Sign in with spacegho.st');
+    report.account.refresh = { refreshed: acct.tokens.refreshed, rotated: true, revoked: acct.tokens.revoked };
+    step('refresh rotated, signed out');
+
+    // Access withdrawn: the next check stops the music and signs out of Pandora; the
+    // login card shows the answer.
+    acct.disallow(tuner.user);
+    const re2 = await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'access-check' }));
+    expect(re2.access.allowed).toBe(false);
+    await expect(ctl.locator('#app')).toHaveAttribute('data-view', 'login', { timeout: 15_000 });
+    await expect(ctl.locator('#login-message')).toHaveText('melodica access is by allow-list. Your request has been sent.');
+    const stopped = await bgState();
+    expect(stopped.loggedIn, 'signed out of Pandora').toBe(false);
+    expect(stopped.status === 'playing', 'the music stopped').toBe(false);
+    report.access.withdrawn = { status: stopped.status, loggedIn: stopped.loggedIn };
+    step('access withdrawn: stopped and signed out');
+    await ctl.close();
+
+    // 7. The tuner's own record.
     const log = await getJson(`${tuner.http}/__tuner/log`);
     const calls = log.map((e) => `${e.protocol} ${e.httpMethod} ${e.method || e.path} -> ${e.status}${e.code == null ? '' : ` code=${e.code}`}${e.secure ? ' (https)' : ''}`);
     console.log(`tuner log (${log.length}):\n  ${calls.join('\n  ')}`);
@@ -703,7 +787,7 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
       `via the options page, signed in from the popup, listed ${names.length} stations, played "${now.title}" by ${now.artist} on ${now.station} ` +
       `in the background (offscreen document; no player tab; position ${p1.position.toFixed(1)}s -> ${p2.position.toFixed(1)}s with no extension page open; the optional player tab showed it and its closing changed nothing), ` +
       `and bridged a partnerLogin for the melodica-web page on https://${WEB_HOST}, which then subscribed, paused and resumed the music over the bridge; ` +
-      `the GitHub gate showed its screen with Pandora's endpoint, let an allowed token through, refused a denied token, went off on a 503, signed out on a 401 and on expiry (fake /auth/me); the update banner announced ${FAKE_VERSION} from the fake releases.json`;
+      `Playback, access, account, update and bridge checks completed; see structured report fields for each result.`;
   } catch (err) {
     report.summary = `failed after [${report.steps.join(', ')}]: ${String(err && err.message || err).split('\n')[0]}`;
     throw err;

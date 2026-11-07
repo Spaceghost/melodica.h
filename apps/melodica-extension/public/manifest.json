@@ -45,7 +45,7 @@
   "host_permissions": [
     "https://tuner.pandora.com/*",
     "https://*.pandora.com/*",
-    "https://spacegho.st/melodica/auth/*",
+    "https://spacegho.st/oauth/*",
     "https://spacegho.st/extensions/*"
   ],
   "optional_host_permissions": [

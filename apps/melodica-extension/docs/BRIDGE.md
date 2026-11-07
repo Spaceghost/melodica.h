@@ -42,12 +42,17 @@ becomes a view of that playback and a remote for it, instead of running its own 
   "position": 12.3, "duration": 240, "volume": 80, "quality": "high",
   "queueLength": 3, "error": "", "history": [], "changedAt": 1794038444947,
   "stations": [{"token": "…", "name": "…", "isQuickMix": false, "allowDelete": true}],
-  "loggedIn": true, "gate": {"mode": "allowed", "login": "…"}
+  "loggedIn": true,
+  "account": {"signedIn": false, "label": ""},
+  "access": {"allowed": true, "message": ""}
 }
 ```
 
-`track.audioUrl` is never sent to the page. While the GitHub gate is closed or no Pandora
-session exists, commands fail with `ok: false` and the reason; `state.loggedIn` and
-`state.gate.mode` say why. The web player's side of this is implemented in melodica-web by
+`track.audioUrl` is never sent to the page. While an ad plays, `track.ad` is true and
+`next`, `love`, `ban` and `tired` do nothing. While no Pandora session exists, commands
+fail with `ok: false` and the reason; `state.loggedIn` says so, and `state.access` carries
+the access answer's message when access was not allowed (README "Access"). Relayed
+Pandora calls (layer 1) other than `auth.partnerLogin` and `test.checkLicensing` are
+refused while this browser's access answer is not "allowed". The web player's side of this is implemented in melodica-web by
 its own maintainer; the extension's half is proven by the Chromium and Brave smokes
 (`tests/smoke-extension.spec.mjs`, step "bridge remote").

@@ -16,7 +16,7 @@
 import { Core } from './core.imba'
 import { Pandora, PandoraError, QUALITIES } from './pandora.imba'
 import { browser, loadSettings, normalizeEndpoint, fromBase64, toBase64, SETTINGS_DEFAULTS } from './shared.imba'
-import { parseToken, expired, tokenFromRedirect, normalizeAuthBase, startUrl, meUrl } from './github.imba'
+import { normalizeAccountBase, randomString, pkceChallenge, authorizeUrl, parseRedirect, tokenForm, storedTokens, accessFresh, policyFrom, accountLabel, jwtClaims, CLIENT_ID, TAB_CLIENT_ID, TAB_REDIRECT, POLICY_DEFAULT } from './account.imba'
 import { feedUrl, latestVersion, bannerState, compareVersions, STORE_URL } from './update.imba'
 import { Engine } from './engine.imba'
 
@@ -28,20 +28,17 @@ const session = browser.storage.session or browser.storage.local
 # engine lives in the player tab instead: dist/safari's player.html also loads
 # offscreen.js, and the background opens that tab on the first play command.
 const TAB_ENGINE = !browser.offscreen and (browser.runtime.getManifest().background or {}).persistent === false
-# Safari has no identity API either: its GitHub sign-in runs in a tab that the auth
-# Worker sends back to the web app page, where safari-auth.js hands over the token.
-const WEB_APP_URL = 'https://spacegho.st/melodica/app/'
+# Safari has no identity API either: its spacegho.st sign-in runs in a tab that comes
+# back to the web app page, where a content script hands over the redirect address.
 const SIGNIN_PENDING_FOR = 10 * 60 * 1000
 let engineWaiters = []
 const SESSION_KEYS = {session: null, stations: [], player: null, log: []}
 const PLAYER_IDLE = {status: 'idle', station: null, track: null, position: 0, duration: 0, volume: 80, quality: 'high', queueLength: 0, error: '', history: [], changedAt: 0}
 const PLAYER_ACTIONS = new Set(['play', 'resume', 'pause', 'toggle', 'next', 'love', 'ban', 'tired', 'sleep', 'stop', 'volume', 'quality'])
 const LOG_MAX = 200
-# The GitHub gate is re-checked at least this often while the extension is in use
-# (every boot, every popup/player open past this age, the player's timer).
-const GATE_MAX_AGE = 60 * 60 * 1000
-# Message types that reach Pandora (or the player) and so need the gate open.
-const GATED = new Set(['login', 'stations', 'playlist', 'rate', 'tired', 'explain', 'search', 'create-station', 'delete-station', 'bridge', 'player'])
+# The spacegho.st account's policy is asked again at least this often while the
+# extension is in use (every boot, every page open past this age).
+const ACCOUNT_MAX_AGE = 60 * 60 * 1000
 
 let booting = null
 let state = null
@@ -56,13 +53,22 @@ let offscreenReady = null
 # by tabs.sendMessage; the set is kept in storage.session so a restarted service
 # worker still knows them.
 let subscribers = null
-# The GitHub gate: {mode, reason, login, exp, checkedAt}. Modes: `off` (not applied:
-# the endpoint is not Pandora's, or the auth server says it is not configured),
-# `anon` (no GitHub sign-in), `allowed` (the auth server allows the login), `denied`
-# (signed in, not allowed), `error` (the auth server could not be asked).
-let gate = {mode: 'anon', reason: 'not signed in with GitHub', login: '', exp: null, checkedAt: 0}
-let checking = null
-let gateBooted = no
+# The optional spacegho.st account (docs/ACCOUNT.md): {signedIn, label, email, sub,
+# spots, checkedAt, error}. Compatibility defaults apply without a verified response. Tokens
+# live in storage.local `account` ({access, refresh, accessExp, idToken}).
+let account = {signedIn: no, label: '', email: '', sub: '', spots: yes, checkedAt: 0, error: ''}
+let accountChecking = null
+let accountBooted = no
+# melodica access: an allow-list keyed on the Pandora login email, asked at
+# https://spacegho.st/oauth/melodica/access before auth.userLogin, then again at
+# boot and hourly (docs/ACCOUNT.md). The answer's `spots` is obeyed; nothing shows it.
+const ACCESS_MAX_AGE = 60 * 60 * 1000
+const ACCESS_RETRY = 5 * 60 * 1000
+const ACCESS_DENIED = 'melodica access is by allow-list. Your request has been sent.'
+const ACCESS_UNAVAILABLE = 'The melodica access check is unavailable right now. Try again in a moment.'
+let access = {email: '', allowed: no, spots: yes, checkedAt: 0, message: '', error: ''}
+let accessChecking = null
+let accessBooted = no
 # Updates: the store feed is read at most every UPDATE_EVERY (on boot, then
 # whenever a page asks and the last look is older); on Chromium the browser is
 # also asked to run its own update check, and an update it has fetched
@@ -136,9 +142,14 @@ def ensure
 		booting = boot()
 		booting.catch(do(e) booting = null)
 	state = await booting
-	unless gateBooted
-		gateBooted = yes
-		await checkGate(yes)
+	unless accountBooted
+		accountBooted = yes
+		checkAccount(yes).catch(do(e) null)
+	unless accessBooted
+		accessBooted = yes
+		const kept = (await browser.storage.local.get({access: null})).access
+		access = Object.assign({}, access, kept) if kept and typeof kept === 'object'
+		checkAccess(yes).catch(do(e) null)
 	unless updateBooted
 		updateBooted = yes
 		checkUpdate(yes).catch(do(e) null)
@@ -206,174 +217,241 @@ if browser.runtime.onUpdateAvailable
 		broadcast({type: 'update', update: updateState()})
 		maybeReload('onUpdateAvailable')
 
-# --- The GitHub gate -------------------------------------------------------
+# --- The spacegho.st account (optional) ------------------------------------
 
-def gateAllowed g = gate
-	g.mode === 'off' or g.mode === 'allowed'
+def accountBase
+	normalizeAccountBase((await browser.storage.local.get({accountBase: ''})).accountBase)
 
-# What a refused caller is told; the popup shows the same words on its gate screen.
-def gateText g
-	switch g.mode
-		when 'denied'
-			"melodica is not available for your GitHub account ({g.login})."
-		when 'error'
-			"Could not check the GitHub gate: {g.reason}. Press Check again."
-		else
-			"Sign in with GitHub first."
+def accountView
+	Object.assign({}, account)
 
-# The auth server: the melodica-site Worker, or the `authBase` storage key (the
-# Firefox smoke points it at a fake; README "GitHub gate").
-def authBase
-	const got = await browser.storage.local.get({authBase: ''})
-	normalizeAuthBase(got.authBase)
+def setAccount patch
+	account = Object.assign({}, account, patch, {checkedAt: Date.now()})
+	broadcast({type: 'account', account: accountView()})
+	account
 
-def setGate next
-	const was = gateAllowed(gate)
-	gate = Object.assign({login: '', exp: null, reason: ''}, next, {checkedAt: Date.now()})
-	note("gate {gate.mode}{gate.login ? ' ' + gate.login : ''}{gate.reason ? ': ' + gate.reason : ''}")
-	if was and !gateAllowed(gate)
-		await stopPlayback('the GitHub gate closed')
-	broadcast({type: 'gate', gate})
-	gate
+def storedAccount
+	(await browser.storage.local.get({account: null})).account
 
-# The current gate, re-checked when forced, when it was never checked, or when the
-# last check is older than GATE_MAX_AGE. One check runs at a time.
-# The token the running check read and the one it stored itself (a refresh): a
-# forced check that arrives meanwhile reruns only if the stored token is neither,
-# i.e. a sign-in, sign-out or test changed it after the running check began.
-let checkedToken = null
-let refreshedToken = null
-
-def storedToken
-	const got = await browser.storage.local.get({github: null})
-	got.github and typeof got.github.token === 'string' ? got.github.token : ''
-
-def checkGate force = no
-	if checking
-		await checking
-		return gate unless force
-		const now = await storedToken()
-		return gate if now === checkedToken or now === refreshedToken
-		return await checkGate(yes)
-	return gate if !force and gate.checkedAt and Date.now() - gate.checkedAt < GATE_MAX_AGE
-	checking = runGateCheck()
+def form url, fields
+	const res = await fetch(url, {method: 'POST', headers: {'content-type': 'application/x-www-form-urlencoded'}, body: tokenForm(fields), credentials: 'omit', cache: 'no-store'})
+	let body = null
 	try
-		await checking
+		body = await res.json()
 	catch e
-		note("gate check failed: {e and e.message or e}")
+		body = null
+	{status: res.status, body}
+
+# Refresh tokens rotate: every refresh returns a new one and the old one stops working.
+def refreshAccount tokens
+	const base = await accountBase()
+	const r = await form("{base}/oauth/token", {grant_type: 'refresh_token', refresh_token: tokens.refresh, client_id: tokens.clientId or CLIENT_ID})
+	const next = r.status === 200 ? storedTokens(r.body) : null
+	unless next
+		if r.status === 400 or r.status === 401
+			note("account: refresh refused ({r.body and r.body.error or r.status}); signed out")
+			await browser.storage.local.remove('account')
+			return null
+		throw new Error("token refresh HTTP {r.status}")
+	next.clientId = tokens.clientId or CLIENT_ID
+	await browser.storage.local.set({account: next})
+	note('account: tokens refreshed')
+	next
+
+def accountGet path, tokens
+	const base = await accountBase()
+	const res = await fetch("{base}{path}", {headers: {authorization: "Bearer {tokens.access}"}, credentials: 'omit', cache: 'no-store'})
+	let body = null
+	try
+		body = await res.json()
+	catch e
+		body = null
+	{status: res.status, body}
+
+# Ask the policy for the stored account (refreshing first when the access token is
+# stale, and once more on a 401). Any failure means the default policy.
+def checkAccount force = no
+	return await accountChecking if accountChecking
+	return account if !force and account.checkedAt and Date.now() - account.checkedAt < ACCOUNT_MAX_AGE
+	accountChecking = runAccountCheck()
+	try
+		await accountChecking
+	catch e
+		note("account check failed: {e and e.message or e}")
+		setAccount({spots: POLICY_DEFAULT.spots, error: String(e and e.message or e)})
 	finally
-		checking = null
-	gate
+		accountChecking = null
+	account
 
-def runGateCheck
-	const endpoint = state.settings.endpoint
-	if endpoint !== SETTINGS_DEFAULTS.endpoint
-		return await setGate({mode: 'off', reason: "endpoint is {endpoint}, not Pandora's"})
-	const token = await storedToken()
-	checkedToken = token
-	refreshedToken = null
-	const claims = token ? parseToken(token) : null
-	if token and !claims
-		refreshedToken = ''
-		await browser.storage.local.remove('github')
-		return await setGate({mode: 'anon', reason: 'the stored GitHub token was malformed; sign in again'})
-	if claims and expired(claims)
-		refreshedToken = ''
-		await browser.storage.local.remove('github')
-		return await setGate({mode: 'anon', reason: "the GitHub sign-in for {claims.sub} expired; sign in again"})
-	const base = await authBase()
-	const url = meUrl(base)
-	const headers = {}
-	headers.authorization = "Bearer {token}" if token
-	let res
+def runAccountCheck
+	let tokens = await storedAccount()
+	unless tokens and tokens.refresh
+		return setAccount({signedIn: no, label: '', email: '', sub: '', spots: POLICY_DEFAULT.spots, error: ''})
+	tokens = await refreshAccount(tokens) unless accessFresh(tokens)
+	return setAccount({signedIn: no, label: '', email: '', sub: '', spots: POLICY_DEFAULT.spots, error: 'signed out by spacegho.st; sign in again'}) unless tokens
+	let pol = await accountGet('/oauth/melodica/policy', tokens)
+	if pol.status === 401
+		tokens = await refreshAccount(tokens)
+		return setAccount({signedIn: no, label: '', email: '', sub: '', spots: POLICY_DEFAULT.spots, error: 'signed out by spacegho.st; sign in again'}) unless tokens
+		pol = await accountGet('/oauth/melodica/policy', tokens)
+	const policy = policyFrom(pol.status, pol.body)
+	let info = null
 	try
-		res = await fetch(url, {headers, credentials: 'omit', cache: 'no-store'})
+		const ui = await accountGet('/oauth/userinfo', tokens)
+		info = ui.status === 200 ? ui.body : null
 	catch e
-		const reason = "could not reach {url} ({e and e.message or e})"
-		# An allowed account stays allowed through a network blip (the next check is in an hour);
-		# anyone else sees the error and a Check again button.
-		return await setGate(gate.mode === 'allowed' ? Object.assign({}, gate, {stale: reason}) : {mode: claims ? 'error' : 'anon', reason, login: claims ? claims.sub : '', exp: claims ? claims.exp : null})
-	if res.status === 503
-		let body = {}
-		try
-			body = await res.json()
-		catch e
-			body = {}
-		return await setGate({mode: 'off', reason: "auth not configured at {base} yet ({body.error or 'HTTP 503'})", login: claims ? claims.sub : '', exp: claims ? claims.exp : null})
-	unless claims
-		return await setGate({mode: 'anon', reason: 'not signed in with GitHub'})
-	if res.status === 401
-		refreshedToken = ''
-		await browser.storage.local.remove('github')
-		return await setGate({mode: 'anon', reason: "{base} no longer accepts the GitHub sign-in for {claims.sub} (HTTP 401); sign in again"})
-	unless res.ok
-		return await setGate({mode: 'error', reason: "{url} answered HTTP {res.status}", login: claims.sub, exp: claims.exp})
-	let me
-	try
-		me = await res.json()
-	catch e
-		return await setGate({mode: 'error', reason: "{url} did not answer JSON", login: claims.sub, exp: claims.exp})
-	if typeof me.token === 'string' and me.token !== token and parseToken(me.token)
-		refreshedToken = me.token
-		await browser.storage.local.set({github: {token: me.token}})
-		note('gate: refreshed token stored')
-	const login = typeof me.login === 'string' and me.login ? me.login : claims.sub
-	const exp = typeof me.exp === 'number' ? me.exp : claims.exp
-	# The Worker's `friend` field is the allow flag.
-	if me.friend === yes
-		await setGate({mode: 'allowed', reason: '', login, exp})
-	else
-		await setGate({mode: 'denied', reason: 'not available for this GitHub account', login, exp})
+		info = null
+	const claims = jwtClaims(tokens.access) or {}
+	note("account: policy HTTP {pol.status}")
+	setAccount({signedIn: yes, label: accountLabel(policy, info or jwtClaims(tokens.idToken)), email: info and info.email or '', sub: String(claims.sub or ''), spots: policy.spots, error: pol.status === 200 ? '' : "policy HTTP {pol.status}"})
 
-def requireGate
-	const g = await checkGate()
-	return if gateAllowed(g)
-	throw new PandoraError(gateText(g), null, 0, 'gate')
+# Step one of a sign-in: a PKCE verifier and state kept in session storage, and the
+# authorize URL. `launchWebAuthFlow` (or a Safari tab, or a test) opens it.
+def accountBegin tab = no
+	const base = await accountBase()
+	const verifier = randomString(32)
+	const st = randomString(16)
+	const clientId = tab ? TAB_CLIENT_ID : CLIENT_ID
+	const redirectUri = tab ? TAB_REDIRECT : browser.identity.getRedirectURL('oauth')
+	await session.set({accountPending: {verifier, state: st, clientId, redirectUri, base, at: Date.now()}})
+	{url: authorizeUrl(base, {clientId, redirectUri, challenge: await pkceChallenge(verifier), state: st}), redirectUri}
 
-# "Sign in with GitHub": the browser's identity flow against the Worker's /start,
-# which asks GitHub for identity only (no scopes) and redirects back to the
-# extension's own redirect URL with the token in the fragment. The flow runs here
-# rather than in the popup because the popup closes when the auth window opens.
-def githubSignin
-	return await tabSignin() unless browser.identity and browser.identity.launchWebAuthFlow
-	const redirect = browser.identity.getRedirectURL('melodica')
-	const base = await authBase()
-	const url = startUrl(base, redirect)
-	note("github sign-in: launchWebAuthFlow {url}")
+# Step two: the redirect address that came back; exchange the code, then ask the policy.
+def accountFinish url
+	const got = (await session.get({accountPending: null})).accountPending
+	throw new PandoraError('No spacegho.st sign-in is pending.', null, 0, 'account') unless got and Date.now() - got.at < SIGNIN_PENDING_FOR
+	const back = parseRedirect(url, {state: got.state, issuer: got.base})
+	throw new PandoraError("spacegho.st sign-in did not finish: {back.error}", null, 0, 'account') if back.error
+	await session.set({accountPending: null})
+	const r = await form("{got.base}/oauth/token", {grant_type: 'authorization_code', code: back.code, redirect_uri: got.redirectUri, client_id: got.clientId, code_verifier: got.verifier})
+	const tokens = r.status === 200 ? storedTokens(r.body) : null
+	throw new PandoraError("spacegho.st did not accept the sign-in ({r.body and r.body.error or 'HTTP ' + r.status}).", null, 0, 'account') unless tokens
+	tokens.clientId = got.clientId
+	await browser.storage.local.set({account: tokens})
+	note('account: signed in')
+	await checkAccount(yes)
+
+# "Sign in with spacegho.st": the browser's identity window (its own cookie jar on
+# some browsers, so the sign-in page offers GitHub and email there), or a tab on Safari.
+def accountSignin
+	unless browser.identity and browser.identity.launchWebAuthFlow
+		const t = await accountBegin(yes)
+		note('account: sign-in tab')
+		await browser.tabs.create({url: t.url})
+		return account
+	const started = await accountBegin(no)
+	note('account: launchWebAuthFlow')
 	let back
 	try
-		back = await browser.identity.launchWebAuthFlow({url, interactive: yes})
+		back = await browser.identity.launchWebAuthFlow({url: started.url, interactive: yes})
 	catch e
-		throw new PandoraError("GitHub sign-in did not finish: {e and e.message or e}", null, 0, 'gate')
-	const token = tokenFromRedirect(back)
-	throw new PandoraError('GitHub sign-in came back without a token.', null, 0, 'gate') unless token
-	await browser.storage.local.set({github: {token}})
-	note("github sign-in: token for {parseToken(token).sub}")
-	await checkGate(yes)
+		throw new PandoraError("spacegho.st sign-in did not finish: {e and e.message or e}", null, 0, 'account')
+	await accountFinish(back)
 
-# Safari: open the sign-in in a tab; `github-token` (from safari-auth.js) finishes it.
-def tabSignin
-	const url = startUrl(await authBase(), WEB_APP_URL)
-	await session.set({githubPending: Date.now()})
-	note("github sign-in: tab {url}")
-	await browser.tabs.create({url})
-	gate
-
-def tabSigninDone msg, sender
-	const got = await session.get({githubPending: 0})
+# Safari: the content script on the web app page forwards the redirect address.
+def accountCode msg, sender
 	const from = String(sender and (sender.url or (sender.tab and sender.tab.url)) or '')
-	throw new PandoraError('No GitHub sign-in is pending.', null, 0, 'gate') unless got.githubPending and Date.now() - got.githubPending < SIGNIN_PENDING_FOR
-	throw new PandoraError('The GitHub token did not come from the sign-in page.', null, 0, 'gate') unless from.startsWith(WEB_APP_URL)
-	const token = typeof msg.token === 'string' and parseToken(msg.token) ? msg.token : null
-	throw new PandoraError('GitHub sign-in came back without a token.', null, 0, 'gate') unless token
-	await session.set({githubPending: 0})
-	await browser.storage.local.set({github: {token}})
-	note("github sign-in (tab): token for {parseToken(token).sub}")
-	await checkGate(yes)
+	throw new PandoraError('The sign-in did not come back to the web app page.', null, 0, 'account') unless from.startsWith(TAB_REDIRECT)
+	await accountFinish(String(msg.url or from))
 
-def githubSignout
-	await browser.storage.local.remove('github')
-	await checkGate(yes)
+def accountSignout
+	const tokens = await storedAccount()
+	await browser.storage.local.remove('account')
+	if tokens and tokens.refresh
+		try
+			await form("{await accountBase()}/oauth/revoke", {token: tokens.refresh, client_id: tokens.clientId or CLIENT_ID})
+		catch e
+			note("account: revoke failed: {e and e.message or e}")
+	note('account: signed out')
+	setAccount({signedIn: no, label: '', email: '', sub: '', spots: POLICY_DEFAULT.spots, error: ''})
+
+# Engine playlist items follow verified compatibility state.
+# Slot handling follows verified access and account compatibility state.
+def adsOn
+	!((access.allowed and access.spots === no) or (account.signedIn and account.spots === no))
+
+def playable items
+	(items or []).filter(do(x) x.kind !== 'ad' or adsOn())
+
+# --- melodica access ---------------------------------------------------------
+
+def accessView
+	{allowed: !!access.allowed, message: access.allowed ? '' : String(access.message or ''), checkedAt: access.checkedAt, error: String(access.error or '')}
+
+# A fresh spacegho.st access token when signed in (sent as the bearer), else ''.
+def accountBearer
+	let tokens = await storedAccount()
+	return '' unless tokens and tokens.refresh
+	try
+		tokens = await refreshAccount(tokens) unless accessFresh(tokens)
+	catch e
+		return ''
+	tokens ? String(tokens.access or '') : ''
+
+def accessAsk email
+	const base = await accountBase()
+	const headers = {'content-type': 'application/json'}
+	const bearer = await accountBearer()
+	headers.authorization = "Bearer {bearer}" if bearer
+	let res = null
+	let body = null
+	try
+		res = await fetch("{base}/oauth/melodica/access", {method: 'POST', headers, body: JSON.stringify({email, client: 'extension'}), credentials: 'omit', cache: 'no-store'})
+	catch e
+		note("access check: unreachable ({e and e.message or e})")
+		throw new PandoraError(ACCESS_UNAVAILABLE, null, 0, 'access')
+	try
+		body = await res.json()
+	catch e
+		body = null
+	const known = res.status === 200 and body and typeof body.allowed === 'boolean'
+	note("access check: HTTP {res.status}{known ? (body.allowed ? ', allowed' : ', not allowed') : ''}")
+	throw new PandoraError('Enter the email address of your Pandora account.', null, 0, 'access') if res.status === 400
+	throw new PandoraError(ACCESS_UNAVAILABLE, null, 0, 'access') unless known
+	{allowed: body.allowed, spots: body.plus === yes ? no : yes, message: body.allowed ? '' : String(body.message or ACCESS_DENIED)}
+
+def setAccess email, r
+	access = {email, allowed: !!r.allowed, spots: r.spots === no ? no : yes, checkedAt: Date.now(), message: r.message or '', error: ''}
+	await browser.storage.local.set({access: {email, allowed: access.allowed, spots: access.spots, checkedAt: access.checkedAt, message: access.message}})
+	broadcast({type: 'access', access: accessView()})
+	access
+
+# Boot and hourly: ask again for the login email. No longer allowed: stop the
+# music and sign out of Pandora; the login card shows the answer's message.
+def checkAccess force = no
+	return await accessChecking if accessChecking
+	return access if !force and access.checkedAt and Date.now() - access.checkedAt < ACCESS_MAX_AGE
+	accessChecking = runAccessCheck()
+	try
+		await accessChecking
+	catch e
+		# Unreachable: keep the last answer and ask again in a few minutes.
+		access.error = String(e and e.message or e)
+		access.checkedAt = Date.now() - ACCESS_MAX_AGE + ACCESS_RETRY
+		note("access re-check failed: {access.error}")
+	finally
+		accessChecking = null
+	access
+
+def runAccessCheck
+	const client = state and state.client
+	return access unless client and client.loggedIn
+	const email = (client.user and client.user.email) or access.email or state.settings.email or ''
+	return access unless email
+	const r = await accessAsk(email)
+	await setAccess(email, r)
+	await denyAccess() unless r.allowed
+	access
+
+def denyAccess
+	note('access: not allowed; signing out of Pandora')
+	await stopPlayback('melodica access withdrawn')
+	state.client.logout()
+	await browser.storage.local.set({password: '', remember: no})
+	Object.assign(state.settings, {password: '', remember: no})
+	await persist()
+	await remember('stations', [])
+	playerChanged(player)
 
 def persist
 	await session.set({session: state.client.loggedIn ? state.client.snapshot() : null})
@@ -410,7 +488,7 @@ def openPlayer
 
 # What every view gets: the engine's state plus the session bits a view needs.
 def playerView
-	Object.assign({}, player, {stations: state and state.saved.stations or [], loggedIn: !!(state and state.client.loggedIn), gate: {mode: gate.mode, login: gate.login, reason: gate.reason}})
+	Object.assign({}, player, {stations: state and state.saved.stations or [], loggedIn: !!(state and state.client.loggedIn), account: {signedIn: account.signedIn, label: account.label}, access: {allowed: !!access.allowed, message: access.allowed ? '' : String(access.message or '')}})
 
 def publicTrack song
 	return null unless song
@@ -485,9 +563,11 @@ def localEngine
 				await ensure()
 				const songs = await state.client.playlist(stationByToken(station.token) or station, quality)
 				await persist()
-				songs
+				playable(songs)
 			rate: do(trackToken, positive) state.client.rate(trackToken, positive)
 			tired: do(trackToken) state.client.tired(trackToken)
+			adMetadata: do(placeholder, quality) adsOn() ? state.client.adMetadata(placeholder, quality) : null
+			registerAd: do(ad) state.client.registerAd(ad.stationId, ad.trackingTokens or [])
 		}
 		report: do(s) playerChanged(s)
 		log: note
@@ -604,6 +684,10 @@ def bridge msg
 	const search = String(msg.search or '')
 	const method = search.startsWith('?') and !search.includes('#') ? new URLSearchParams(search).get('method') : null
 	throw new PandoraError('method not allowed', null, 0, 'bridge') unless method and METHOD.test(method)
+	# The page's own Pandora login goes straight to Pandora through here, so past the
+	# partner login it needs the same access answer as the extension's login.
+	unless method === 'auth.partnerLogin' or method === 'test.checkLicensing' or access.allowed
+		throw new PandoraError(access.message or ACCESS_DENIED, null, 0, 'access')
 	let res
 	try
 		res = await fetch(state.settings.endpoint + search, {
@@ -624,18 +708,34 @@ def stationByToken token
 def handle msg, sender
 	await ensure()
 	const client = state.client
-	await requireGate() if GATED.has(msg.type)
+	await checkAccount() if !accountChecking and account.checkedAt and Date.now() - account.checkedAt > ACCOUNT_MAX_AGE
+	await checkAccess() if !accessChecking and access.checkedAt and Date.now() - access.checkedAt > ACCESS_MAX_AGE
 	switch msg.type
-		when 'gate'
-			{gate: await checkGate()}
-		when 'gate-check'
-			{gate: await checkGate(yes)}
-		when 'github-signin'
-			{gate: await githubSignin()}
-		when 'github-token'
-			{gate: await tabSigninDone(msg, sender)}
-		when 'github-signout'
-			{gate: await githubSignout()}
+		when 'access'
+			{access: accessView()}
+		when 'access-check'
+			{access: accessView(await checkAccess(yes))}
+		when 'account'
+			{account: accountView()}
+		when 'account-check'
+			{account: await checkAccount(yes)}
+		when 'account-signin'
+			{account: await accountSignin()}
+		when 'account-begin'
+			await accountBegin(!!msg.tab)
+		when 'account-finish'
+			{account: await accountFinish(String(msg.url or ''))}
+		when 'account-code'
+			{account: await accountCode(msg, sender)}
+		when 'account-signout'
+			{account: await accountSignout()}
+		when 'ad-metadata'
+			{ad: adsOn() ? await client.adMetadata(msg.placeholder or {}, QUALITIES.includes(msg.quality) ? msg.quality : state.settings.quality) : null}
+		when 'register-ad'
+			const st = (state.saved.stations or []).find(do(x) x.id === msg.stationId) or null
+			await client.registerAd(msg.stationId or (st and st.id), Array.isArray(msg.trackingTokens) ? msg.trackingTokens : [])
+			note("ad registered ({(msg.trackingTokens or []).length} tracking tokens)")
+			{}
 		when 'update'
 			{update: await checkUpdate()}
 		when 'update-check'
@@ -665,8 +765,8 @@ def handle msg, sender
 				sessionStorage: !!browser.storage.session
 				background: manifest.background
 				permissions: permissions
-				gate: gate
-				authBase: await authBase()
+				account: accountView()
+				accountBase: await accountBase()
 				update: updateState()
 				player: Object.assign({}, player, {track: publicTrack(player.track), history: player.history.length})
 				engine: browser.offscreen ? 'offscreen document' : (TAB_ENGINE ? 'player tab' : 'background page')
@@ -681,13 +781,17 @@ def handle msg, sender
 				settings: {endpoint: state.settings.endpoint, quality: state.settings.quality, remember: state.settings.remember, volume: state.settings.volume}
 				version: browser.runtime.getManifest().version
 				core: state.core.version
-				gate: gate
+				account: accountView()
+				access: accessView()
 				update: updateState()
 			}
 		when 'login'
 			const email = String(msg.email or '').trim()
 			const password = String(msg.password or '')
 			note("login requested (email {email.length} chars, password {password.length} chars, remember={!!msg.remember})")
+			const allowed = await accessAsk(email)
+			await setAccess(email, allowed)
+			throw new PandoraError(allowed.message, null, 0, 'access') unless allowed.allowed
 			await client.login(email, password)
 			note("login ok: user id {client.user.id.length} chars, token {client.user.authToken.length} chars, subscriber={client.user.subscriber}")
 			const patch = {email}
@@ -719,7 +823,7 @@ def handle msg, sender
 		when 'playlist'
 			const station = stationByToken(msg.stationToken) or {token: msg.stationToken, name: ''}
 			const quality = QUALITIES.includes(msg.quality) ? msg.quality : state.settings.quality
-			const songs = await client.playlist(station, quality)
+			const songs = playable(await client.playlist(station, quality))
 			await persist()
 			{songs, quality}
 		when 'rate'
@@ -748,7 +852,7 @@ def handle msg, sender
 			await subscribeTab(sender and sender.tab and sender.tab.id, msg.on !== no)
 			{state: playerView()}
 		when 'player-get'
-			{state: playerView(), settings: state.settings, gate: gate, update: updateState()}
+			{state: playerView(), settings: state.settings, account: accountView(), update: updateState()}
 		when 'player'
 			await playerCommand(msg)
 		when 'engine-hello'
@@ -800,10 +904,9 @@ browser.storage.onChanged.addListener do(changes, area)
 			await persist()
 			await remember('stations', [])
 			await stopPlayback('endpoint changed')
-			await checkGate(yes)
-	# A GitHub token stored or removed (the sign-in, the sign-out, a test), or the
-	# auth server override: re-check the gate now.
-	await checkGate(yes) if changes.github or changes.authBase
+	# The account tokens or the account server override changed (a sign-in, a
+	# sign-out, a test): ask the policy again.
+	await checkAccount(yes) if changes.account or changes.accountBase
 	state.settings.quality = changes.quality.newValue if changes.quality and QUALITIES.includes(changes.quality.newValue)
 	if changes.remember or changes.password or changes.email
 		const s = await loadSettings()
@@ -818,7 +921,6 @@ if browser.commands and browser.commands.onCommand
 	browser.commands.onCommand.addListener do(command)
 		try
 			await ensure()
-			await requireGate()
 			await playerCommand({action: command === 'next-song' ? 'next' : 'toggle'})
 		catch e
 			note("shortcut {command} failed: {e and e.message or e}")

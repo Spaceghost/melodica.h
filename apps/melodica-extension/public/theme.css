@@ -461,3 +461,7 @@ html.ext-player .login, html.ext-options .login { width: 100%; max-width: calc(v
   .ext-desk .art { width: min(100%, 320px); }
   .ext-desk .meta, .ext-desk .line { text-align: center; justify-content: center; }
 }
+/* The optional spacegho.st account line (footer of every page). */
+.ext-account-line { display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.6rem; }
+.ext-account-line button.link { min-height: 32px; padding: 0; font: inherit; }
+#account-label { color: var(--text); overflow-wrap: anywhere; }

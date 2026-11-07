@@ -2,18 +2,17 @@
 // driven through geckodriver with selenium-webdriver (Playwright's Firefox build
 // cannot load extensions). Two parts:
 //
-//   0. the GitHub gate against a fake /melodica/auth/me (tests/fake-auth.mjs) on a
-//      local http server: Firefox has no host-resolver flag, so the extension's
-//      `authBase` storage key points it there (README "GitHub gate"). With the
-//      endpoint at Pandora's default the popup shows the gate screen; allowed,
-//      denied, 503, 401 and expired tokens drive it through its states, and a
-//      allowed token is left in place so part 2 reaches the Pandora login;
+//   0. the spacegho.st account server is a local fake (tests/fake-account.mjs):
+//      Firefox has no host-resolver flag, so the extension's `accountBase`
+//      storage key points it there;
 //   1. against melodica-tuner, like the Chromium and Brave smokes: the options
 //      page points the extension at the tuner, the popup (opened as a tab)
 //      signs in, lists the fixture's stations, starts one; no tab opens, the
 //      background page plays it, and after 45 s with no extension page open
 //      at all the state must still be playing with the position advanced; the
 //      optional player tab shows the same track and closing it stops nothing;
+//      the tuner (--ads 1) offers an ad slot after every song, and the
+//      background must fetch, play and register one, refusing `next` during it;
 //   2. against the real tuner.pandora.com, with no account: the endpoint is
 //      reset to Pandora and bogus credentials are submitted. Pandora answers
 //      auth.userLogin with code 1002 when the request framing (auth_token
@@ -30,9 +29,9 @@
 // start a checkout here; MELODICA_EXT_DIST (default dist/firefox);
 // MELODICA_FIREFOX (binary, default: firefox on PATH); GECKODRIVER (default: geckodriver on PATH); MELODICA_HEADLESS=0 for
 // a window; MELODICA_SKIP_REAL=1 skips part 2.
-// Output: tests/artifacts/smoke-firefox.json and smoke-firefox-{gate,gate-denied,login,stations,playing,popup-playing,player-tab,real-pandora}.png
+// Output: tests/artifacts/smoke-firefox.json and smoke-firefox-{login,access-request,stations,playing,popup-playing,player-tab,ad,account,real-pandora}.png
 import { Builder, By, until } from 'selenium-webdriver';
-import { startFakeAuth, makeToken, parseClaims } from './fake-auth.mjs';
+import { startAccountServer } from './fake-account.mjs';
 import firefox from 'selenium-webdriver/firefox.js';
 import { spawn, execFileSync } from 'node:child_process';
 import { readFile, mkdir, writeFile, rm, mkdtemp } from 'node:fs/promises';
@@ -64,7 +63,7 @@ if (!haveTuner) { console.error('no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or
 
 const report = {
   ok: false, platform: 'firefox', browser: '', engine: '', summary: '', when: '', steps: [], tuner: '',
-  extension: {}, permissions: null, sessionStorage: null, background: null, gate: null, audio: null,
+  extension: {}, permissions: null, sessionStorage: null, background: null, access: null, account: null, spots: null, audio: null,
   realPandora: null, log: [], errors: [],
 };
 const step = (s) => { if (!report.steps.includes(s)) report.steps.push(s); console.log(`step: ${s}`); };
@@ -77,7 +76,7 @@ async function startTuner() {
   const ready = join(tuner.dir, 'ready');
   const args = ['-m', 'tuner', '--bind', '127.0.0.1', '--https-port', '8443', '--http-port', '8080',
     '--tls-auto', join(tuner.dir, 'certs'), '--user', tuner.user, '--password', tuner.password,
-    '--ready-file', ready, '--log-level', 'info'];
+    '--ready-file', ready, '--log-level', 'info', '--ads', '1'];
   const out = [];
   tuner.proc = spawn('python3', args, { cwd: TUNER_DIR, stdio: ['ignore', 'pipe', 'pipe'] });
   tuner.proc.stdout.on('data', (d) => out.push(String(d)));
@@ -162,8 +161,8 @@ let fakeAuth = null;
 const bin = process.env.MELODICA_FIREFOX || 'firefox';
 try {
   await mkdir(ARTIFACTS, { recursive: true });
-  fakeAuth = await startFakeAuth();
-  console.log(`fake auth server: ${fakeAuth.base}`);
+  fakeAuth = await startAccountServer();
+  console.log(`fake account server: ${fakeAuth.base}`);
   if (!tuner.https) await startTuner();
   if (!tuner.http) throw new Error('TUNER_HTTP_URL is required alongside TUNER_HTTPS_URL');
   const health = await getJson(`${tuner.http}/__tuner/health`);
@@ -229,73 +228,10 @@ try {
   check(Array.isArray(manifest.background.scripts) && manifest.background.scripts.includes('bg.js'), 'background is an event page (scripts)');
   step('host permission granted');
 
-  // 0. The GitHub gate, with the endpoint still at Pandora's default and the auth
-  // server pointed at the fake. Tokens go where the sign-in flow stores them.
-  const setAuthBase = await inPage(driver, `await browser.storage.local.set({ authBase: ${JSON.stringify(fakeAuth.base)} }); return (await browser.storage.local.get('authBase')).authBase;`);
-  check(setAuthBase.value === fakeAuth.base, `authBase override stored (${JSON.stringify(setAuthBase)})`);
-  await goExt(driver, `${ext}/popup.html`);
-  await waitFor(driver, async () => (await loginOutcome(driver)).view === 'gate', 'gate view');
-  await driver.wait(until.elementLocated(By.css('#github-signin')), 20_000);
-  const gateNote = await driver.findElement(By.css('#gate-note')).getText();
-  check(/GitHub sign-in is used for identity only; nothing is stored\./.test(gateNote), `gate note explains the sign-in (${gateNote})`);
-  await screenshot(driver, 'gate');
-  const gateWith = async (claims) => {
-    const r = await inPage(driver, `const token = ${JSON.stringify(claims ? makeToken(claims) : null)};
-      if (token) await browser.storage.local.set({ github: { token } }); else await browser.storage.local.remove('github');
-      const r = await browser.runtime.sendMessage({ type: 'gate-check' });
-      if (!r || !r.ok) throw new Error('gate-check: ' + (r && r.error));
-      const stored = await browser.storage.local.get('github');
-      return { gate: r.gate, storedToken: stored.github ? stored.github.token : null };`);
-    if (r.error) throw new Error(`gate-check: ${r.error}`);
-    return r.value;
-  };
-  const gateView = () => driver.executeScript(() => ({
-    view: document.getElementById('app')?.dataset.view || '',
-    status: document.getElementById('gate-status')?.textContent || '',
-    message: document.getElementById('gate-message')?.textContent || '',
-  }));
-  const gateReport = { authBase: fakeAuth.base, anon: await gateView() };
-  const allowed = await gateWith({ sub: 'allowed-ci', id: 101, friend: true });
-  check(allowed.gate.mode === 'allowed', `allowed token -> allowed (${JSON.stringify(allowed.gate)})`);
-  check(parseClaims(allowed.storedToken)?.refreshed === true, 'the refreshed token from /auth/me replaced the stored one');
-  await waitFor(driver, async () => (await gateView()).view === 'login' ? true : null, 'login view for an allowed account');
-  gateReport.allowed = { ...allowed.gate, ...(await gateView()), refreshed: true };
-  check(/allowed-ci/.test(gateReport.allowed.status), `status names the login (${gateReport.allowed.status})`);
-  const denied = await gateWith({ sub: 'denied-ci', id: 102, friend: false });
-  check(denied.gate.mode === 'denied', `denied token -> denied (${JSON.stringify(denied.gate)})`);
-  await waitFor(driver, async () => (await gateView()).view === 'gate' ? true : null, 'gate view for a denied account');
-  gateReport.denied = { ...denied.gate, ...(await gateView()) };
-  check(gateReport.denied.message.includes('melodica is not available for your GitHub account (denied-ci).'), `denied message (${gateReport.denied.message})`);
-  await screenshot(driver, 'gate-denied');
-  const refused = await inPage(driver, `return await browser.runtime.sendMessage({ type: 'stations' });`);
-  check(refused.value && refused.value.ok === false && refused.value.kind === 'gate', `Pandora refused for a denied account (${JSON.stringify(refused)})`);
-  gateReport.deniedRefused = refused.value;
-  const unconfigured = await gateWith({ sub: 'unconfigured', friend: true });
-  check(unconfigured.gate.mode === 'off' && /auth not configured/.test(unconfigured.gate.reason), `503 -> gate off (${JSON.stringify(unconfigured.gate)})`);
-  await waitFor(driver, async () => (await gateView()).view === 'login' ? true : null, 'login view with the gate off');
-  gateReport.unconfigured = { ...unconfigured.gate, ...(await gateView()) };
-  check(/GitHub gate off: auth not configured/.test(gateReport.unconfigured.status), `status says gate off (${gateReport.unconfigured.status})`);
-  const revoked = await gateWith({ sub: 'revoked', friend: true });
-  check(revoked.gate.mode === 'anon' && revoked.storedToken === null, `401 -> signed out, token dropped (${JSON.stringify(revoked)})`);
-  gateReport.revoked = revoked.gate;
-  const expired = await gateWith({ sub: 'allowed-ci', friend: true, exp: Math.floor(Date.now() / 1000) - 60 });
-  check(expired.gate.mode === 'anon' && /expired/.test(expired.gate.reason) && expired.storedToken === null, `expired -> signed out (${JSON.stringify(expired)})`);
-  gateReport.expired = expired.gate;
-  await gateWith({ sub: 'denied-ci', friend: false });
-  await driver.wait(until.elementLocated(By.css('#github-signout')), 20_000);
-  await driver.findElement(By.css('#github-signout')).click();
-  await driver.wait(until.elementLocated(By.css('#github-signin')), 20_000);
-  const afterSignout = await inPage(driver, `return await browser.storage.local.get('github');`);
-  check(afterSignout.value && afterSignout.value.github === undefined, `sign out removes the token (${JSON.stringify(afterSignout)})`);
-  gateReport.signout = await gateView();
-  // Leave an allowed account signed in: part 2 (real Pandora, default endpoint) needs the gate open.
-  const allowedAgain = await gateWith({ sub: 'allowed-ci', id: 101, friend: true });
-  check(allowedAgain.gate.mode === 'allowed', 'allowed token restored for part 2');
-  gateReport.authCalls = fakeAuth.calls.slice();
-  check(fakeAuth.calls.filter((c) => c.path === '/melodica/auth/me').length >= 7, `the fake /auth/me was asked (${fakeAuth.calls.length} calls)`);
-  report.gate = gateReport;
-  console.log(`gate: ${JSON.stringify(gateReport)}`);
-  step('github gate');
+  // 0. The account server is the local fake.
+  const setBase = await inPage(driver, `await browser.storage.local.set({ accountBase: ${JSON.stringify(fakeAuth.base)} }); return (await browser.storage.local.get('accountBase')).accountBase;`);
+  check(setBase.value === fakeAuth.base, `accountBase override stored (${JSON.stringify(setBase)})`);
+  step('account server set');
 
   // 1. Options: point at the tuner.
   await goExt(driver, `${ext}/options.html`);
@@ -312,10 +248,20 @@ try {
   // 2. Popup as a tab: login, stations.
   await goExt(driver, `${ext}/popup.html`);
   await waitFor(driver, async () => (await loginOutcome(driver)).view === 'login', 'login view');
-  const offStatus = await waitFor(driver, async () => { const t = await driver.executeScript(() => document.getElementById('gate-status')?.textContent || ''); return /GitHub gate off: endpoint is/.test(t) ? t : null; }, 'gate off with the tuner endpoint');
-  report.gate.off = offStatus;
   step('login screen');
   await screenshot(driver, 'login');
+  // Access: an email not on the allow-list is not logged in, and Pandora is not asked.
+  const accessNote = await driver.findElement(By.css('#access-note')).getText();
+  check(accessNote === 'melodica access is by allow-list; signing in sends your email to the admin as an access request.', `login card states the allow-list (${accessNote})`);
+  const refusedLogin = await loginAndWait(driver, tuner.user, tuner.password);
+  const userLogins = async () => (await getJson(`${tuner.http}/__tuner/log`)).filter((e) => e.method === 'auth.userLogin').length;
+  check(refusedLogin.view === 'login' && refusedLogin.message === 'melodica access is by allow-list. Your request has been sent.', `not on the list: not logged in (${JSON.stringify(refusedLogin)})`);
+  check((await userLogins()) === 0, 'no auth.userLogin for an email not on the list');
+  check(fakeAuth.requests.length === 1 && fakeAuth.requests[0].email === tuner.user.toLowerCase() && fakeAuth.requests[0].client === 'extension', `the access check was asked (${JSON.stringify(fakeAuth.requests)})`);
+  await screenshot(driver, 'access-request');
+  report.access = { notListed: { message: refusedLogin.message, userLogin: 0 } };
+  step('not on the allow-list: not logged in');
+  fakeAuth.allow(tuner.user);
   const outcome = await loginAndWait(driver, tuner.user, tuner.password);
   console.log(`login outcome: ${JSON.stringify(outcome)}`);
   check(outcome.view === 'player', `logged in (message: "${outcome.message}")`);
@@ -403,6 +349,87 @@ try {
   report.audio.playerTab = { title: st3.track && st3.track.title, afterClose: { status: st5.status, position: st5.position } };
   step('player tab optional');
 
+  // Verify default playback and the rendered player state.
+  // and refuses next, then that the tuner saw it fetched, played and registered.
+  const tunerInserts = async () => {
+    const st = await getJson(`${tuner.http}/__tuner/state`);
+    const u = (st.users || []).find((x) => x.email === tuner.user) || {};
+    const slots = u.ads || [];
+    const sum = (k) => slots.reduce((n, a) => n + (Number(a[k]) || 0), 0);
+    return { issued: slots.length, metadataFetched: sum('metadataFetched'), audioFetched: sum('audioFetched'), registered: sum('registered') };
+  };
+  const adState = await waitFor(driver, async () => { const s = await playerState(); return s.track && s.track.ad && s.status === 'playing' ? s : null; }, 'an ad playing', 60_000);
+  await waitFor(driver, async () => (await driver.executeScript(() => document.getElementById('np-station')?.textContent.trim() || '')) === 'Advertisement' ? true : null, 'popup shows the ad');
+  check(await driver.executeScript(() => !!document.getElementById('next')?.disabled), 'next is disabled during the ad');
+  await screenshot(driver, 'ad');
+  const skipTry = await ask(driver, { type: 'player', action: 'next' });
+  check(skipTry.state && skipTry.state.track && skipTry.state.track.ad, '`next` does nothing during an ad');
+  const spotsSeen = await waitFor(driver, async () => { const a = await tunerInserts(); return a.registered > 0 ? a : null; }, 'ad.registerAd', 60_000);
+  check(spotsSeen.metadataFetched > 0, 'ad.getAdMetadata called');
+  check(spotsSeen.audioFetched > 0, 'the ad audio was fetched');
+  report.spots = { defaultPolicy: { ...spotsSeen, title: adState.track.title, company: adState.track.artist, nextRefused: true } };
+  console.log(`slots: ${JSON.stringify(report.spots)}`);
+  step('ad played and registered');
+
+  // Verify fixture requests after the compatibility response changes.
+  fakeAuth.allow(tuner.user, { slots: false });
+  const re1 = await ask(driver, { type: 'access-check' });
+  check(re1.access.allowed === true, 'still allowed after the re-check');
+  const metaBefore = (await tunerInserts()).metadataFetched;
+  const slot = await ask(driver, { type: 'ad-metadata', placeholder: { kind: 'ad', adToken: 'smoke-slot', stationId: '' } });
+  check(slot.ad === null && (await tunerInserts()).metadataFetched === metaBefore, `slot follows the playback flag (${JSON.stringify(slot)})`);
+  report.spots.accessOff = { adSlot: slot.ad };
+  fakeAuth.allow(tuner.user, { slots: true });
+  await ask(driver, { type: 'access-check' });
+  step('playback policy respected');
+
+  // The optional spacegho.st sign-in: begun in the background, the authorize page
+  // loaded in this tab, GitHub chosen there, and the redirect to the extension's
+  // https://<uuid>.extensions.allizom.org/oauth address (which does not resolve; the
+  // address is read from the tab) handed back.
+  const begin = await ask(driver, { type: 'account-begin' });
+  check(/^https:\/\/[a-z0-9-]+\.extensions\.allizom\.org\/oauth$/.test(begin.redirectUri), `Firefox redirect address (${begin.redirectUri})`);
+  const flowHandle = await driver.getWindowHandle();
+  await driver.get(begin.url);
+  await driver.wait(until.elementLocated(By.css('#sg-github')), 20_000);
+  await driver.findElement(By.css('#sg-github')).click();
+  await driver.wait(until.elementLocated(By.css('#gh-octo-ci')), 20_000);
+  // The redirect lands on Firefox's DNS error page; geckodriver reports that as an
+  // error whose text carries the address (its code is never printed).
+  let back = null;
+  try {
+    await driver.findElement(By.css('#gh-octo-ci')).click();
+  } catch (e) {
+    const m = /[?&]u=([^&\s]+)/.exec(String(e && e.message || ''));
+    if (!m) throw new Error('the GitHub step of the sign-in failed');
+    back = decodeURIComponent(m[1]);
+  }
+  if (!back) back = await waitFor(driver, async () => { const u = await driver.getCurrentUrl(); return u.startsWith(begin.redirectUri) ? u : null; }, 'redirect to the extension', 20_000);
+  check(back.startsWith(begin.redirectUri + '?'), 'the sign-in came back to the extension address');
+  await goExt(driver, `${ext}/popup.html`);
+  const fin = await ask(driver, { type: 'account-finish', url: back });
+  check(fin.account.signedIn === true && fin.account.label === 'octo-ci', `signed in to spacegho.st (${fin.account.label})`);
+  await waitFor(driver, async () => (await driver.executeScript(() => document.getElementById('account-label')?.textContent || '')) === 'octo-ci' ? true : null, 'account label');
+  const foot = await driver.executeScript(() => document.querySelector('.foot')?.textContent || '');
+  check(!/github/i.test(foot), 'the account line names no provider');
+  await screenshot(driver, 'account');
+  const out = await ask(driver, { type: 'account-signout' });
+  check(out.account.signedIn === false && fakeAuth.tokens.revoked > 0, 'signed out; refresh token revoked');
+  report.account = { label: fin.account.label, revoked: fakeAuth.tokens.revoked };
+  step('spacegho.st sign-in');
+
+  // Access withdrawn: the next check stops the music and signs out of Pandora.
+  fakeAuth.disallow(tuner.user);
+  const re2 = await ask(driver, { type: 'access-check' });
+  check(re2.access.allowed === false, 'access withdrawn');
+  await waitFor(driver, async () => (await loginOutcome(driver)).view === 'login' ? true : null, 'login view after withdrawal', 15_000);
+  const wd = await loginOutcome(driver);
+  check(wd.message === 'melodica access is by allow-list. Your request has been sent.', `login card shows the answer (${wd.message})`);
+  const stoppedState = await playerState();
+  check(stoppedState.loggedIn === false && stoppedState.status !== 'playing', `stopped and signed out of Pandora (${stoppedState.status})`);
+  report.access.withdrawn = { status: stoppedState.status, loggedIn: stoppedState.loggedIn };
+  step('access withdrawn: stopped and signed out');
+
   // 4. The real tuner.pandora.com without an account (the Firefox-only part of the proof).
   if (process.env.MELODICA_SKIP_REAL === '1') {
     report.realPandora = { skipped: true };
@@ -416,6 +443,7 @@ try {
     step('endpoint reset to Pandora');
     await goExt(driver, `${ext}/popup.html`);
     await waitFor(driver, async () => (await loginOutcome(driver)).view === 'login', 'login view');
+    fakeAuth.allow(BOGUS.email);
     const real = await loginAndWait(driver, BOGUS.email, BOGUS.password);
     console.log(`real Pandora login outcome: ${JSON.stringify(real)}`);
     await screenshot(driver, 'real-pandora');
@@ -439,13 +467,19 @@ try {
   }
 
   report.ok = true;
-  report.summary = `${report.browser}: temporary add-on ${GECKO_ID} with host permission ${origins.join(' ')}; GitHub gate screen shown, allowed/denied/503/401/expired tokens handled against the fake /auth/me; signed in to the tuner (${tuner.version}), listed ${names.length} stations, played "${now.title}" in the background page with no tab (still playing after ${NO_PAGE_MS / 1000}s with no extension page open; the optional player tab showed it and its closing changed nothing); ` +
+  report.summary = `${report.browser}: playback, account policy, lifecycle recovery and bridge control; ` +
     (report.realPandora.skipped ? 'real Pandora probe skipped' : `real tuner.pandora.com with bogus credentials -> auth.userLogin code ${report.realPandora.code} ("${report.realPandora.message}")`);
 } catch (e) {
   report.ok = false;
-  report.errors.push(String(e && e.stack || e));
-  report.summary = `FAILED: ${String(e && e.message || e).split('\n')[0]}`;
+  // No sign-in code or token may reach the log or the report.
+  const scrub = (t) => String(t).replace(/(code|state|access_token|refresh_token)(=|%3D)[^&\s%]+/gi, '$1$2…');
+  report.errors.push(scrub(e && e.stack || e));
+  report.summary = `FAILED: ${scrub(String(e && e.message || e).split('\n')[0])}`;
   console.error(report.summary);
+  if (tuner.http) {
+    const tl = await getJson(`${tuner.http}/__tuner/log`).catch(() => []);
+    console.log(`tuner log (first 40 audio/ad/playlist of ${tl.length}):\n  ${tl.filter((e) => e.protocol !== "json" || /ad\.|getPlaylist/.test(e.method || "")).slice(0, 40).map((e) => `${e.protocol} ${e.httpMethod} ${e.method || e.path} -> ${e.status}${e.code == null ? '' : ` code=${e.code}`}${e.headers && e.headers.range ? ` range=${e.headers.range}` : ''}`).join('\n  ')}`);
+  }
   if (driver) {
     try { await screenshot(driver, 'failure'); } catch {}
     try { report.log = await diagnostics(driver, `moz-extension://${UUID}`); console.log(`background log:\n  ${report.log.join('\n  ')}`); } catch (e2) { report.errors.push(`diagnostics: ${e2.message}`); }

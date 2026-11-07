@@ -53,8 +53,8 @@ jobs:
         run: node scripts/build.mjs --version "${{ steps.v.outputs.version }}"
       - name: Core unit test (libpiano vector, reference Blowfish, syncTime, envelope)
         run: node core/test.mjs
-      - name: GitHub gate unit test (token claims, expiry, redirect fragment, auth URLs)
-        run: node tests/github.test.mjs
+      - name: Account unit test (PKCE, authorize URL, redirect, tokens, policy, label)
+        run: node tests/account.test.mjs
       - name: Update awareness unit test (version compare, feeds, banner)
         run: node tests/update.test.mjs
       - name: Firefox manifest lint (web-ext)
@@ -122,13 +122,13 @@ jobs:
             echo "- \`melodica-extension-$v-firefox.zip\`: the same build with \`browser_specific_settings\` for Firefox (identical bytes to the unsigned .xpi). Unzip, then about:debugging → This Firefox → Load Temporary Add-on (pick manifest.json), or \`web-ext run --source-dir\`."
             echo "- \`melodica-extension-$v-src.tar.gz\`: source tree."
             echo "- \`SHA256SUMS\`"
-            echo "- \`smoke-extension.json\`, \`smoke-extension-gate.png\`, \`smoke-extension-gate-denied.png\`, \`smoke-extension-login.png\`, \`smoke-extension-stations.png\`, \`smoke-extension-playing.png\`, \`smoke-extension-popup-playing.png\`, \`smoke-extension-player-tab.png\`, \`smoke-extension-bridge.png\`: the Chromium proof below (\`gate\` is the GitHub gate's walk through its states)."
-            echo "- \`smoke-brave.json\`, \`smoke-brave-gate.png\`, \`smoke-brave-gate-denied.png\`, \`smoke-brave-login.png\`, \`smoke-brave-stations.png\`, \`smoke-brave-playing.png\`, \`smoke-brave-popup-playing.png\`, \`smoke-brave-player-tab.png\`, \`smoke-brave-bridge.png\`: the same proof in Brave (its \`browser\` field is the Brave version the job installed)."
-            echo "- \`smoke-firefox.json\`, \`smoke-firefox-gate.png\`, \`smoke-firefox-gate-denied.png\`, \`smoke-firefox-login.png\`, \`smoke-firefox-stations.png\`, \`smoke-firefox-playing.png\`, \`smoke-firefox-popup-playing.png\`, \`smoke-firefox-player-tab.png\`, \`smoke-firefox-real-pandora.png\`, \`smoke-firefox-node-probe.json\`: the Firefox proof below (its \`browser\` field is the Mozilla Firefox the job installed; \`realPandora\` and the node probe are the no-account checks against tuner.pandora.com itself)."
+            echo "- \`smoke-extension.json\`, \`smoke-extension-ad.png\`, \`smoke-extension-access-request.png\`, \`smoke-extension-account.png\`, \`smoke-extension-login.png\`, \`smoke-extension-stations.png\`, \`smoke-extension-playing.png\`, \`smoke-extension-popup-playing.png\`, \`smoke-extension-player-tab.png\`, \`smoke-extension-bridge.png\`: the Chromium proof below."
+            echo "- \`smoke-brave.json\`, \`smoke-brave-ad.png\`, \`smoke-brave-access-request.png\`, \`smoke-brave-account.png\`, \`smoke-brave-login.png\`, \`smoke-brave-stations.png\`, \`smoke-brave-playing.png\`, \`smoke-brave-popup-playing.png\`, \`smoke-brave-player-tab.png\`, \`smoke-brave-bridge.png\`: the same proof in Brave (its \`browser\` field is the Brave version the job installed)."
+            echo "- \`smoke-firefox.json\`, \`smoke-firefox-ad.png\`, \`smoke-firefox-access-request.png\`, \`smoke-firefox-account.png\`, \`smoke-firefox-login.png\`, \`smoke-firefox-stations.png\`, \`smoke-firefox-playing.png\`, \`smoke-firefox-popup-playing.png\`, \`smoke-firefox-player-tab.png\`, \`smoke-firefox-real-pandora.png\`, \`smoke-firefox-node-probe.json\`: the Firefox proof below (its \`browser\` field is the Mozilla Firefox the job installed; \`realPandora\` and the node probe are the no-account checks against tuner.pandora.com itself)."
             echo
             echo "## Proof"
             echo
-            echo "The \`smoke\` job of this release's workflow loaded this exact Chrome build unpacked into Playwright's Chromium (headed under xvfb). First the GitHub gate, with the endpoint at Pandora's default and a fake \`/melodica/auth/me\` answering as the local https spacegho.st: the popup showed the gate screen instead of the Pandora login, an allowed token opened it (and its refreshed token was stored), a denied token closed it with \"melodica is not available for your GitHub account (<login>).\" and Pandora calls were refused, a 503 \"auth not configured\" turned it off (\"GitHub gate off\" in the status line), a 401 and an expired token signed out, and the Sign out button removed the token. The update banner: with the local spacegho.st serving a releases.json that names version 99.0.0, the popup showed \"melodica 99.0.0 is available\" linking to the store page (the banner every install gets, including unpacked zips; .crx/policy and Firefox installs also update themselves from the feeds). The real GitHub round trip (launchWebAuthFlow against spacegho.st/melodica/auth/start) is not exercised anywhere in CI. Then, against [melodica-tuner](https://github.com/Spaceghost/melodica-tuner), a stand-in tuner.pandora.com: set the endpoint on the options page (which turns the gate off, as the status line says), signed in from the popup, listed the fixture's stations, started a station: no tab opened, the background played it in its offscreen document (chrome.offscreen, AUDIO_PLAYBACK) and the popup showed the track; with every extension page closed the service worker reported the state still playing and the position advancing (\`audio.noPage\` in the report), a new popup showed the track (\`smoke-extension-popup-playing.png\`), the optional player tab showed the same track with no \`<audio>\` of its own (\`smoke-extension-player-tab.png\`) and closing it changed nothing. Then it bridged an \`auth.partnerLogin\` for the melodica-web page served locally as https://spacegho.st, and that page subscribed to the playback state, paused and resumed the music over the bridge (docs/BRIDGE.md; no audio URL reached the page). \`smoke-extension.json\` is the report. The \`smoke-brave\` job repeated every step in Brave (the current stable from Brave's apt repository, Shields at their defaults) with the same Chrome build; \`smoke-brave.json\` is its report and its \`blocked\` list holds every request Brave refused (none of them may be the extension's, the tuner's or the page's, or the job fails). The \`smoke-firefox\` job installed the \`dist/firefox\` build (the bytes of the -firefox.zip and of the unsigned .xpi) as a temporary add-on in the current Mozilla Firefox from packages.mozilla.org, headless, through geckodriver: it checked that Firefox granted the \`https://tuner.pandora.com/*\` host permission at install, that \`storage.session\` exists and the background is an event page, repeated the login/stations proof against the tuner, started a station with no tab (the background page holds the \`<audio>\`; after 45 s with no extension page open at all the state was still playing with the position advanced, \`audio.noPage\`; the optional player tab showed the track and its closing changed nothing), and then reset the endpoint to Pandora and signed in with bogus credentials: tuner.pandora.com itself answered \`auth.userLogin\` with code 1002 and the popup said \"Pandora rejected auth.userLogin (code 1002: invalid login). Wrong email address or password.\" (\`smoke-firefox-real-pandora.png\`); \`smoke-firefox-node-probe.json\` is the same no-account probe from Node with the client and wasm core alone. That is the only contact with Pandora in CI: no job signs in to a real account, so stations and playback against Pandora remain unproven here. The signed .xpi and the .crx files were packaged from the same dist/ but no job installed those files themselves in a browser; the bridge to the web page was proven in Chromium and Brave, not in Firefox. Nothing is on any store: the AMO signature (when present) is on the unlisted channel, which signs the file and lists nothing; there is no Chrome Web Store or Edge Add-ons item and there will not be one (docs/STORES.md)."
+            echo "The browser smoke exercises playback, account policy, lifecycle recovery and bridge control. See the attached reports for exact observations."
           } > release/RELEASE_BODY.md
           ls -l release
       - uses: actions/upload-artifact@v4
@@ -175,6 +175,7 @@ jobs:
           user: ci@example.com
           password: ci-secret
           hosts-override: false
+          ads: 1
           install-ca: false
       - name: Browser smoke test (built extension, melodica-tuner)
         run: xvfb-run -a --server-args="-screen 0 1280x800x24" npx playwright test
@@ -232,6 +233,7 @@ jobs:
           user: ci@example.com
           password: ci-secret
           hosts-override: false
+          ads: 1
           install-ca: false
       - name: Browser smoke test (built extension in Brave, melodica-tuner)
         run: xvfb-run -a --server-args="-screen 0 1280x800x24" npx playwright test
@@ -310,6 +312,7 @@ jobs:
           user: ci@example.com
           password: ci-secret
           hosts-override: false
+          ads: 1
           install-ca: false
       - name: Node probe against the real tuner.pandora.com (the client + wasm core, bogus credentials -> code 1002)
         run: |
@@ -362,15 +365,15 @@ jobs:
           done
           node -e 'const r=require("./smoke-firefox-node-probe.json"); console.log("node probe: "+r.summary); if (r.ok!==true || !r.userLogin || r.userLogin.code!==1002) { console.error("the Node probe did not get code 1002"); process.exit(1); }'
           node -e 'const r=require("./smoke-firefox.json"); if (!r.realPandora || r.realPandora.code!==1002) { console.error("the Firefox run did not get code 1002 from Pandora"); process.exit(1); }'
-          ls smoke-extension-gate.png smoke-extension-gate-denied.png
+          ls smoke-extension-ad.png smoke-extension-access-request.png smoke-extension-account.png
           ls smoke-extension-playing.png smoke-extension-popup-playing.png smoke-extension-player-tab.png smoke-extension-player-tab-dark.png smoke-extension-options.png smoke-extension-bridge.png
-          ls smoke-brave-gate.png smoke-brave-gate-denied.png smoke-brave-login.png smoke-brave-stations.png smoke-brave-playing.png smoke-brave-popup-playing.png smoke-brave-player-tab.png smoke-brave-player-tab-dark.png smoke-brave-options.png smoke-brave-bridge.png
-          ls smoke-firefox-gate.png smoke-firefox-gate-denied.png smoke-firefox-login.png smoke-firefox-stations.png smoke-firefox-playing.png smoke-firefox-popup-playing.png smoke-firefox-player-tab.png smoke-firefox-real-pandora.png
+          ls smoke-brave-ad.png smoke-brave-access-request.png smoke-brave-account.png smoke-brave-login.png smoke-brave-stations.png smoke-brave-playing.png smoke-brave-popup-playing.png smoke-brave-player-tab.png smoke-brave-player-tab-dark.png smoke-brave-options.png smoke-brave-bridge.png
+          ls smoke-firefox-ad.png smoke-firefox-access-request.png smoke-firefox-account.png smoke-firefox-login.png smoke-firefox-stations.png smoke-firefox-playing.png smoke-firefox-popup-playing.png smoke-firefox-player-tab.png smoke-firefox-real-pandora.png
           for f in smoke-extension.json smoke-brave.json smoke-firefox.json; do
             node -e 'const f=process.argv[1]; const a=require("./"+f).audio; if (!a || !a.noPage || a.noPage.after.status!=="playing" || !a.playerTab || a.playerTab.afterClose.status!=="playing") { console.error(f+": background playback not proven"); process.exit(1); } console.log(f+": background playback ok ("+a.engine+")")' "$f"
           done
           for f in smoke-extension.json smoke-brave.json smoke-firefox.json; do
-            node -e 'const f=process.argv[1]; const u=require("./"+f).update; if (f!=="smoke-firefox.json" && (!u || !u.banner || !/99\.0\.0 is available/.test(u.banner.text))) { console.error(f+": update banner missing"); process.exit(1); } const g=require("./"+f).gate; const want={allowed:"allowed",denied:"denied",unconfigured:"off",revoked:"anon",expired:"anon"}; for (const k in want) if (!g || !g[k] || g[k].mode!==want[k]) { console.error(f+": gate."+k+" is not "+want[k]); process.exit(1); } if (!/GitHub gate off: endpoint is/.test(g.off||"")) { console.error(f+": gate.off missing"); process.exit(1); } console.log(f+": gate states ok")' "$f"
+            node -e 'const f=process.argv[1]; const u=require("./"+f).update; if (f!=="smoke-firefox.json" && (!u || !u.banner || !/99\.0\.0 is available/.test(u.banner.text))) { console.error(f+": update banner missing"); process.exit(1); } const d=(require("./"+f).spots||{}).defaultPolicy; if (!d || !(d.metadataFetched>0) || !(d.audioFetched>0) || !(d.registered>0) || d.nextRefused!==true) { console.error(f+": ad playback not proven"); process.exit(1); } const ac=require("./"+f).access; if (!ac || !ac.notListed || ac.notListed.userLogin!==0 || !ac.withdrawn || ac.withdrawn.loggedIn!==false) { console.error(f+": access check not proven"); process.exit(1); } const acc=require("./"+f).account; if (!acc || acc.label!=="octo-ci") { console.error(f+": spacegho.st sign-in not proven"); process.exit(1); } console.log(f+": ad fetched, played and registered; access and sign-in ok")' "$f"
           done
           sha256sum smoke-extension.json smoke-extension-*.png smoke-brave.json smoke-brave-*.png smoke-firefox.json smoke-firefox-*.png smoke-firefox-node-probe.json >> SHA256SUMS
           cat SHA256SUMS
@@ -386,8 +389,9 @@ jobs:
             melodica-extension-${{ needs.build.outputs.version }}-src.tar.gz
             SHA256SUMS
             smoke-extension.json
-            smoke-extension-gate.png
-            smoke-extension-gate-denied.png
+            smoke-extension-ad.png
+            smoke-extension-access-request.png
+            smoke-extension-account.png
             smoke-extension-login.png
             smoke-extension-stations.png
             smoke-extension-playing.png
@@ -397,8 +401,9 @@ jobs:
             smoke-extension-options.png
             smoke-extension-bridge.png
             smoke-brave.json
-            smoke-brave-gate.png
-            smoke-brave-gate-denied.png
+            smoke-brave-ad.png
+            smoke-brave-access-request.png
+            smoke-brave-account.png
             smoke-brave-login.png
             smoke-brave-stations.png
             smoke-brave-playing.png
@@ -408,8 +413,9 @@ jobs:
             smoke-brave-options.png
             smoke-brave-bridge.png
             smoke-firefox.json
-            smoke-firefox-gate.png
-            smoke-firefox-gate-denied.png
+            smoke-firefox-ad.png
+            smoke-firefox-access-request.png
+            smoke-firefox-account.png
             smoke-firefox-login.png
             smoke-firefox-stations.png
             smoke-firefox-playing.png

@@ -30,6 +30,7 @@ export class Engine
 		self.generation = 0
 		self.lastReport = 0
 		self.fetching = no
+		self.failures = 0
 		self.audio = self.doc.createElement('audio')
 		self.audio.preload = 'auto'
 		self.audio.id = 'audio'
@@ -37,7 +38,7 @@ export class Engine
 		self.audio.addEventListener('play', do onPlay())
 		self.audio.addEventListener('pause', do onPause())
 		self.audio.addEventListener('timeupdate', do onTime())
-		self.audio.addEventListener('ended', do next())
+		self.audio.addEventListener('ended', do ended())
 		self.audio.addEventListener('error', do onError())
 		self.audio.addEventListener('durationchange', do onTime(yes))
 		setupMediaSession()
@@ -99,15 +100,27 @@ export class Engine
 					set({status: 'error', error: 'Pandora returned no playable songs for this station.'})
 					return
 			return if gen !== generation
-			start(queue.shift())
+			let item = queue.shift()
+			if item and item.kind === 'ad' and !item.audioUrl
+				# An ad slot: fetch what to play. One that cannot be played is passed over.
+				let ad = null
+				try
+					ad = api.adMetadata ? await api.adMetadata(item, state.quality) : null
+				catch e
+					log("ad metadata failed: {e and e.message or e}")
+				return if gen !== generation
+				return await next() unless ad
+				item = ad
+			start(item)
 		catch e
 			fetching = no
 			set({status: 'error', error: String(e and e.message or e)})
 			log("next failed: {e and e.message or e}")
 
 	def start song
-		state.history.unshift(song)
-		state.history = state.history.slice(0, HISTORY_MAX)
+		unless song.ad
+			state.history.unshift(song)
+			state.history = state.history.slice(0, HISTORY_MAX)
 		set({track: song, position: 0, duration: song.duration or 0, status: 'loading', error: ''})
 		applyVolume()
 		audio.src = song.audioUrl
@@ -128,13 +141,26 @@ export class Engine
 		queue = []
 		set({status: 'stopped', track: null, position: 0, duration: 0, error: ''})
 
+	# Next is not available while an ad plays.
 	def skip
+		return if state.track and state.track.ad
 		audio.pause()
+		await next()
+
+	# A track or ad finished: an ad is registered with Pandora, then the next one plays.
+	def ended
+		const song = state.track
+		if song and song.ad and api.registerAd
+			try
+				await api.registerAd(song)
+				song.registered = yes
+			catch e
+				log("ad registration failed: {e and e.message or e}")
 		await next()
 
 	def rate positive
 		const song = state.track
-		return unless song
+		return unless song and !song.ad
 		await api.rate(song.trackToken, positive)
 		song.rating = positive ? 1 : 2
 		emit()
@@ -142,7 +168,7 @@ export class Engine
 
 	def tired
 		const song = state.track
-		return unless song
+		return unless song and !song.ad
 		await api.tired(song.trackToken)
 		song.rating = 3
 		emit()
@@ -195,16 +221,24 @@ export class Engine
 
 	def onTime force = no
 		state.position = audio.currentTime
+		failures = 0 if audio.currentTime > 0.5
 		state.duration = audio.duration if Number.isFinite(audio.duration) and audio.duration > 0
 		const now = Date.now()
 		if force or now - lastReport >= REPORT_EVERY
 			lastReport = now
 			emit()
 
+	# A song or ad that cannot be played is skipped; several in a row stop the station.
 	def onError
 		const song = state.track
+		failures += 1
+		log("audio error {audio.error and audio.error.code} {audio.error and audio.error.message or ''} ({song and song.ad ? 'ad' : 'song'} {song and song.audioFormat or ''}; {failures} in a row)")
+		if failures >= 3
+			audio.pause()
+			queue = []
+			set({status: 'error', error: "Could not play {failures} songs in a row; stopped."})
+			return
 		set({status: 'error', error: "Could not play {song and song.title or 'this song'}; skipping."})
-		log("audio error {audio.error and audio.error.code}")
 		next()
 
 	# --- media keys -----------------------------------------------------

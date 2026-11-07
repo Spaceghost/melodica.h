@@ -3,11 +3,11 @@
 # it stops nothing. It renders `player-state` and sends `player` commands.
 
 import { browser, send, FALLBACK_COVER } from './shared.imba'
-import { StationList, NowPlaying, Transport, Gate, UpdateBanner, Top, Foot, gateAllowed, gateLine } from './ui.imba'
+import { StationList, NowPlaying, Transport, AccountLine, UpdateBanner, Top, Foot } from './ui.imba'
 
-# While this page is open the background is asked for the gate this often; it
-# re-checks with the auth server once its last check is an hour old.
-const GATE_POLL = 15 * 60 * 1000
+# While this page is open the background is asked for the account's policy this
+# often; it asks spacegho.st again once its last answer is an hour old.
+const ACCOUNT_POLL = 15 * 60 * 1000
 
 tag Player
 	prop stations = []
@@ -17,9 +17,9 @@ tag Player
 	prop loggedIn = yes
 	prop version = ''
 	prop traits = null
-	prop gate = null
-	prop gateBusy = no
-	prop gateError = ''
+	prop account = null
+	prop accountBusy = no
+	prop accountError = ''
 	prop update = null
 
 	def mount
@@ -29,23 +29,21 @@ tag Player
 		try
 			const r = await send({type: 'player-get'})
 			apply(r.state)
-			gate = r.gate or null
+			account = r.account or null
 			update = r.update or null
-			self.gateTimer = setInterval((do pollGate()), GATE_POLL)
-			if stations.length === 0 and loggedIn and gateAllowed(gate)
+			self.pollTimer = setInterval((do poll()), ACCOUNT_POLL)
+			if stations.length === 0 and loggedIn
 				await reload()
 		catch e
 			if e.kind === 'auth'
 				loggedIn = no
-			elif e.kind === 'gate'
-				await pollGate()
 			else
 				toast(String(e.message or e), 'error')
 		imba.commit()
 
 	def unmount
 		browser.runtime.onMessage.removeListener(self.listener)
-		clearInterval(self.gateTimer) if self.gateTimer
+		clearInterval(self.pollTimer) if self.pollTimer
 
 	def apply state
 		return unless state
@@ -60,8 +58,9 @@ tag Player
 		if msg.type === 'player-state'
 			apply(msg.state)
 			imba.commit()
-		elif msg.type === 'gate'
-			applyGate(msg.gate)
+		elif msg.type === 'account'
+			account = msg.account
+			imba.commit()
 		elif msg.type === 'update'
 			update = msg.update
 			imba.commit()
@@ -73,36 +72,24 @@ tag Player
 		catch e
 			toast(String(e.message or e), 'error')
 
-	def pollGate
+	def poll
 		try
-			applyGate((await send({type: 'gate'})).gate)
+			account = (await send({type: 'account'})).account
 			update = (await send({type: 'update'})).update
 		catch e
 			null
-
-	def applyGate g
-		gate = g
 		imba.commit()
 
-	def gateAction type
-		gateBusy = yes
-		gateError = ''
+	def accountAction type
+		accountBusy = yes
+		accountError = ''
 		imba.commit()
 		try
-			applyGate((await send({type})).gate)
+			account = (await send({type})).account
 		catch e
-			gateError = String(e.message or e)
-		gateBusy = no
+			accountError = String(e.message or e)
+		accountBusy = no
 		imba.commit()
-
-	def githubSignin
-		gateAction('github-signin')
-
-	def gateCheck
-		gateAction('gate-check')
-
-	def githubSignout
-		gateAction('github-signout')
 
 	def toast text, k = ''
 		message = text
@@ -116,8 +103,6 @@ tag Player
 		catch e
 			if e.kind === 'auth'
 				loggedIn = no
-			elif e.kind === 'gate'
-				await pollGate()
 			else
 				toast(String(e.message or e), 'error')
 		imba.commit()
@@ -129,8 +114,6 @@ tag Player
 		catch e
 			if e.kind === 'auth'
 				loggedIn = no
-			elif e.kind === 'gate'
-				await pollGate()
 			toast(String(e.message or e), 'error')
 		imba.commit()
 
@@ -216,12 +199,10 @@ tag Player
 						<button#logout type="button" @click=logout> "Sign out"
 				else
 					<span#status.fine> "Not signed in"
-			<main#app.app data-view=(gate and !gateAllowed(gate) ? 'gate' : (loggedIn ? 'player' : 'login')) data-status=(player and player.status or '')>
+			<main#app.app data-view=(loggedIn ? 'player' : 'login') data-status=(player and player.status or '')>
 				<div.view>
 					<UpdateBanner update=update @reload=reloadExtension>
-					if gate and !gateAllowed(gate)
-						<Gate gate=gate busy=gateBusy message=gateError @signin=githubSignin @check=gateCheck @signout=githubSignout>
-					elif !loggedIn
+					if !loggedIn
 						<div.view.login>
 							<div.card.login-card>
 								<p.eyebrow> "melodica"
@@ -275,7 +256,7 @@ tag Player
 														<span.hist-artist> h.artist
 														<span.hist-rating> (song and h.trackToken === song.trackToken ? 'now playing' : (h.rating === 1 ? 'loved' : (h.rating === 2 ? 'banned' : (h.rating === 3 ? 'tired' : ''))))
 			<Foot version=version>
-				<span#gate-status.ext-gate-status> gateLine(gate)
+				<AccountLine account=account busy=accountBusy message=accountError @signin=accountAction('account-signin') @signout=accountAction('account-signout')>
 				<span.fine> "Keys: space play/pause · n next · + love · - ban · t tired · e why"
 
 imba.mount <Player>

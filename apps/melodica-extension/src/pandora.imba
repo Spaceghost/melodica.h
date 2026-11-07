@@ -148,6 +148,37 @@ export def normalizeSong item, quality
 		detailUrl: item.songDetailUrl or ''
 	}
 
+# A playlist item that is an audio ad: Pandora sends only its adToken; the
+# metadata (audio, title, company, art) comes from ad.getAdMetadata.
+export def adPlaceholder item, station
+	return null unless item and item.adToken and !item.songName
+	{kind: 'ad', adToken: String(item.adToken), stationId: String(item.stationId or (station and station.id) or '')}
+
+export def normalizeAd meta, placeholder, quality
+	return null unless meta
+	const audio = pickAudio(meta.audioUrlMap, quality)
+	return null unless audio
+	const gain = Number(meta.trackGain)
+	{
+		kind: 'ad'
+		ad: yes
+		adToken: placeholder.adToken
+		trackToken: "ad:{placeholder.adToken}"
+		stationId: placeholder.stationId
+		title: meta.title or 'Advertisement'
+		artist: meta.companyName or ''
+		album: ''
+		coverArt: meta.imageUrl or ''
+		clickThroughUrl: meta.clickThroughUrl or ''
+		audioUrl: audio.audioUrl
+		audioFormat: "{audio.encoding or ''} {audio.bitrate or ''}".trim()
+		quality: audio.quality
+		duration: 0
+		gain: Number.isFinite(gain) ? gain : 0
+		rating: 0
+		trackingTokens: Array.isArray(meta.adTrackingTokens) ? meta.adTrackingTokens.map(String) : []
+	}
+
 export class Pandora
 	def constructor core, options = {}
 		self.core = core
@@ -270,7 +301,16 @@ export class Pandora
 
 	def playlist station, quality = 'high'
 		const r = await self.authed('station.getPlaylist', {stationToken: station.token, includeTrackLength: yes})
-		(r.items or []).map(do(item) normalizeSong(item, quality)).filter(do(s) !!s)
+		(r.items or []).map(do(item) normalizeSong(item, quality) or adPlaceholder(item, station)).filter(do(s) !!s)
+
+	# The ad behind an adToken from a playlist, ready to play like a track.
+	def adMetadata placeholder, quality = 'high'
+		const r = await self.authed('ad.getAdMetadata', {adToken: placeholder.adToken, returnAdTrackingTokens: yes, supportAudioAds: yes, includeBannerAd: no})
+		normalizeAd(r, placeholder, quality)
+
+	# After an ad has played: tell Pandora, with its tracking tokens.
+	def registerAd stationId, trackingTokens
+		self.authed('ad.registerAd', {stationId: String(stationId), adTrackingTokens: trackingTokens})
 
 	def rate trackToken, positive
 		self.authed('station.addFeedback', {trackToken, isPositive: !!positive})

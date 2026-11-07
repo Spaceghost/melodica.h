@@ -5,13 +5,13 @@ addons.mozilla.org listings, and will not be. The only distribution is the self-
 store at <https://spacegho.st/extensions/#melodica-extension>: the release `.xpi`,
 `.crx` and unpacked zips from GitHub, mirrored with their checksums and update feeds.
 
-melodica is distributed only from spacegho.st/extensions; access requires GitHub
-sign-in and is limited to an allowlist, which the stores cannot express. "Unlisted" and
+melodica is distributed only from spacegho.st/extensions; melodica access is by
+allow-list, which the stores cannot express. "Unlisted" and
 "hidden" hide a listing from search, not from anyone with the link, and a reviewer would
 be handed a player that refuses them. We also will not ship a store build that behaves
-differently from the self-hosted one (a build without the gate, or with a different one)
+differently from the self-hosted one (a build without the access check, or with a different one)
 so that a store would accept it. One build, one behaviour, openly documented (README,
-"GitHub gate").
+"Access").
 
 What was removed on 2026-11-07 (v0.2.0): the `publish-cws` and `publish-edge` jobs,
 `scripts/edge-publish.sh`, the `-cws.zip` package (the Chrome build without
@@ -25,7 +25,7 @@ unsigned add-on, and the only signer is addons.mozilla.org. Its *unlisted* chann
 file without creating a listing: there is no AMO page, nothing is searchable, the signed
 `.xpi` is served from spacegho.st, and updates come from
 `https://spacegho.st/extensions/dl/melodica-extension/updates.json` (the
-`gecko.update_url` in the manifest), not from Mozilla. The gate is in the signed file
+`gecko.update_url` in the manifest), not from Mozilla. The access check is in the signed file
 exactly as in every other build.
 
 ### What CI does on a tag
@@ -46,7 +46,7 @@ after 2025-11-03 and has announced it for all extensions; AMO did not enforce it
 on 2026-11-07. If a future signing run is refused for it, the fix is in the manifest template
 (`public/manifest.json`): `"data_collection_permissions": {"required": ["authenticationInfo"]}`
 (the Pandora login is transmitted to pandora.com, or to the endpoint set on the options
-page; the GitHub sign-in is transmitted to spacegho.st) with `strict_min_version` raised to
+page; the login email is sent to spacegho.st for the access check) with `strict_min_version` raised to
 `140.0`, which that key requires. Once added it must stay in every later version.
 
 ### If Mozilla rejects a version

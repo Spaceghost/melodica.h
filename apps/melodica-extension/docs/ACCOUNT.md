@@ -2,20 +2,176 @@
 
 # spacegho.st accounts: client contract
 
-How a spacegho.st app (melodica-web, melodica-extension, the Safari/iOS build) signs a
-user in with a spacegho.st account and reads its playback policy. Signing in is
-**optional**: without an account the app works normally.
+How melodica clients (melodica-web, melodica-extension, the Safari/iOS build) check
+access, and optionally sign a user in with a spacegho.st account to read the playback
+policy.
+
+**melodica access is by allow-list.** The identity is the Pandora login email
+(lowercased and trimmed). Every confirmed login is recorded (email, first and last
+login, number of logins, client, Cloudflare country code; never an IP address) for the
+admin's Users list, and listens go to Spaceghost Scrobbles unless the user turns that
+off (see Scrobbling).
 
 ## Summary
 
-1. No account (the default): go straight to the Pandora login. Treat the policy as
-   `{"playback":{"plus":false}}`.
-2. Optional "Sign in with spacegho.st": OAuth 2.1 authorization code + PKCE (S256) against
-   `https://spacegho.st`. Public client, no client secret.
-3. With an access token, `GET https://spacegho.st/oauth/melodica/policy` and obey
-   `playback.plus`. Anything other than a 200 with that shape means `plus: false`.
-4. The Pandora login is still required in every case; the spacegho.st account only
-   changes the policy.
+1. **Web player (relay).** Log in to Pandora through the relay as before. The relay checks
+   the login email: if it is not allowed, `auth.userLogin` fails with HTTP 403 and
+   `{"stat":"fail","code":-1,"message":"melodica access is by allow-list. Your request has been sent."}`
+   (Pandora is not contacted). If it is allowed and Pandora accepts the login, the
+   response has a header `x-melodica-access: <token>`. Send that header on **every**
+   later relay call; without it the relay answers HTTP 401 with
+   `{"stat":"fail","code":-1,"message":"melodica access is by allow-list; signing in sends your email to the admin as an access request."}`.
+   The token lasts 12 hours; when a call gets that 401, log in again (`auth.partnerLogin`
+   + `auth.userLogin`) to get a new one.
+2. **Extension (direct to Pandora).** Before `auth.userLogin`, `POST /oauth/melodica/access`
+   with the same email string. If `allowed` is false, do not log in; show the
+   allow-list wording above (the request has been sent).
+3. **Ads.** Obey `ads` from `/oauth/melodica/access`, or from `/oauth/melodica/policy`.
+   The web player gets it from the policy endpoint using the `x-melodica-access` token as
+   the bearer. Anything unexpected means `plus: false`.
+4. **Login confirmation and scrobbling.** Web: the relay records the login itself and
+   adds `x-melodica-scrobble: <token>` next to `x-melodica-access`. Extension: after
+   Pandora accepts the login, `POST /oauth/melodica/login-ok`. Both get a Spaceghost
+   Scrobbles client token while scrobbling is on (the default). See Scrobbling.
+5. **Optional spacegho.st sign-in** (OAuth 2.1 code + PKCE, below). It is not needed to
+   use melodica. With an access token, send it as the bearer to `/oauth/melodica/access`
+   and `/oauth/melodica/policy`.
+
+## Access check (extension)
+
+```
+POST https://spacegho.st/oauth/melodica/access
+Content-Type: application/json
+Authorization: Bearer <spacegho.st access token>     (optional)
+
+{"email":"<exactly what the user typed as the Pandora username>","client":"extension"}
+```
+
+`client` is `"extension"`, `"ios"` or `"web"`.
+
+- 200 `{"allowed":true,"plus":false|true,"token":"<jwt>","scrobbling":true|false,"scrobble":{"token","endpoint"}}`:
+  log in to Pandora. `token` is a melodica access token (12 h) usable as the bearer for
+  `/oauth/melodica/policy`, `/oauth/melodica/login-ok` and `/oauth/melodica/scrobbling*`.
+  `scrobble` is present only while scrobbling is on and Scrobbles answered; it is
+  missing otherwise (do not treat that as an error). Send the token you already hold
+  as `"scrobble_token"` in the body and you get the same one back instead of a new one.
+- An allowed check counts as a login attempt; `last_login` moves only with login-ok.
+- 200 `{"allowed":false,"plus":false,"message":"…"}`: do not log in; show `message`.
+- 400 `{"error":"invalid_request"}`: not an email address.
+- Network error or 5xx: do not log in; say the access check is unavailable and to try again.
+- Emails are compared lowercased and trimmed.
+
+## Relay (web)
+
+- `POST https://spacegho.st/melodica/api/?method=…` with the body melodica.h built, as before.
+- `auth.partnerLogin` and `test.checkLicensing` need no token.
+- `auth.userLogin`: 403 (not allowed, shape above) or Pandora's answer; on `stat: "ok"`
+  read `x-melodica-access` and, when present, `x-melodica-scrobble` (a Scrobbles client
+  token) from the response headers (both exposed via CORS
+  `Access-Control-Expose-Headers`). Send the Scrobbles token you already hold as the
+  request header `x-melodica-scrobble` on `auth.userLogin` to keep it; a missing response
+  header means scrobbling is off or Scrobbles was unreachable.
+- Everything else: send `x-melodica-access: <token>`; 401 without a valid one.
+- An `Authorization` header is ignored by the relay.
+
+## Login confirmation (extension)
+
+```
+POST https://spacegho.st/oauth/melodica/login-ok
+Authorization: Bearer <melodica access token from /access>
+Content-Type: application/json
+
+{"email":"<same string as for /access>","client":"extension","scrobble_token":"<current token, optional>"}
+```
+
+Call it right after Pandora answered stat ok to `auth.userLogin`.
+
+- 200 `{"ok":true,"scrobbling":bool,"scrobble"?:{"token","endpoint"}}`.
+- 401 `{"error":"invalid_token"}`: the access token is missing, expired or for another
+  email. Ignore it for playback. The login worked, but it is not recorded.
+- Network errors: ignore; never block playback on this call.
+
+## Scrobbling (Spaceghost Scrobbles)
+
+Listens go to Spaceghost Scrobbles (`https://spacegho.st/scrobble`, ListenBrainz-
+compatible) by default. The user can turn this off. Scrobbles gets an opaque identifier,
+never the email, and shows the user under a generated handle (`listener-xxxxxx`) until
+they pick a display name.
+
+**Submitting.** With `scrobble.token` (or the `x-melodica-scrobble` header):
+
+```
+POST https://spacegho.st/scrobble/1/submit-listens
+Authorization: Token <scrobble token>
+Content-Type: application/json
+```
+
+- At track start: `{"listen_type":"playing_now","payload":[{"track_metadata":{…}}]}`.
+- Once the track has played for 50% of its duration or 4 minutes, whichever comes
+  first (tracks of 30 s or less never count):
+  `{"listen_type":"single","payload":[{"listened_at":<unix seconds at track start>,"track_metadata":{…}}]}`.
+  Send it once per play.
+- `track_metadata` holds only `artist_name`, `track_name`, `release_name` (album) and
+  `additional_info: {"duration_ms": <int>, "art_url": "<https cover art URL>", "submission_client": "melodica-web"|"melodica-extension"}`.
+  Nothing else: no station, no Pandora ids or tokens, no stream URLs.
+- **Never submit inserted audio items** (neither playing_now nor single).
+- A 401 means the token was revoked (opt-out, or replaced by a newer login): drop it
+  and stop submitting until the next login hands out a token. A 429 or 5xx: retry later.
+  Network errors: queue at most a handful and retry; never block playback.
+- `GET /scrobble/1/validate-token` answers `{"valid":true,"user_name":"…"}`.
+
+**First-run notice.** Before the first submission, show once, visibly:
+"Scrobbling to spacegho.st is on. Turn it off in settings."
+
+**Recent listens** (to fill the "recently played" list after a reload, the last 15):
+
+```
+GET https://spacegho.st/scrobble/1/user/recent?limit=15
+Authorization: Token <scrobble token>
+```
+
+200 `{"listens":[{"listened_at":<unix s>,"artist":"…","title":"…","album"?:"…","duration_ms"?:<int>,"art"?:"https://…"}]}`,
+newest first, completed listens only (`limit` 1–100, default 15). Token-only: history is
+private.
+
+**Settings.** The settings screen gets the scrobbling switch, a leaderboard switch, a
+display name field, and two links: "Your listening history" and "Leaderboard".
+
+- Scrobbling state: `GET https://spacegho.st/oauth/melodica/scrobbling` with
+  `Authorization: Bearer <melodica access token>` →
+  `{"enabled":bool,"endpoint":"https://spacegho.st/scrobble","history":"https://spacegho.st/oauth/melodica/scrobbling/history","leaderboard":"https://spacegho.st/scrobble/leaderboard"}`.
+- Switch: `POST https://spacegho.st/oauth/melodica/scrobbling`, same bearer,
+  `{"enabled":false}` or `{"enabled":true,"client":"web"|"extension"|"ios"}`.
+  Off revokes every Scrobbles token of the user (they answer 401 from then on), takes the
+  user off the leaderboards, and stops new tokens. On returns `scrobble: {token, endpoint}`
+  for this client. 503 `{"error":"temporarily_unavailable"}`: nothing changed; say so
+  and keep the switch where it was. 404 `{"error":"unknown_user"}`: log in again first.
+- Display name and leaderboard (needs a Scrobbles token, so only while scrobbling is on):
+  `GET https://spacegho.st/scrobble/1/user/settings` →
+  `{"display_name":"","handle":"listener-7f3a2c","name":"listener-7f3a2c","leaderboard":true}`;
+  `POST` the same URL with `{"display_name":"…"}` (1–40 characters; no email address or
+  link, 400 otherwise; `""` goes back to the handle) and/or `{"leaderboard":false}`.
+  Label the switch "Show me on the leaderboard". It starts on for melodica users; turning
+  scrobbling back on does not turn it on again.
+- "Your listening history": `POST https://spacegho.st/oauth/melodica/scrobbling/history`
+  with the bearer → `{"url":"https://spacegho.st/…/ticket?t=…","expires_in":120}`. Open
+  `url` in a new tab at once (open the tab synchronously on click, then set its location,
+  so popup blockers allow it). The link works once and signs the user in to their
+  Scrobbles dashboard for 12 hours, where they can export or delete their history.
+- "Leaderboard": link `https://spacegho.st/scrobble/leaderboard` (public).
+
+**Leaderboards.** `https://spacegho.st/scrobble/leaderboard` (HTML) and
+`GET https://spacegho.st/scrobble/1/leaderboard?window=7d|30d|all` (JSON, public, CORS
+`*`): `{"window","generated_at","songs":[{"artist","title","listens"}],"artists":[{"artist","listens"}],"listeners":[{"name","listens"}]}`,
+top 25 each, refreshed every few minutes. Only accounts with the leaderboard switch on
+count.
+
+The Scrobbles API sends no CORS headers except on `/1/leaderboard`: the web app calls it same-origin, and the extension needs host permission for `https://spacegho.st/scrobble/*`.
+
+Note on trust: the extension's `/access` answer already carries a Scrobbles token and
+opens the history link for whoever knows an allowed email (the same client-side trust
+as the access check itself). The relay's token is handed out only after Pandora
+accepted the password.
 
 ## Endpoints
 
@@ -30,8 +186,14 @@ Discovery: `https://spacegho.st/.well-known/openid-configuration` (issuer `https
 | revoke (refresh tokens) | `https://spacegho.st/oauth/revoke` |
 | logout | `https://spacegho.st/oauth/logout` |
 | melodica policy | `https://spacegho.st/oauth/melodica/policy` |
+| melodica access check | `https://spacegho.st/oauth/melodica/access` |
+| melodica login confirmation | `https://spacegho.st/oauth/melodica/login-ok` |
+| melodica scrobbling switch | `https://spacegho.st/oauth/melodica/scrobbling` |
+| melodica history link | `https://spacegho.st/oauth/melodica/scrobbling/history` |
+| Scrobbles API base | `https://spacegho.st/scrobble/1/` |
+| Scrobbles leaderboard | `https://spacegho.st/scrobble/leaderboard` |
 
-CORS: `token`, `userinfo`, `revoke`, `policy`, `jwks` and discovery answer
+CORS: `token`, `userinfo`, `revoke`, `policy`, `access`, `login-ok`, `scrobbling`, `jwks` and discovery answer
 `Access-Control-Allow-Origin: *` (no cookies are involved).
 
 ## Registered clients
@@ -62,7 +224,7 @@ shows an error and never redirects.
 
    `prompt=none` returns `error=login_required` at once when there is no spacegho.st
    session (useful for a silent check). Other `prompt` values are ignored.
-3. The user signs in on spacegho.st (GitHub or email). The browser comes back to
+3. The user signs in on spacegho.st (GitHub). The browser comes back to
    `redirect_uri?code=…&state=…&iss=https%3A%2F%2Fspacegho.st`, or
    `?error=…&state=…&iss=…`. Check `state` and `iss`. Remove `code` from the address bar
    (`history.replaceState`).
@@ -92,7 +254,7 @@ shows an error and never redirects.
 
 ```
 GET https://spacegho.st/oauth/melodica/policy
-Authorization: Bearer <access_token>
+Authorization: Bearer <OAuth access token, or a melodica access token>
 ```
 
 ```json
@@ -105,6 +267,7 @@ Authorization: Bearer <access_token>
 - No `Authorization` header: 200 `{"playback":{"plus":false},"display":{"name":null}}`.
 - Invalid or expired token: 401 `{"error":"invalid_token"}`; refresh and retry once, else
   treat as `plus: false`.
+- With a melodica access token, `display.name` is null.
 - Network errors, 5xx, or an unexpected body: `plus: false`.
 - Ask again at app start and after every token refresh. The answer can change.
 - Show no text about this flag. In particular, do not tell users that it exists, what it
@@ -132,7 +295,8 @@ tokens or codes.
 
 ## Older clients
 
-Clients up to v0.4.x call `https://spacegho.st/melodica/auth/*`. Those routes still answer:
-`/auth/me` returns 503 without a token (go to the Pandora login) and 200 (allowed)
-for any valid old token. The relay `POST /melodica/api/` needs no token and
-ignores an `Authorization` header. New clients should drop the `/melodica/auth/*` flow.
+Clients up to v0.4.x call `https://spacegho.st/melodica/auth/*`; `/auth/me` answers 503
+without a token (go to the Pandora login) and 200 for a valid old token. They do not send
+`x-melodica-access`, so after login the relay answers 401: the hosted web player must ship
+the relay changes above. Old extension builds are not checked (they talk to Pandora
+directly).

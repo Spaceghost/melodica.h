@@ -2,8 +2,8 @@
 # melodica-tuner), audio quality, remembered password.
 
 import { browser, loadSettings, saveSettings, normalizeEndpoint, SETTINGS_DEFAULTS, send } from './shared.imba'
-import { AUTH_BASE, normalizeAuthBase } from './github.imba'
-import { gateLine, UpdateBanner, Top, Foot, Mark } from './ui.imba'
+import { ACCOUNT_BASE, normalizeAccountBase } from './account.imba'
+import { AccountLine, UpdateBanner, Top, Foot, Mark } from './ui.imba'
 
 const DIAG_LINES = 50
 
@@ -25,9 +25,9 @@ tag Options
 	prop version = ''
 	prop granted = null
 	prop diagnostics = ''
-	prop gate = null
-	prop authBase = AUTH_BASE
-	prop gateBusy = no
+	prop account = null
+	prop accountBase = ACCOUNT_BASE
+	prop accountBusy = no
 	prop update = null
 	# The form is shown only once the stored settings are in; a value typed
 	# before that would be overwritten when they arrived (seen in Brave, where
@@ -41,7 +41,7 @@ tag Options
 		remember = s.remember
 		version = browser.runtime.getManifest().version
 		await checkPermission()
-		await loadGate()
+		await loadAccount()
 		self.notice = do(msg) onNotice(msg)
 		browser.runtime.onMessage.addListener(self.notice)
 		loaded = yes
@@ -51,8 +51,8 @@ tag Options
 		browser.runtime.onMessage.removeListener(self.notice) if self.notice
 
 	def onNotice msg
-		if msg and msg.type === 'gate'
-			gate = msg.gate
+		if msg and msg.type === 'account'
+			account = msg.account
 			imba.commit()
 		if msg and msg.type === 'update'
 			update = msg.update
@@ -75,28 +75,28 @@ tag Options
 			message = String(e.message or e)
 			kind = 'error'
 
-	# The GitHub gate as the background knows it, and which auth server it asks
-	# (the default Worker, or the `authBase` override the Firefox smoke uses).
-	def loadGate
+	# The optional spacegho.st account as the background knows it, and which account
+	# server it asks (spacegho.st, or the `accountBase` override the Firefox smoke uses).
+	def loadAccount
 		try
-			const got = await browser.storage.local.get({authBase: ''})
-			authBase = normalizeAuthBase(got.authBase)
-			gate = (await send({type: 'gate'})).gate
+			const got = await browser.storage.local.get({accountBase: ''})
+			accountBase = normalizeAccountBase(got.accountBase)
+			account = (await send({type: 'account'})).account
 			update = (await send({type: 'update'})).update
 		catch e
-			gate = {mode: 'error', reason: String(e.message or e), login: '', exp: null}
+			account = null
 
-	def gateAction type
-		gateBusy = yes
+	def accountAction type
+		accountBusy = yes
 		imba.commit()
 		try
-			gate = (await send({type})).gate
-			message = type === 'github-signout' ? 'Signed out of GitHub.' : "GitHub gate: {gate.mode}."
+			account = (await send({type})).account
+			message = account and account.signedIn ? "Signed in to spacegho.st as {account.label}." : 'Not signed in to spacegho.st.'
 			kind = 'info'
 		catch e
 			message = String(e.message or e)
 			kind = 'error'
-		gateBusy = no
+		accountBusy = no
 		imba.commit()
 
 	get origin
@@ -137,7 +137,7 @@ tag Options
 				"browser {d.ua}"
 				"endpoint {d.endpoint}; signed in: {d.loggedIn ? 'yes' : 'no'}; clock offset {d.syncOffset}s; request User-Agent: {d.userAgent}"
 				"update: running {d.update and d.update.current}, store {d.update and d.update.latest or 'unknown'}, fetched {d.update and d.update.available or 'none'}, feed {d.update and d.update.feed}{d.update and d.update.error ? ' (' + d.update.error + ')' : ''}"
-				"github gate: {d.gate ? d.gate.mode : '?'}{d.gate and d.gate.login ? ' ' + d.gate.login : ''}{d.gate and d.gate.reason ? ' (' + d.gate.reason + ')' : ''}; auth server {d.authBase}"
+				"spacegho.st account: {d.account and d.account.signedIn ? 'signed in' : 'not signed in'}{d.account and d.account.error ? ' (' + d.account.error + ')' : ''}; account server {d.accountBase}"
 				"storage.session: {d.sessionStorage ? 'available' : 'missing (storage.local used)'}; background: {JSON.stringify(d.background)}"
 				"permissions: {JSON.stringify(d.permissions)}"
 				"last {lines.length} background log lines:"
@@ -204,17 +204,12 @@ tag Options
 									<p.message#options-message .error=(kind === 'error') .info=(kind === 'info')> message
 						if loaded
 							<div.ext-opts-side>
-								<section.panel.ext-form>
-									<h3> "GitHub sign-in"
-									<p.fine#options-gate> "melodica requires a GitHub sign-in. GitHub sign-in is used for identity only; nothing is stored. {authBase} is asked whether the signed-in account may use melodica. Status: {gateLine(gate) or 'unknown'}"
-									if authBase !== AUTH_BASE
-										<p.fine#options-authbase> "Auth server overridden (storage key authBase): {authBase}. Default: {AUTH_BASE}"
-									<div.ext-actions>
-										if gate and (gate.mode === 'anon' or gate.mode === 'error')
-											<button#options-github-signin type="button" disabled=gateBusy @click=gateAction('github-signin')> "Sign in with GitHub"
-										<button#options-gate-check type="button" disabled=gateBusy @click=gateAction('gate-check')> "Check again"
-										if gate and gate.login
-											<button#options-github-signout type="button" disabled=gateBusy @click=gateAction('github-signout')> "Sign out"
+								<section.panel.ext-form#options-account>
+									<h3> "spacegho.st account"
+									<p.fine> "Optional. melodica works without it; signing in only links this browser to your spacegho.st account."
+									if accountBase !== ACCOUNT_BASE
+										<p.fine#options-accountbase> "Account server overridden (storage key accountBase): {accountBase}. Default: {ACCOUNT_BASE}"
+									<AccountLine account=account busy=accountBusy @signin=accountAction('account-signin') @signout=accountAction('account-signout')>
 								<section.panel.ext-form>
 									<h3> "Updates"
 									<p.fine#options-update> "Firefox and .crx or policy installs update themselves from the feeds on spacegho.st/extensions; an unpacked zip only gets the banner. Running {update and update.current or version}; the store serves {update and update.latest or 'unknown'}{update and update.checkedAt ? ', checked ' + new Date(update.checkedAt).toLocaleString() : ''}."
