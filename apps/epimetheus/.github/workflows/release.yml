@@ -1,0 +1,308 @@
+name: Release
+
+on:
+  push:
+    branches: [dev]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to build and publish (must exist or will be created at this ref)
+        required: false
+        default: ''
+
+env:
+  FLUTTER_VERSION: 1.22.6
+  # Web was beta-only before Flutter 2.0; this is the beta matching the lock's Dart 2.10.0-dev.
+  FLUTTER_WEB_VERSION: 1.22.0-12.1.pre
+  NDK_VERSION: 21.4.7075529
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - id: v
+        shell: bash
+        run: |
+          pubver=$(sed -n 's/^version: *\([^+ ]*\).*/\1/p' pubspec.yaml)
+          if [ -n "${{ inputs.tag }}" ]; then tag="${{ inputs.tag }}";
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then tag="${GITHUB_REF#refs/tags/}";
+          else tag=""; fi
+          if [ -n "$tag" ]; then version="${tag#v}"; publish=true;
+          else version="${pubver}-dev.$(git rev-parse --short HEAD)"; publish=false; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
+  android:
+    needs: meta
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          submodules: recursive
+
+      - name: Install Android SDK components (NDK r21, CMake 3.10, API 30)
+        run: |
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+            "platforms;android-30" "build-tools;28.0.3" "build-tools;30.0.3" \
+            "ndk;$NDK_VERSION" "cmake;3.10.2.4988404" >/dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          printf 'sdk.dir=%s\nndk.dir=%s/ndk/%s\n' "$ANDROID_HOME" "$ANDROID_HOME" "$NDK_VERSION" > android/local.properties
+          mkdir -p ~/.gradle/init.d
+          cat > ~/.gradle/init.d/repos.gradle <<'G'
+          allprojects {
+            buildscript { repositories { google(); mavenCentral() } }
+            repositories { google(); mavenCentral(); maven { url 'https://maven.aliyun.com/repository/jcenter' } }
+          }
+          G
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '11'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+
+      - run: flutter config --no-analytics
+      - run: flutter pub get
+      - run: flutter build apk --release -v
+      - name: Collect APK
+        run: |
+          mkdir -p dist
+          apk=$(ls build/app/outputs/flutter-apk/app-release.apk 2>/dev/null || ls build/app/outputs/apk/release/app-release.apk)
+          cp "$apk" "dist/epimetheus-${VERSION}-android.apk"
+          unzip -l "dist/epimetheus-${VERSION}-android.apk" | grep -E 'lib/.*melodica'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: dist/*
+
+  web:
+    needs: meta
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          submodules: recursive
+
+      - name: Source tarball (with submodules)
+        run: |
+          mkdir -p dist
+          tar --exclude-vcs --exclude=./dist --exclude=./build --exclude=./.dart_tool \
+            --transform "s,^\./,epimetheus-${VERSION}/," \
+            -czf "dist/epimetheus-${VERSION}-source.tar.gz" .
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_WEB_VERSION }}
+          channel: beta
+
+      - run: flutter config --no-analytics
+      - run: flutter config --enable-web
+      - run: flutter pub get
+      - run: flutter build web --release
+      - name: Collect web build
+        run: |
+          test -f build/web/index.html && test -f build/web/main.dart.js
+          tar -C build -czf "dist/epimetheus-${VERSION}-web.tar.gz" --transform "s,^web,epimetheus-${VERSION}-web," web
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web
+          path: dist/*
+
+  smoke-android:
+    needs: [meta, android]
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: android
+          path: dist
+      - name: Start melodica-tuner (fake Pandora, hosts override + CA on the runner)
+        id: tuner
+        uses: Spaceghost/melodica-tuner@v0.1.2
+        with:
+          user: ci@example.com
+          password: ci-secret
+          hosts-override: true
+          install-ca: true
+      - run: curl -fsS "${{ steps.tuner.outputs.https-url }}/__tuner/health"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install ImageMagick (screenshot variance check)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq imagemagick >/dev/null && convert -version | head -1
+      - name: Start a DNS resolver for the emulator (pandora names -> 10.0.2.2)
+        id: dns
+        run: |
+          ip=$(ip -4 route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
+          echo "ip=$ip" >> "$GITHUB_OUTPUT"
+          sudo nohup python3 .github/smoke/dns.py "127.0.0.1,$ip" 53 > dns.log 2>&1 &
+          sleep 2; cat dns.log
+          python3 - "$ip" <<'PY'
+          import socket, sys
+          q = b"\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x03www\x07pandora\x03com\x00\x00\x01\x00\x01"
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(3); s.sendto(q, (sys.argv[1], 53)); r, _ = s.recvfrom(512)
+          print("resolver answer tail:", r[-4:], "->", ".".join(map(str, r[-4:]))); assert r[-4:] == bytes([10, 0, 2, 2])
+          PY
+      - name: Smoke test on an API-28 emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          # API 28: `adb root && adb remount` writes /system immediately (API 29+ needs an overlayfs reboot that hung adb in CI).
+          api-level: 28
+          target: default
+          arch: x86_64
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system -dns-server ${{ steps.dns.outputs.ip }}
+          disable-animations: true
+          script: APK="$(ls dist/epimetheus-*-android.apk)" OUT="$PWD/smoke" bash .github/smoke/android.sh
+        env:
+          TUNER_HTTPS_URL: ${{ steps.tuner.outputs.https-url }}
+          TUNER_HTTP_URL: ${{ steps.tuner.outputs.http-url }}
+          TUNER_CA: ${{ steps.tuner.outputs.ca-path }}
+          TUNER_USER: ${{ steps.tuner.outputs.user }}
+          TUNER_PASSWORD: ${{ steps.tuner.outputs.password }}
+          TUNER_LOG_URL: ${{ steps.tuner.outputs.log-url }}
+      - if: always()
+        run: cat dns.log || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-android
+          path: smoke/*
+
+  smoke-web:
+    needs: [meta, web]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: web
+          path: dist
+      - name: Start melodica-tuner (fake Pandora, hosts override + CA on the runner)
+        id: tuner
+        uses: Spaceghost/melodica-tuner@v0.1.2
+        with:
+          user: ci@example.com
+          password: ci-secret
+          hosts-override: true
+          install-ca: true
+      - run: curl -fsS "${{ steps.tuner.outputs.https-url }}/__tuner/health"
+      - name: Serve the web build
+        run: |
+          mkdir -p www && tar -C www --strip-components=1 -xzf dist/epimetheus-*-web.tar.gz
+          test -f www/index.html && test -f www/main.dart.js
+          (cd www && nohup python3 -m http.server 8090 --bind 127.0.0.1 > ../http.log 2>&1 &)
+          sleep 2; curl -sSf -o /dev/null http://127.0.0.1:8090/index.html
+      - name: Install Playwright Chromium
+        run: |
+          mkdir -p "$RUNNER_TEMP/pw" && cd "$RUNNER_TEMP/pw"
+          npm init -y >/dev/null && npm i playwright@1.48 >/dev/null
+          npx playwright install --with-deps chromium
+      - name: Smoke test in headless Chromium
+        run: |
+          cp .github/smoke/web.mjs "$RUNNER_TEMP/pw/web.mjs"
+          URL=http://127.0.0.1:8090/ OUT="$PWD/smoke" node "$RUNNER_TEMP/pw/web.mjs"
+        env:
+          TUNER_HOST: ${{ steps.tuner.outputs.https-url }}
+          TUNER_HTTP_URL: ${{ steps.tuner.outputs.http-url }}
+          TUNER_USER: ${{ steps.tuner.outputs.user }}
+          TUNER_PASSWORD: ${{ steps.tuner.outputs.password }}
+          TUNER_LOG_URL: ${{ steps.tuner.outputs.log-url }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-web
+          path: smoke/*
+
+  release:
+    needs: [meta, android, web, smoke-android, smoke-web]
+    if: always() && needs.meta.outputs.publish == 'true' && needs.web.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      TAG: ${{ needs.meta.outputs.tag }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums and notes
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          ls -l
+          {
+            echo "Built from the melodica.h-integrated mirror of Epimetheus (branch \`dev\`, commit ${GITHUB_SHA}) by GitHub Actions with Flutter ${FLUTTER_VERSION} stable (Android) and ${FLUTTER_WEB_VERSION} beta (web; web was beta-only before Flutter 2)."
+            echo "The Pandora audio core is [melodica.h](https://github.com/Spaceghost/melodica.h), compiled from the \`vendor/melodica\` submodule."
+            echo
+            echo "## Included"
+            if ls epimetheus-*-android.apk >/dev/null 2>&1; then
+              echo "- \`epimetheus-${VERSION}-android.apk\` — Android release APK (minSdk 19). Contains \`lib/<abi>/libmelodica.so\` built with NDK r21 via CMake. **Signed with the throwaway Android debug keystore** (the upstream Gradle config signs release builds with \`signingConfigs.debug\`); it is not a store build and will not upgrade an app signed with another key."
+            else
+              echo "- Android APK: **build failed in this run** (see the workflow log); not included."
+            fi
+            echo "- \`epimetheus-${VERSION}-web.tar.gz\` — \`flutter build web --release\` output (serve the directory statically). melodica is not compiled for the web target; the Dart stub is used there."
+            echo "- \`epimetheus-${VERSION}-source.tar.gz\` — source tree including submodules."
+            echo "- \`SHA256SUMS\`"
+            echo
+            echo "## Smoke tests (run by CI on these exact artifacts)"
+            for j in smoke-android.json smoke-web.json; do
+              if [ -f "$j" ]; then
+                python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("- `%s`: ok=%s — %s (steps: %s; tuner: %s)" % (sys.argv[1], d["ok"], d["summary"], ", ".join(d["steps"]), d.get("tuner_result","none")))' "$j"
+              else
+                echo "- \`$j\`: **smoke job did not produce a report** (job failed or was skipped; see the workflow run)."
+              fi
+            done
+            echo "- \`smoke-android-login.png\`, \`smoke-android-filled.png\`, \`smoke-android-stations.png\` and the \`smoke-web-*.png\` counterparts: screenshots of the sign-in screen, the filled form and the station list (My Collection) as rendered in CI; \`smoke-android.txt\` is the emulator logcat, \`smoke-android-ui.xml\` the uiautomator dump, \`smoke-android-tuner-log.json\` / \`smoke-web-tuner-log.json\` the tuner's request log, \`smoke-web-console.txt\` the browser console."
+            echo "- The fake Pandora is [melodica-tuner](https://github.com/Spaceghost/melodica-tuner) (REST /api/v1 for Epimetheus). The APK has no base-URL override (\`lib/libepimetheus/networking.dart\` hard-codes \`https://www.pandora.com\`; the web build's apiHost override is for the CORS proxy only), so the Android smoke points the API-28 x86_64 emulator at the tuner with \`/system/etc/hosts\` + the emulator's \`-dns-server\` (www.pandora.com -> 10.0.2.2) and installs the tuner CA into \`/system/etc/security/cacerts\`; the guest's own ping and HTTP health check against the tuner are in \`smoke-android-steps.txt\`."
+            echo
+            echo "## Not included"
+            echo "- iOS and macOS builds (need a macOS runner; out of scope for this pass). The iOS CocoaPods integration of melodica (\`native/melodica/Melodica.podspec\`) is untested here."
+            echo "- Linux/Windows desktop builds (the project has no linux/ or windows/ runner directories)."
+            echo
+            echo "Beyond the smoke tests above, nothing in this release has been run on a device by CI."
+          } > ../NOTES.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: Epimetheus ${{ env.VERSION }} (melodica.h)
+          body_path: NOTES.md
+          files: dist/*
+          fail_on_unmatched_files: true

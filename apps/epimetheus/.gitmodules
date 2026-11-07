@@ -1,0 +1,15 @@
+[submodule "fast_marquee"]
+	path = fast_marquee
+	url = https://github.com/hacker1024/fast_marquee
+[submodule "flutter_secure_storage"]
+	path = flutter_secure_storage
+	url = https://github.com/hacker1024/flutter_secure_storage
+[submodule "flutter_autofill"]
+	path = flutter_autofill
+	url = https://github.com/hacker1024/flutter_autofill
+[submodule "flutter_pagination_wrapper"]
+	path = flutter_pagination_wrapper
+	url = https://github.com/hacker1024/flutter_pagination_wrapper
+[submodule "vendor/melodica"]
+	path = vendor/melodica
+	url = https://github.com/Spaceghost/melodica.h.git
