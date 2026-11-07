@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # Package dist/ into release assets:
 #   melodica-extension-<ver>-chrome.zip    unpacked-extension zip (chrome://extensions, Load unpacked after unzipping)
-#   melodica-extension-<ver>-cws.zip       the same Chrome build without update_url: the package CI uploads to the
-#                                          Chrome Web Store and to Microsoft Edge Add-ons (both reject update_url)
 #   melodica-extension-<ver>-firefox.zip   unpacked-extension zip (about:debugging "Load Temporary Add-on" or `web-ext run`)
 #   melodica-extension-<ver>.xpi           the Firefox build as an installable add-on (same bytes as the firefox zip;
 #                                          unsigned here; CI replaces it with the AMO-signed file when it has AMO credentials)
@@ -15,10 +13,9 @@ cd "$here"
 v="${1:-$(cat dist/VERSION)}"
 out="${OUT:-$here/release}"
 rm -rf "$out"; mkdir -p "$out"
-for b in chrome cws firefox; do
+for b in chrome firefox; do
   ( cd "dist/$b" && zip -q -X -r "$out/melodica-extension-$v-$b.zip" . )
 done
-if unzip -p "$out/melodica-extension-$v-cws.zip" manifest.json | grep -q update_url; then echo "the -cws.zip carries update_url" >&2; exit 1; fi
 cp "$out/melodica-extension-$v-firefox.zip" "$out/melodica-extension-$v.xpi"
 if [ -n "${CRX_KEY:-}" ]; then
   [ -s "$CRX_KEY" ] || { echo "CRX_KEY=$CRX_KEY is empty or missing" >&2; exit 1; }

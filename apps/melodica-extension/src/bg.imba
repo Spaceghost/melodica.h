@@ -5,17 +5,40 @@
 
 import { Core } from './core.imba'
 import { Pandora, PandoraError, QUALITIES } from './pandora.imba'
-import { browser, loadSettings, normalizeEndpoint, fromBase64, toBase64 } from './shared.imba'
+import { browser, loadSettings, normalizeEndpoint, fromBase64, toBase64, SETTINGS_DEFAULTS } from './shared.imba'
+import { parseToken, expired, tokenFromRedirect, normalizeAuthBase, startUrl, meUrl } from './github.imba'
+import { feedUrl, latestVersion, bannerState, compareVersions, STORE_URL } from './update.imba'
 
 const METHOD = /^[a-z]+\.[A-Za-z]+$/
 const PLAYER_URL = browser.runtime.getURL('player.html')
 const session = browser.storage.session or browser.storage.local
 const SESSION_KEYS = {session: null, stations: [], nowPlaying: null, playerTabId: null, pendingPlay: null, log: []}
 const LOG_MAX = 200
+# The GitHub gate is re-checked at least this often while the extension is in use
+# (every boot, every popup/player open past this age, the player's timer).
+const GATE_MAX_AGE = 60 * 60 * 1000
+# Message types that reach Pandora (or the player) and so need the gate open.
+const GATED = new Set(['login', 'stations', 'playlist', 'rate', 'tired', 'explain', 'search', 'create-station', 'delete-station', 'open-player', 'bridge'])
 
 let booting = null
 let state = null
 let logLines = []
+# The GitHub gate: {mode, reason, login, exp, checkedAt}. Modes: `off` (not applied:
+# the endpoint is not Pandora's, or the auth server says it is not configured),
+# `anon` (no GitHub sign-in), `allowed` (the auth server allows the login), `denied`
+# (signed in, not allowed), `error` (the auth server could not be asked).
+let gate = {mode: 'anon', reason: 'not signed in with GitHub', login: '', exp: null, checkedAt: 0}
+let checking = null
+let gateBooted = no
+# Updates: the store feed is read at most every UPDATE_EVERY (on boot, then
+# whenever a page asks and the last look is older); on Chromium the browser is
+# also asked to run its own update check, and an update it has fetched
+# (runtime.onUpdateAvailable) is installed by runtime.reload() as soon as
+# nothing is playing. Firefox updates add-ons itself from gecko.update_url.
+const UPDATE_EVERY = 6 * 60 * 60 * 1000
+let update = {current: browser.runtime.getManifest().version, latest: null, available: null, checkedAt: 0, error: '', feed: ''}
+let updateChecking = null
+let updateBooted = no
 
 # The background log: console.debug plus a ring of the last LOG_MAX lines kept
 # in session storage, which the options page's "Copy diagnostics" reads (the
@@ -73,7 +96,209 @@ def ensure
 		booting = boot()
 		booting.catch(do(e) booting = null)
 	state = await booting
+	unless gateBooted
+		gateBooted = yes
+		await checkGate(yes)
+	unless updateBooted
+		updateBooted = yes
+		checkUpdate(yes).catch(do(e) null)
 	state
+
+# --- Updates ---------------------------------------------------------------
+
+def updateState
+	Object.assign({}, update, {banner: bannerState(update.current, update.latest, update.available), store: STORE_URL, canReload: !!(browser.runtime.reload)})
+
+def checkUpdate force = no
+	return await updateChecking if updateChecking
+	return updateState() if !force and update.checkedAt and Date.now() - update.checkedAt < UPDATE_EVERY
+	updateChecking = runUpdateCheck()
+	try
+		await updateChecking
+	catch e
+		note("update check failed: {e and e.message or e}")
+	finally
+		updateChecking = null
+	updateState()
+
+def runUpdateCheck
+	const manifest = browser.runtime.getManifest()
+	const url = feedUrl(manifest)
+	update.feed = url
+	update.checkedAt = Date.now()
+	# Chromium: ask the browser to look at update_url now (no-op for an unpacked load).
+	if browser.runtime.requestUpdateCheck
+		try
+			const r = await browser.runtime.requestUpdateCheck()
+			const status = Array.isArray(r) ? r[0] : (r and r.status)
+			const details = Array.isArray(r) ? r[1] : (r and r.details)
+			note("requestUpdateCheck: {status}{details and details.version ? ' ' + details.version : ''}")
+			update.available = details.version if status === 'update_available' and details and details.version
+		catch e
+			note("requestUpdateCheck failed: {e and e.message or e}")
+	try
+		const res = await fetch(url, {credentials: 'omit', cache: 'no-store'})
+		throw new Error("HTTP {res.status}") unless res.ok
+		update.latest = latestVersion(await res.json())
+		update.error = ''
+		note("update feed {url}: latest {update.latest or 'unknown'}, running {update.current}")
+	catch e
+		update.error = "could not read {url} ({e and e.message or e})"
+		note("update feed: {update.error}")
+	broadcast({type: 'update', update: updateState()})
+	update
+
+# Install an update the browser has fetched, unless something is playing; the
+# player's next "now-playing: nothing" message retries.
+def maybeReload why
+	return unless update.available
+	const now = state and state.saved and state.saved.nowPlaying
+	if now and now.song
+		note("update {update.available} fetched; reload deferred, playing")
+		return no
+	note("update {update.available} fetched; reloading ({why})")
+	browser.runtime.reload()
+	yes
+
+if browser.runtime.onUpdateAvailable
+	browser.runtime.onUpdateAvailable.addListener do(details)
+		update.available = details and details.version or update.available or 'new'
+		note("onUpdateAvailable {update.available}")
+		broadcast({type: 'update', update: updateState()})
+		maybeReload('onUpdateAvailable')
+
+# --- The GitHub gate -------------------------------------------------------
+
+def gateAllowed g = gate
+	g.mode === 'off' or g.mode === 'allowed'
+
+# What a refused caller is told; the popup shows the same words on its gate screen.
+def gateText g
+	switch g.mode
+		when 'denied'
+			"melodica is not available for your GitHub account ({g.login})."
+		when 'error'
+			"Could not check the GitHub gate: {g.reason}. Press Check again."
+		else
+			"Sign in with GitHub first."
+
+# The auth server: the melodica-site Worker, or the `authBase` storage key (the
+# Firefox smoke points it at a fake; README "GitHub gate").
+def authBase
+	const got = await browser.storage.local.get({authBase: ''})
+	normalizeAuthBase(got.authBase)
+
+def setGate next
+	const was = gateAllowed(gate)
+	gate = Object.assign({login: '', exp: null, reason: ''}, next, {checkedAt: Date.now()})
+	note("gate {gate.mode}{gate.login ? ' ' + gate.login : ''}{gate.reason ? ': ' + gate.reason : ''}")
+	if was and !gateAllowed(gate)
+		try
+			const tab = await playerTab()
+			await browser.tabs.sendMessage(tab.id, {type: 'control', action: 'stop'}) if tab
+		catch e
+			null
+	broadcast({type: 'gate', gate})
+	gate
+
+# The current gate, re-checked when forced, when it was never checked, or when the
+# last check is older than GATE_MAX_AGE. One check runs at a time.
+def checkGate force = no
+	return await checking if checking
+	return gate if !force and gate.checkedAt and Date.now() - gate.checkedAt < GATE_MAX_AGE
+	checking = runGateCheck()
+	try
+		await checking
+	catch e
+		note("gate check failed: {e and e.message or e}")
+	finally
+		checking = null
+	gate
+
+def runGateCheck
+	const endpoint = state.settings.endpoint
+	if endpoint !== SETTINGS_DEFAULTS.endpoint
+		return await setGate({mode: 'off', reason: "endpoint is {endpoint}, not Pandora's"})
+	const got = await browser.storage.local.get({github: null})
+	const token = got.github and typeof got.github.token === 'string' ? got.github.token : ''
+	const claims = token ? parseToken(token) : null
+	if token and !claims
+		await browser.storage.local.remove('github')
+		return await setGate({mode: 'anon', reason: 'the stored GitHub token was malformed; sign in again'})
+	if claims and expired(claims)
+		await browser.storage.local.remove('github')
+		return await setGate({mode: 'anon', reason: "the GitHub sign-in for {claims.sub} expired; sign in again"})
+	const base = await authBase()
+	const url = meUrl(base)
+	const headers = {}
+	headers.authorization = "Bearer {token}" if token
+	let res
+	try
+		res = await fetch(url, {headers, credentials: 'omit', cache: 'no-store'})
+	catch e
+		const reason = "could not reach {url} ({e and e.message or e})"
+		# An allowed account stays allowed through a network blip (the next check is in an hour);
+		# anyone else sees the error and a Check again button.
+		return await setGate(gate.mode === 'allowed' ? Object.assign({}, gate, {stale: reason}) : {mode: claims ? 'error' : 'anon', reason, login: claims ? claims.sub : '', exp: claims ? claims.exp : null})
+	if res.status === 503
+		let body = {}
+		try
+			body = await res.json()
+		catch e
+			body = {}
+		return await setGate({mode: 'off', reason: "auth not configured at {base} yet ({body.error or 'HTTP 503'})", login: claims ? claims.sub : '', exp: claims ? claims.exp : null})
+	unless claims
+		return await setGate({mode: 'anon', reason: 'not signed in with GitHub'})
+	if res.status === 401
+		await browser.storage.local.remove('github')
+		return await setGate({mode: 'anon', reason: "{base} no longer accepts the GitHub sign-in for {claims.sub} (HTTP 401); sign in again"})
+	unless res.ok
+		return await setGate({mode: 'error', reason: "{url} answered HTTP {res.status}", login: claims.sub, exp: claims.exp})
+	let me
+	try
+		me = await res.json()
+	catch e
+		return await setGate({mode: 'error', reason: "{url} did not answer JSON", login: claims.sub, exp: claims.exp})
+	if typeof me.token === 'string' and me.token !== token and parseToken(me.token)
+		await browser.storage.local.set({github: {token: me.token}})
+		note('gate: refreshed token stored')
+	const login = typeof me.login === 'string' and me.login ? me.login : claims.sub
+	const exp = typeof me.exp === 'number' ? me.exp : claims.exp
+	# The Worker's `friend` field is the allow flag.
+	if me.friend === yes
+		await setGate({mode: 'allowed', reason: '', login, exp})
+	else
+		await setGate({mode: 'denied', reason: 'not available for this GitHub account', login, exp})
+
+def requireGate
+	const g = await checkGate()
+	return if gateAllowed(g)
+	throw new PandoraError(gateText(g), null, 0, 'gate')
+
+# "Sign in with GitHub": the browser's identity flow against the Worker's /start,
+# which asks GitHub for identity only (no scopes) and redirects back to the
+# extension's own redirect URL with the token in the fragment. The flow runs here
+# rather than in the popup because the popup closes when the auth window opens.
+def githubSignin
+	throw new PandoraError('This browser has no identity API for the GitHub sign-in.', null, 0, 'gate') unless browser.identity and browser.identity.launchWebAuthFlow
+	const redirect = browser.identity.getRedirectURL('melodica')
+	const base = await authBase()
+	const url = startUrl(base, redirect)
+	note("github sign-in: launchWebAuthFlow {url}")
+	let back
+	try
+		back = await browser.identity.launchWebAuthFlow({url, interactive: yes})
+	catch e
+		throw new PandoraError("GitHub sign-in did not finish: {e and e.message or e}", null, 0, 'gate')
+	const token = tokenFromRedirect(back)
+	throw new PandoraError('GitHub sign-in came back without a token.', null, 0, 'gate') unless token
+	await browser.storage.local.set({github: {token}})
+	note("github sign-in: token for {parseToken(token).sub}")
+	await checkGate(yes)
+
+def githubSignout
+	await browser.storage.local.remove('github')
+	await checkGate(yes)
 
 def persist
 	await session.set({session: state.client.loggedIn ? state.client.snapshot() : null})
@@ -145,7 +370,25 @@ def stationByToken token
 def handle msg, sender
 	await ensure()
 	const client = state.client
+	await requireGate() if GATED.has(msg.type)
 	switch msg.type
+		when 'gate'
+			{gate: await checkGate()}
+		when 'gate-check'
+			{gate: await checkGate(yes)}
+		when 'github-signin'
+			{gate: await githubSignin()}
+		when 'github-signout'
+			{gate: await githubSignout()}
+		when 'update'
+			{update: await checkUpdate()}
+		when 'update-check'
+			{update: await checkUpdate(yes)}
+		when 'update-reload'
+			throw new PandoraError('This browser cannot reload the extension from here.', null, 0, 'client') unless browser.runtime.reload
+			note('reload requested from a page')
+			setTimeout((do browser.runtime.reload()), 100)
+			{}
 		when 'ping'
 			{version: browser.runtime.getManifest().version, core: state.core.version}
 		when 'diagnostics'
@@ -166,6 +409,9 @@ def handle msg, sender
 				sessionStorage: !!browser.storage.session
 				background: manifest.background
 				permissions: permissions
+				gate: gate
+				authBase: await authBase()
+				update: updateState()
 				lines: logLines.slice()
 			}
 		when 'state'
@@ -177,6 +423,8 @@ def handle msg, sender
 				settings: {endpoint: state.settings.endpoint, quality: state.settings.quality, remember: state.settings.remember}
 				version: browser.runtime.getManifest().version
 				core: state.core.version
+				gate: gate
+				update: updateState()
 			}
 		when 'login'
 			const email = String(msg.email or '').trim()
@@ -247,10 +495,11 @@ def handle msg, sender
 			const pending = state.saved.pendingPlay
 			await remember('pendingPlay', null)
 			await remember('playerTabId', sender and sender.tab and sender.tab.id or null)
-			{pendingPlay: pending, stations: state.saved.stations or [], nowPlaying: state.saved.nowPlaying, settings: state.settings}
+			{pendingPlay: pending, stations: state.saved.stations or [], nowPlaying: state.saved.nowPlaying, settings: state.settings, gate: gate, update: updateState()}
 		when 'now-playing'
 			await remember('nowPlaying', msg.nowPlaying or null)
 			broadcast({type: 'now-playing', nowPlaying: msg.nowPlaying or null})
+			maybeReload('playback stopped') unless msg.nowPlaying
 			{}
 		when 'control'
 			await control(String(msg.action or ''))
@@ -291,6 +540,10 @@ browser.storage.onChanged.addListener do(changes, area)
 			state.client.reset()
 			await persist()
 			await remember('stations', [])
+			await checkGate(yes)
+	# A GitHub token stored or removed (the sign-in, the sign-out, a test), or the
+	# auth server override: re-check the gate now.
+	await checkGate(yes) if changes.github or changes.authBase
 	state.settings.quality = changes.quality.newValue if changes.quality and QUALITIES.includes(changes.quality.newValue)
 	if changes.remember or changes.password or changes.email
 		const s = await loadSettings()

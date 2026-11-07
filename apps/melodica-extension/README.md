@@ -1,6 +1,9 @@
 # melodica-extension
 
-A Pandora WebExtension for Chrome, Brave and Firefox (Manifest V3). Two jobs:
+A Pandora WebExtension for Chrome, Brave and Firefox (Manifest V3). It
+**requires a GitHub sign-in** and is available only to an allowlist of GitHub
+accounts (see "GitHub gate" below), which is also why it is self-hosted and
+not on any store (`docs/STORES.md`). Two jobs:
 
 - **A standalone player.** Sign in from the toolbar popup, pick a station, and
   the music plays in an extension tab (`player.html`) that keeps the `<audio>`
@@ -32,11 +35,65 @@ https://spacegho.st/melodica/app/   content.js
   page ── postMessage {melodica:1,…} ──► bridge ── sendMessage ──► bg.js ── fetch ──► Pandora
 ```
 
-Nothing is published to the Chrome Web Store or AMO. The releases carry an
-`.xpi`, a `.crx` and unpacked-extension zips, and
+Nothing is on the Chrome Web Store, Edge Add-ons or the AMO listings, and
+nothing will be (`docs/STORES.md`, "Why not the stores"). The releases carry an
+`.xpi` (signed by Mozilla on the unlisted channel, which lists nothing), a
+`.crx` and unpacked-extension zips, and
 <https://spacegho.st/extensions/#melodica-extension> (the self-hosted store,
 repository Spaceghost/extensions-site) mirrors them with install buttons,
 checksums, the CI proof and the update feeds.
+
+## GitHub gate
+
+Before the Pandora login the extension asks you to **sign in with GitHub**;
+the sign-in is for identity only (no OAuth scopes), and the service at
+`https://spacegho.st/melodica/auth/` (the melodica-site Worker) answers
+whether that account may use melodica (an allowlist kept there; nothing is
+stored). This is said on the sign-in screen, on the options page, on the
+store page and here; nothing about the gate is hidden.
+
+What you see, by state (the background keeps `gate.mode`; the popup, the
+player tab and the options page show it):
+
+| State | When | What happens |
+| --- | --- | --- |
+| `anon` | no GitHub sign-in stored | the gate screen with **Sign in with GitHub** (`browser.identity.launchWebAuthFlow` against `/auth/start?return_to=<the extension's redirect URL>`; the Worker sends you back with `#melodica_token=…`, which is stored in `storage.local` under `github`) |
+| `allowed` | `/auth/me` allows the account | the Pandora login and player as before; status line "GitHub: `<login>`" |
+| `denied` | `/auth/me` does not | "melodica is not available for your GitHub account (`<login>`)." with **Check again** and **Sign out**; every Pandora call is refused (`kind: "gate"`) and playback is stopped |
+| `off` | the API endpoint is not Pandora's default (CI, the smoke against melodica-tuner, local development), **or** `/auth/me` answers 503 `{"error":"auth not configured"}` because the Worker's secrets are not set yet | the gate is not applied; the status line says "GitHub gate off: `<reason>`" |
+| `error` | `/auth/me` could not be reached or answered something else | the gate screen with the reason and **Check again**; an `allowed` account whose hourly re-check fails stays allowed until the next check (the status line shows the failure) |
+
+The check runs on every background boot, whenever the popup, player or
+options page opens and the last check is more than an hour old, every hour
+while the player tab is open, and on **Check again**. A 401 from `/auth/me`,
+an expired token (`exp` in its claims) or a malformed one signs you out of
+GitHub (`anon`), stops playback and shows the gate screen. The token is
+`base64url(claims).base64url(hmac)`; the extension reads `sub`, the allow
+flag and `exp` from the first segment for display only and never verifies it: the
+Worker does, on every `/auth/me`. `src/github.imba` holds the parsing
+(`tests/github.test.mjs` covers it); `src/bg.imba` holds the check and the
+sign-in flow (it runs in the background because the popup closes when the
+GitHub window opens).
+
+Needs: the `identity` permission (the redirect URL is
+`https://<extension id>.chromiumapp.org/melodica` in Chrome, Brave and Edge
+and `https://<uuid>.extensions.allizom.org/melodica` in Firefox, where the
+uuid derives from `browser_specific_settings.gecko.id`, which must therefore
+never change) and the host permission `https://spacegho.st/melodica/auth/*`
+(the Worker also allows `chrome-extension://` and `moz-extension://` origins
+through CORS, so Firefox, which grants host permissions on request, works
+without it).
+
+For tests: the storage key `authBase` (default
+`https://spacegho.st/melodica/auth`) points the gate at another server; the
+Firefox smoke sets it to a local fake because Firefox has no host-resolver
+flag, and the options page shows the override when one is set. The Chromium
+and Brave smokes keep the default URL and resolve `spacegho.st` to their
+local server. Both drive the gate through every state above against
+`tests/fake-auth.mjs`, which decides from the token's own claims. **The real
+GitHub round trip (`/auth/start`, GitHub, the redirect) is not exercised in
+CI and was not exercised anywhere before the Worker's secrets were set**;
+until Jack sets them the Worker answers 503 and the gate is off.
 
 ## Install
 
@@ -51,12 +108,9 @@ Buttons and current steps: <https://spacegho.st/extensions/#melodica-extension>.
   is unsigned and the notes and `docs/STORES.md` give the fallback routes.
   gecko id `melodica-extension@spacegho.st`; update feed
   `https://spacegho.st/extensions/dl/melodica-extension/updates.json`.
-- **Chrome Web Store / Edge Add-ons:** `docs/STORES.md`. On each tag CI uploads
-  `melodica-extension-<ver>-cws.zip` (the Chrome build without `update_url`)
-  to an unlisted Chrome Web Store item (Chrome, Brave, and Edge with "Allow
-  extensions from other stores") and to a hidden Edge Add-ons product, when
-  the `CWS_*` / `EDGE_*` secrets exist; the listings themselves are created
-  once by hand. The store page shows the store buttons once the ids are set.
+- **No store listings:** `docs/STORES.md` says why (the player is gated to a
+  list of people, which no store can express, and we will not ship a store
+  build that behaves differently from this one).
 - **Chrome / Edge / Brave:** `melodica-extension-<ver>.crx` is a CRX3 signed
   with the repository's key (secret `CRX_PRIVATE_KEY`; the public half gives
   the Chrome extension id **`obbahflgghfemmpmjppeibnemibgblbd`**, computed by
@@ -84,15 +138,14 @@ and unzip it.
 - **Firefox (128+):** `about:debugging#/runtime/this-firefox` → Load Temporary
   Add-on → pick `manifest.json` in the unzipped folder (it is removed when
   Firefox quits), or `npx web-ext run --source-dir <folder>`. A permanent
-  install needs AMO signing, which has not been done.
+  install is the signed `.xpi` above.
 
-The `-chrome`, `-cws` and `-firefox` zips are the same build; the Firefox one keeps
+The `-chrome` and `-firefox` zips are the same build; the Firefox one keeps
 `browser_specific_settings.gecko` (id `melodica-extension@spacegho.st`,
 `update_url` to the store's `updates.json`) and `background.scripts`, the
 Chrome one drops them so Chrome does not warn and carries the top-level
 `update_url` to the store's `update.xml` (ignored for an unpacked load, which
-is how the CI smoke runs); the `-cws` one is the Chrome build without
-`update_url`, for the Chrome Web Store and Edge Add-ons, which reject it.
+is how the CI smoke runs).
 
 ## Layout
 
@@ -102,20 +155,22 @@ is how the CI smoke runs); the `-cws` one is the Chrome build without
 | `core/test.mjs`, `core/ref-blowfish.mjs` | Node unit test: libpiano's vector from melodica.h `tests/crypt.c`, an independent JS Blowfish for cross-checks, hex, syncTime, the envelope, the arena |
 | `src/core.imba` | JS wrapper around the wasm exports |
 | `src/pandora.imba` | JSON API v5 client: partnerLogin, userLogin, station list, playlist, feedback, sleep, explain, search, create/delete station; one re-login on code 1001; errors name the call and code ("Pandora rejected auth.userLogin (code 1002: invalid login). Wrong email address or password."); the client User-Agent (below) |
-| `src/bg.imba` | background: session (in `storage.session`), every Pandora request, player-tab management, the bridge relay, the diagnostics log (last 200 lines in `storage.session`, no tokens) |
+| `src/bg.imba` | background: the GitHub gate (check, sign-in flow, refusals), session (in `storage.session`), every Pandora request, player-tab management, the bridge relay, the diagnostics log (last 200 lines in `storage.session`, no tokens) |
+| `src/update.imba`, `tests/update.test.mjs` | update awareness: version compare, the store feeds, the "is available" banner state, and its Node unit test |
+| `src/github.imba`, `tests/github.test.mjs` | the gate's token parsing (claims, expiry, the redirect fragment, auth URLs) and its Node unit test |
+| `tests/fake-auth.mjs` | the smokes' stand-in for the Worker's `/melodica/auth/me`, deciding from the token's claims |
 | `src/popup.imba`, `src/player.imba`, `src/options.imba`, `src/ui.imba`, `src/shared.imba` | the pages and shared tags |
 | `src/content.imba` | the bridge content script for `https://spacegho.st/melodica/app/*` |
 | `public/` | `manifest.json` (one template, two outputs), the three HTML pages (no inline scripts), `theme.css` |
 | `scripts/build-core.sh` | Nelua → C (`--target wasm32-unknown-unknown`) → `clang -nostdlib` → audits exports/imports |
-| `scripts/build.mjs` | esbuild + `imba/compiler` → `dist/chrome`, `dist/cws`, `dist/firefox`, `build/node/{core,pandora}.js`; generated icons; CSP guards |
+| `scripts/build.mjs` | esbuild + `imba/compiler` → `dist/chrome`, `dist/firefox`, `build/node/{core,pandora,github}.js`; generated icons; CSP guards |
 | `scripts/real-pandora-probe.mjs` | no-account probe of the client + wasm core against the real `tuner.pandora.com` from Node: partnerLogin, syncTime, userLogin with bogus credentials, expects code 1002 (below) |
-| `scripts/package.sh` | the zips (`-chrome`, `-cws` without `update_url`, `-firefox`), the `.xpi`, the `.crx` (via `crx3`, key from `$CRX_KEY`), the source tarball, `SHA256SUMS` |
-| `scripts/edge-publish.sh` | upload + publish a package through the Edge Add-ons REST API v1.1 (used by the `publish-edge` job) |
-| `docs/STORES.md` | store publishing: what CI does, the one-time dashboard steps, the privacy text, the Firefox fallback |
+| `scripts/package.sh` | the zips (`-chrome`, `-firefox`), the `.xpi`, the `.crx` (via `crx3`, key from `$CRX_KEY`), the source tarball, `SHA256SUMS` |
+| `docs/STORES.md` | why there are no store listings; the Mozilla signature (unlisted channel) and the Firefox fallback routes |
 | `scripts/crx-id.mjs` | the Chrome extension id of a key: first 128 bits of SHA-256 over the DER SubjectPublicKeyInfo, hex mapped to a–p |
 | `tests/smoke-extension.spec.mjs` | the Playwright proof (below) in Playwright's Chromium or, with `MELODICA_BROWSER=brave`, an installed Brave; `tests/fixtures/melodica-web-dist` is melodica-web 0.2.0's built page |
 | `tests/smoke-firefox.mjs` | the Firefox proof (below): Mozilla Firefox through geckodriver + selenium-webdriver, `dist/firefox` as a temporary add-on, the tuner, then the real Pandora with bogus credentials |
-| `.github/workflows/ci.yml` | build (+ AMO signing) → `smoke` (Chromium), `smoke-brave` (Brave stable from Brave's apt repository) and `smoke-firefox` (Mozilla Firefox from packages.mozilla.org, plus the real-Pandora probe) → release on `v*` tags → `publish-cws`, `publish-edge` (skip without their secrets) |
+| `.github/workflows/ci.yml` | build (+ unit tests, AMO signing on tags) → `smoke` (Chromium), `smoke-brave` (Brave stable from Brave's apt repository) and `smoke-firefox` (Mozilla Firefox from packages.mozilla.org, plus the real-Pandora probe) → release on `v*` tags; no store jobs |
 
 ### Core (wasm) exports
 
@@ -149,10 +204,11 @@ Nelua fork copied to `/opt/nelua`) and on GitHub Actions.
 ```sh
 npm install
 NELUA=/opt/nelua/nelua scripts/build-core.sh      # build/core/melodica_core.wasm (+ export/import audit)
-node scripts/build.mjs --version 0.1.0            # dist/chrome, dist/cws, dist/firefox, build/node/{core,pandora}.js
+node scripts/build.mjs --version 0.1.0            # dist/chrome, dist/firefox, build/node/{core,pandora,github}.js
 node core/test.mjs                                # 30 checks
+node tests/github.test.mjs                        # the gate's token parsing
 npx web-ext lint --source-dir dist/firefox --self-hosted
-CRX_KEY=/path/to/key.pem scripts/package.sh 0.1.0 # release/*-{chrome,cws,firefox}.zip, .xpi, .crx, -src.tar.gz, SHA256SUMS (no .crx without CRX_KEY)
+CRX_KEY=/path/to/key.pem scripts/package.sh 0.1.0 # release/*-{chrome,firefox}.zip, .xpi, .crx, -src.tar.gz, SHA256SUMS (no .crx without CRX_KEY)
 ```
 
 `scripts/remote-sync.sh '<command>'` copies the tree into the container and
@@ -171,22 +227,56 @@ not errors).
 ## Manifest
 
 - `background`: `{"service_worker": "bg.js", "scripts": ["bg.js"], "type": "module"}` (MDN's cross-browser pattern; Chrome 121+ accepts both keys, Firefox uses `scripts`).
-- `host_permissions`: `https://tuner.pandora.com/*`, `https://*.pandora.com/*`. `optional_host_permissions`: `https://*/*`, `http://*/*` for an endpoint override (the options page offers a "Grant access" button; without it the endpoint must allow CORS, which melodica-tuner does).
-- `permissions`: `storage`.
+- `host_permissions`: `https://tuner.pandora.com/*`, `https://*.pandora.com/*`, `https://spacegho.st/melodica/auth/*` (the GitHub gate), `https://spacegho.st/extensions/*` (the update feed). `optional_host_permissions`: `https://*/*`, `http://*/*` for an endpoint override (the options page offers a "Grant access" button; without it the endpoint must allow CORS, which melodica-tuner does).
+- `permissions`: `storage`, `identity` (the GitHub sign-in's `launchWebAuthFlow` / `getRedirectURL`).
 - `content_scripts`: `content.js` on `https://spacegho.st/melodica/app/*`.
 - `content_security_policy.extension_pages`: `script-src 'self' 'wasm-unsafe-eval'; object-src 'self'` (the wasm needs `'wasm-unsafe-eval'`).
 - `browser_specific_settings.gecko.id`: `melodica-extension@spacegho.st`, `strict_min_version` 128.
 - The `browser` namespace is used everywhere with `globalThis.browser = globalThis.chrome` as the only polyfill (promise-returning APIs in MV3 Chrome; `onMessage` listeners answer through `sendResponse`).
 
+## Updates
+
+What updates by itself: **Firefox** reads `gecko.update_url`
+(`https://spacegho.st/extensions/dl/melodica-extension/updates.json`) on its
+own schedule (daily) and installs the signed `.xpi` it names; **Chrome, Brave
+and Edge** do the same from the manifest's `update_url`
+(`…/dl/melodica-extension/update.xml`) for a `.crx` or enterprise-policy
+install. An **unpacked zip** (Load unpacked) has no update path in any
+browser; it only gets the banner below.
+
+What the extension adds (`src/update.imba`, `src/bg.imba`): on every
+background boot and at most every six hours while a page is open, Chromium
+is asked to run its own update check (`runtime.requestUpdateCheck`; a no-op
+for an unpacked load), and the store feed is read (`releases.json` in the
+Chromium build, `updates.json` in the Firefox build; host permission
+`https://spacegho.st/extensions/*`, and the feeds also allow CORS). When the
+store serves a newer version than `runtime.getManifest().version`, the popup,
+player and options page show "melodica `<v>` is available" with a link to
+<https://spacegho.st/extensions/#melodica-extension>. On Chromium, once the
+browser has fetched an update (`runtime.onUpdateAvailable`) the background
+calls `runtime.reload()` immediately if nothing is playing, otherwise when
+playback stops, and the banner offers "Reload to update" meanwhile. Firefox
+installs updates itself; the extension does nothing extra there. The options
+page has "Check for updates" and shows what the store serves.
+`tests/update.test.mjs` covers the version compare, both feed shapes and the
+banner state; the Chromium and Brave smokes serve a `releases.json` naming
+99.0.0 from their local spacegho.st and assert the banner (the Firefox smoke
+reads the real feed, so it shows none).
+
 ## Options
 
 - **API endpoint** (default `https://tuner.pandora.com/services/json/`): where
   `POST ?method=…` goes. CI points it at melodica-tuner. Changing it drops the
-  session.
+  session, and any other value than the default turns the GitHub gate off
+  (the status line says so).
+- **GitHub gate**: the current state, Sign in / Check again / Sign out of
+  GitHub, and the auth server it asks (the override is shown when the
+  `authBase` storage key is set).
 - **Audio quality**: high / medium / low, picked from Pandora's `audioUrlMap`
   (falls back to the next available).
 - **Remember password**: kept unencrypted in `storage.local`, only when
   ticked; used for the automatic re-login after Pandora's code 1001.
+- **Check for updates**: reads the store feed now (above).
 - **Copy diagnostics**: the last 50 lines of the background log (boot,
   permissions, each request's method, size, syncTime, clock offset and which
   User-Agent it carried, each answer's HTTP status and Pandora code) plus the
@@ -250,7 +340,10 @@ raw bytes. All messages are posted with `location.origin` as the target.
 CI (`.github/workflows/ci.yml`, ubuntu-latest) builds the wasm core from
 Nelua (the fork is cloned at a pinned commit and built with `make`), bundles
 the Imba, runs `core/test.mjs`, lints the Firefox build with `web-ext`,
-packages the zips, and then runs `tests/smoke-extension.spec.mjs`:
+packages the zips, and then runs `tests/smoke-extension.spec.mjs`, which
+first walks the GitHub gate through its states against `tests/fake-auth.mjs`
+on the local "spacegho.st" server (the popup shows the gate screen while the
+endpoint is Pandora's; see "GitHub gate") and then:
 
 1. starts [melodica-tuner](https://github.com/Spaceghost/melodica-tuner) with
    the `Spaceghost/melodica-tuner@v1` action (a stand-in `tuner.pandora.com`,
@@ -392,12 +485,20 @@ tagged commit; see the release notes for the run of each tag.
 - **Firefox is run, headless, on Linux, as a temporary add-on.** The `.xpi`
   install prompt, a signed install, Firefox on Windows or macOS and the bridge
   in Firefox are not exercised.
-- **Stores.** The `.xpi` is signed by Mozilla on the unlisted channel (the
-  sign step's log and `META-INF/` in the file are the evidence); the Chrome
-  Web Store and Edge Add-ons jobs run only once their secrets exist and prove
-  an accepted upload, not a passed review (`docs/STORES.md`). No job installs
-  the `.xpi` or `.crx` in a browser; Firefox's install prompt and Chrome's
-  policy install have not been exercised.
+- **The GitHub gate, against a fake.** All three browser jobs walk the gate
+  through its states (screen shown with Pandora's endpoint, allowed, denied
+  with Pandora refused, 503 → off, 401 and expiry → signed out, Sign out)
+  against `tests/fake-auth.mjs`, with tokens placed in `storage.local` where
+  the sign-in stores them; the `release` job checks each report's `gate`
+  states. The real `/auth/start` → GitHub → redirect round trip, the Worker's
+  signature check and its allowlist are not exercised in CI, and the
+  Firefox job's first boot asks the real `spacegho.st/melodica/auth/me` once
+  without a token before the fake is configured (no identity is sent).
+- **Signature, no stores.** The `.xpi` is signed by Mozilla on the unlisted
+  channel (the sign step's log and `META-INF/` in the file are the evidence);
+  there are no store listings and no store jobs (`docs/STORES.md`). No job
+  installs the `.xpi` or `.crx` in a browser; Firefox's install prompt and
+  Chrome's policy install have not been exercised.
 - The three browser jobs install whatever Mozilla and Brave ship on the day
   and Playwright's pinned Chromium; the versions are in the reports.
 - The web page's side of the bridge is being implemented in melodica-web; the
@@ -415,6 +516,15 @@ sent only to the configured endpoint (Pandora by default) from the extension
 itself. It is stored only when "remember password" is ticked. The session
 tokens live in `storage.session` (cleared when the browser closes). The bridge
 forwards bytes between the page and the endpoint and stores nothing.
+
+The GitHub gate sends your GitHub identity token (login, id, the allow flag,
+expiry; nothing else) to `spacegho.st/melodica/auth/me`
+on each check, and nothing to GitHub except through GitHub's own sign-in page
+during the identity-only OAuth flow. The token is kept in `storage.local`
+under `github` until you sign out, it expires (7 days) or the server refuses
+it. With Pandora's endpoint and no sign-in, the extension asks
+`/melodica/auth/me` once per boot without a token, to learn whether the gate
+is configured at all. The service stores nothing about you.
 
 ## License
 

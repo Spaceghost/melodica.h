@@ -2,7 +2,7 @@
 # page is playing. Playback itself lives in player.html so it outlives the popup.
 
 import { browser, send } from './shared.imba'
-import { Login, StationList, NowPlaying, Transport } from "./ui.imba"
+import { Login, StationList, NowPlaying, Transport, Gate, UpdateBanner, gateAllowed, gateLine } from "./ui.imba"
 
 tag Popup
 	prop view = 'loading'
@@ -13,6 +13,9 @@ tag Popup
 	prop kind = ''
 	prop busy = no
 	prop version = ''
+	prop gate = null
+	prop loggedIn = no
+	prop update = null
 
 	def mount
 		self.notice = do(msg, sender, sendResponse) onNotice(msg, sender, sendResponse)
@@ -26,7 +29,25 @@ tag Popup
 		if msg and msg.type === 'now-playing'
 			now = msg.nowPlaying
 			imba.commit()
+		if msg and msg.type === 'gate'
+			gate = msg.gate
+			pickView()
+			imba.commit()
+		if msg and msg.type === 'update'
+			update = msg.update
+			imba.commit()
 		no
+
+	def reloadExtension
+		try
+			await send({type: 'update-reload'})
+		catch e
+			toast(String(e.message or e), 'error')
+
+	# The gate screen whenever the gate is closed; the Pandora login or the player
+	# otherwise.
+	def pickView
+		view = !gateAllowed(gate) ? 'gate' : (loggedIn ? 'player' : 'login')
 
 	def refresh
 		try
@@ -35,8 +56,11 @@ tag Popup
 			stations = s.stations
 			now = s.nowPlaying
 			version = s.version
-			view = s.loggedIn ? 'player' : 'login'
-			if s.loggedIn and stations.length === 0
+			gate = s.gate
+			update = s.update
+			loggedIn = s.loggedIn
+			pickView()
+			if s.loggedIn and gateAllowed(gate) and stations.length === 0
 				stations = (await send({type: 'stations'})).stations
 		catch e
 			view = 'error'
@@ -57,10 +81,12 @@ tag Popup
 			stations = r.stations
 			message = ''
 			kind = ''
+			loggedIn = yes
 			view = 'player'
 		catch err
 			message = String(err.message or err)
 			kind = 'error'
+			await gateRefresh() if err.kind === 'gate'
 		busy = no
 		console.debug("melodica popup login -> view={view} message={message}")
 		imba.commit()
@@ -69,7 +95,39 @@ tag Popup
 		await send({type: 'logout'})
 		now = null
 		stations = []
-		view = 'login'
+		loggedIn = no
+		pickView()
+
+	def gateRefresh
+		try
+			gate = (await send({type: 'gate'})).gate
+		catch e
+			null
+		pickView()
+
+	# The three gate actions; the background runs the identity flow itself.
+	def gateAction type
+		busy = yes
+		message = ''
+		kind = ''
+		imba.commit()
+		try
+			gate = (await send({type})).gate
+		catch err
+			message = String(err.message or err)
+			kind = 'error'
+		busy = no
+		pickView()
+		imba.commit()
+
+	def githubSignin
+		gateAction('github-signin')
+
+	def gateCheck
+		gateAction('gate-check')
+
+	def githubSignout
+		gateAction('github-signout')
 
 	def reload
 		try
@@ -138,8 +196,13 @@ tag Popup
 			display: flex
 			justify-content: space-between
 			align-items: center
+			gap: 8px
 			color: var(--muted)
 			font-size: 12px
+		.gate-status
+			color: var(--muted)
+			font-size: 12px
+			margin: 0
 		.stations
 			max-height: 260px
 			overflow: auto
@@ -159,15 +222,20 @@ tag Popup
 					<nav>
 						<button#open-player type="button" title="Open the player tab" @click=openPlayer> "Player"
 						<button#open-options type="button" title="Options" @click=openOptions> "Options"
+				<UpdateBanner update=update @reload=reloadExtension>
 				if view === 'loading'
 					<p.message#status> "Loading…"
 				elif view === 'error'
 					<p.message.error#status> message
+				elif view === 'gate'
+					<Gate gate=gate busy=busy message=(kind === 'error' ? message : '') @signin=githubSignin @check=gateCheck @signout=githubSignout>
 				elif view === 'login'
+					<p#gate-status.gate-status> gateLine(gate)
 					<Login busy=busy message=message kind=kind @login=login>
 				else
 					<div.account>
 						<span#signed-in> email
+						<span#gate-status.gate-status> gateLine(gate)
 						<button#logout type="button" @click=logout> "Sign out"
 					<section.panel>
 						<NowPlaying now=now compact=yes>

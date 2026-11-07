@@ -2,6 +2,109 @@
 
 import { FALLBACK_COVER, fmtTime } from './shared.imba'
 
+# Is the gate open: not applied (`off`) or an allowed account.
+export def gateAllowed g
+	!!g and (g.mode === 'off' or g.mode === 'allowed')
+
+# One status line about the GitHub gate, shown wherever Pandora is reachable.
+export def gateLine g
+	return '' unless g
+	switch g.mode
+		when 'off' then "GitHub gate off: {g.reason}"
+		when 'allowed' then "GitHub: {g.login}{g.stale ? ' (last check failed: ' + g.stale + ')' : ''}"
+		when 'denied' then "GitHub: {g.login} (melodica is not available for this account)"
+		when 'error' then "GitHub gate: {g.reason}"
+		else "GitHub: not signed in"
+
+# "melodica <v> is available": shown by every page when the store serves a newer
+# version than the running one (the update check in bg.imba). On Chromium, once
+# the browser has fetched the update, a Reload button installs it.
+export tag UpdateBanner
+	prop update = null
+	prop busy = no
+
+	css
+		.banner
+			display: flex
+			align-items: center
+			gap: 8px
+			flex-wrap: wrap
+			padding: 6px 10px
+			border: 1px solid var(--gold)
+			border-radius: 10px
+			background: var(--panel)
+			font-size: 12px
+		a
+			color: var(--gold-2)
+		button
+			padding: 4px 8px
+			font-size: 12px
+
+	def render
+		const b = update and update.banner
+		<self>
+			if b
+				<div#update-banner.banner data-version=b.version>
+					<span#update-text> b.text
+					<a#update-link href=b.url target="_blank" rel="noopener"> "Get it"
+					if b.reload and update.canReload
+						<button#update-reload type="button" disabled=busy @click=emit('reload')> "Reload to update"
+
+# The gate screen: who may use melodica, the GitHub sign-in, and what the sign-in
+# is used for. Shown instead of the Pandora login whenever the gate is closed.
+export tag Gate
+	prop gate = null
+	prop busy = no
+	prop message = ''
+
+	css
+		.gate
+			display: grid
+			gap: 10px
+		h2
+			margin: 0
+			font-size: 15px
+			color: var(--gold-2)
+		p
+			margin: 0
+		.note, .reason
+			color: var(--muted)
+			font-size: 12px
+		.actions
+			display: flex
+			gap: 8px
+			flex-wrap: wrap
+		.primary
+			background: var(--gold)
+			color: var(--ink)
+			border-color: var(--gold)
+			font-weight: 600
+
+	def render
+		const g = gate or {mode: 'anon', reason: ''}
+		const anon = g.mode !== 'denied' and g.mode !== 'error'
+		<self>
+			<section#gate.gate data-mode=g.mode>
+				<h2> "GitHub sign-in"
+				<p#gate-message.message>
+					if g.mode === 'denied'
+						"melodica is not available for your GitHub account ({g.login})."
+					elif g.mode === 'error'
+						"Could not check the GitHub sign-in: {g.reason}. Press Check again."
+					else
+						"melodica requires a GitHub sign-in."
+				if anon and g.reason and g.reason !== 'not signed in with GitHub'
+					<p#gate-reason.reason> g.reason
+				<p#gate-note.note> "GitHub sign-in is used for identity only; nothing is stored."
+				<div.actions>
+					if anon
+						<button#github-signin.primary type="button" disabled=busy @click=emit('signin')> (busy ? "Opening GitHub…" : "Sign in with GitHub")
+					else
+						<button#gate-check.primary type="button" disabled=busy @click=emit('check')> (busy ? "Checking…" : "Check again")
+						<button#github-signout type="button" disabled=busy @click=emit('signout')> "Sign out"
+				if message
+					<p#gate-error.message.error> message
+
 export tag Login
 	prop email = ''
 	prop password = ''

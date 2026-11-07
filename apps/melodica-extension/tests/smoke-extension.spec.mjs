@@ -1,7 +1,15 @@
 // End-to-end proof of the built extension (dist/chrome) in a real Chromium
 // against melodica-tuner, a stand-in tuner.pandora.com:
 //
-//   1. the options page points the extension at the tuner's https URL;
+//   0. the GitHub gate: with the endpoint at Pandora's default the popup shows the
+//      gate screen, and tokens placed in storage.local (allowed, denied, an
+//      "auth not configured" 503, a 401, an expired one) drive it through every
+//      state against a fake /melodica/auth/me on the local https "spacegho.st"
+//      server (tests/fake-auth.mjs; the real GitHub round trip needs GitHub);
+//   1. the options page points the extension at the tuner's https URL, which
+//      turns the gate off ("GitHub gate off: endpoint is …"); the popup also
+//      shows the update banner, because the same local server serves a
+//      releases.json / updates.json naming version 99.0.0;
 //   2. the popup (opened as an extension tab) signs in with the tuner user,
 //      lists the fixture's stations and starts a station, which opens the
 //      player tab; the player shows the song and the <audio> element plays;
@@ -30,6 +38,7 @@
 // where <name> is `smoke-extension` for Chromium and `smoke-brave` for Brave.
 
 import { test, expect, chromium } from '@playwright/test';
+import { handleAuth, makeToken, parseClaims } from './fake-auth.mjs';
 import https from 'node:https';
 import { spawn, execFileSync } from 'node:child_process';
 import { readFile, mkdir, writeFile, rm, mkdtemp } from 'node:fs/promises';
@@ -76,7 +85,15 @@ const tuner = {
 };
 const haveTuner = !!tuner.https || existsSync(join(TUNER_DIR, 'tuner', '__main__.py'));
 
-const report = { steps: [], summary: '', ok: false, bridge: null, audio: null, browser: '', engine: '', extension: {}, blocked: [], failedRequests: [], shields: null };
+const report = { steps: [], summary: '', ok: false, gate: null, update: null, bridge: null, audio: null, browser: '', engine: '', extension: {}, blocked: [], failedRequests: [], shields: null };
+const authCalls = [];
+// The fake store feeds (extensions-site's shapes) naming a version every build is older than.
+const FAKE_VERSION = '99.0.0';
+const FEEDS = {
+  '/extensions/releases.json': { generated: new Date().toISOString(), extensions: [{ id: 'melodica-extension', release: { tag: `v${FAKE_VERSION}`, name: `melodica-extension ${FAKE_VERSION}`, url: 'https://github.com/Spaceghost/melodica-extension/releases/tag/v99.0.0', published_at: new Date().toISOString(), prerelease: false }, assets: [], feeds: { firefox: { url: 'https://spacegho.st/extensions/dl/melodica-extension/updates.json', version: FAKE_VERSION }, chrome: { url: 'https://spacegho.st/extensions/dl/melodica-extension/update.xml', version: FAKE_VERSION } } }] },
+  '/extensions/dl/melodica-extension/updates.json': { addons: { 'melodica-extension@spacegho.st': { updates: [{ version: FAKE_VERSION, update_link: `https://spacegho.st/extensions/dl/melodica-extension/v${FAKE_VERSION}/melodica-extension-${FAKE_VERSION}.xpi`, update_hash: 'sha256:0000' }] } } },
+};
+const feedCalls = [];
 const step = (s) => { if (!report.steps.includes(s)) report.steps.push(s); };
 const getJson = async (url) => {
   const res = await fetch(url);
@@ -136,7 +153,17 @@ test.beforeAll(async () => {
   web.dir = await mkdtemp(join(tmpdir(), 'melodica-web-'));
   const tls = await makeCert(web.dir);
   web.server = https.createServer(tls, async (req, res) => {
+    // The fake auth server lives on the same "spacegho.st": the extension's default
+    // https://spacegho.st/melodica/auth/me lands here through --host-resolver-rules.
+    if (handleAuth(req, res, authCalls)) return;
     const url = new URL(req.url, `https://${WEB_HOST}`);
+    if (FEEDS[url.pathname]) {
+      feedCalls.push(url.pathname);
+      const text = JSON.stringify(FEEDS[url.pathname]);
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(text), 'cache-control': 'no-store' });
+      res.end(text);
+      return;
+    }
     if (!url.pathname.startsWith(APP_PATH)) { res.writeHead(404); res.end('not found'); return; }
     let rel = url.pathname.slice(APP_PATH.length);
     if (rel === '' || rel.endsWith('/')) rel += 'index.html';
@@ -197,6 +224,8 @@ test.afterAll(async () => {
     browser: report.browser,
     engine: report.engine,
     extension: report.extension,
+    gate: report.gate,
+    update: report.update,
     audio: report.audio,
     bridge: report.bridge,
     blocked: report.blocked,
@@ -279,6 +308,82 @@ test('signs in through the popup, plays a station in the player tab, bridges the
     step('extension loaded');
     if (BROWSER === 'brave') await waitForShieldsLists();
 
+    // 0. The GitHub gate, while the endpoint is still Pandora's default. The popup must
+    // show the gate screen, not the Pandora login; tokens are placed where the sign-in
+    // flow puts them (storage.local "github") and the background is asked to re-check.
+    const gatePage = await context.newPage();
+    watch(gatePage, 'gate');
+    await gatePage.goto(`chrome-extension://${id}/popup.html`);
+    await expect(gatePage.locator('#app')).toHaveAttribute('data-view', 'gate', { timeout: 30_000 });
+    await expect(gatePage.locator('#github-signin')).toBeVisible();
+    await expect(gatePage.locator('#gate-note')).toContainText('GitHub sign-in is used for identity only; nothing is stored.');
+    await gatePage.screenshot({ path: shot('gate') });
+    const gateWith = async (claims) => gatePage.evaluate(async (token) => {
+      if (token) await chrome.storage.local.set({ github: { token } }); else await chrome.storage.local.remove('github');
+      const r = await chrome.runtime.sendMessage({ type: 'gate-check' });
+      if (!r || !r.ok) throw new Error(`gate-check: ${r && r.error}`);
+      const stored = await chrome.storage.local.get('github');
+      return { gate: r.gate, storedToken: stored.github ? stored.github.token : null };
+    }, claims ? makeToken(claims) : null);
+    const viewNow = () => gatePage.evaluate(() => ({ view: document.getElementById('app').dataset.view, status: document.getElementById('gate-status')?.textContent || '', message: document.getElementById('gate-message')?.textContent || '' }));
+    const gateReport = { anon: await viewNow() };
+    expect(gateReport.anon.view).toBe('gate');
+
+    const allowed = await gateWith({ sub: 'allowed-ci', id: 101, friend: true });
+    expect(allowed.gate.mode, 'allowed token').toBe('allowed');
+    expect(allowed.gate.login).toBe('allowed-ci');
+    await expect(gatePage.locator('#app')).toHaveAttribute('data-view', 'login');
+    await expect(gatePage.locator('#gate-status')).toContainText('allowed-ci');
+    expect(parseClaims(allowed.storedToken)?.refreshed, 'the refreshed token from /auth/me replaced the stored one').toBe(true);
+    gateReport.allowed = { ...allowed.gate, ...(await viewNow()), refreshed: true };
+
+    const denied = await gateWith({ sub: 'denied-ci', id: 102, friend: false });
+    expect(denied.gate.mode, 'denied token').toBe('denied');
+    await expect(gatePage.locator('#app')).toHaveAttribute('data-view', 'gate');
+    await expect(gatePage.locator('#gate-message')).toContainText('melodica is not available for your GitHub account (denied-ci).');
+    await expect(gatePage.locator('#github-signout')).toBeVisible();
+    await gatePage.screenshot({ path: shot('gate-denied') });
+    gateReport.denied = { ...denied.gate, ...(await viewNow()) };
+    // Pandora is refused while the gate is closed.
+    const refusedLogin = await gatePage.evaluate(() => chrome.runtime.sendMessage({ type: 'stations' }));
+    expect(refusedLogin.ok, 'stations refused for a denied account').toBe(false);
+    expect(refusedLogin.kind).toBe('gate');
+    gateReport.deniedRefused = refusedLogin;
+
+    const unconfigured = await gateWith({ sub: 'unconfigured', friend: true });
+    expect(unconfigured.gate.mode, '503 auth not configured -> gate off').toBe('off');
+    expect(unconfigured.gate.reason).toContain('auth not configured');
+    await expect(gatePage.locator('#app')).toHaveAttribute('data-view', 'login');
+    await expect(gatePage.locator('#gate-status')).toContainText('GitHub gate off: auth not configured');
+    gateReport.unconfigured = { ...unconfigured.gate, ...(await viewNow()) };
+
+    const revoked = await gateWith({ sub: 'revoked', friend: true });
+    expect(revoked.gate.mode, '401 -> signed out').toBe('anon');
+    expect(revoked.storedToken, 'a 401 drops the token').toBeNull();
+    await expect(gatePage.locator('#app')).toHaveAttribute('data-view', 'gate');
+    gateReport.revoked = { ...revoked.gate, ...(await viewNow()) };
+
+    const expired = await gateWith({ sub: 'allowed-ci', friend: true, exp: Math.floor(Date.now() / 1000) - 60 });
+    expect(expired.gate.mode, 'expired token -> signed out').toBe('anon');
+    expect(expired.gate.reason).toMatch(/expired/);
+    expect(expired.storedToken).toBeNull();
+    gateReport.expired = { ...expired.gate, ...(await viewNow()) };
+
+    // The Sign out button on the gate screen.
+    await gateWith({ sub: 'denied-ci', friend: false });
+    await expect(gatePage.locator('#github-signout')).toBeVisible();
+    await gatePage.click('#github-signout');
+    await expect(gatePage.locator('#github-signin')).toBeVisible();
+    const afterSignout = await gatePage.evaluate(() => chrome.storage.local.get('github'));
+    expect(afterSignout.github, 'sign out removes the token').toBeUndefined();
+    gateReport.signout = await viewNow();
+    gateReport.authCalls = authCalls.slice();
+    console.log(`gate: ${JSON.stringify(gateReport)}`);
+    expect(authCalls.filter((c) => c.path === '/melodica/auth/me').length, 'the fake /auth/me was asked').toBeGreaterThanOrEqual(6);
+    report.gate = gateReport;
+    step('github gate');
+    await gatePage.close();
+
     // 1. Options: point at the tuner.
     const options = await context.newPage();
     watch(options, 'options');
@@ -300,7 +405,21 @@ test('signs in through the popup, plays a station in the player tab, bridges the
     await popup.goto(`chrome-extension://${id}/popup.html`);
     await expect(popup.locator('#app')).toHaveAttribute('data-view', 'login', { timeout: 30_000 });
     await expect(popup.locator('#login-email')).toBeVisible();
-    step('login screen');
+    // A non-default endpoint turns the gate off, and the popup says so.
+    await expect(popup.locator('#gate-status')).toContainText('GitHub gate off: endpoint is');
+    report.gate.off = await popup.evaluate(() => document.getElementById('gate-status').textContent);
+    // The update banner: the fake releases.json names 99.0.0, newer than any build.
+    await expect(popup.locator('#update-banner')).toBeVisible({ timeout: 20_000 });
+    await expect(popup.locator('#update-text')).toHaveText(`melodica ${FAKE_VERSION} is available`);
+    await expect(popup.locator('#update-link')).toHaveAttribute('href', 'https://spacegho.st/extensions/#melodica-extension');
+    const upd = await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'update' }).then((r) => r.update));
+    expect(upd.latest).toBe(FAKE_VERSION);
+    expect(upd.feed).toBe('https://spacegho.st/extensions/releases.json');
+    // An unpacked load has no update_url to fetch from, so no Reload button here.
+    expect(await popup.locator('#update-reload').count(), 'no Reload button without a fetched update').toBe(0);
+    report.update = { ...upd, feedCalls: feedCalls.slice() };
+    console.log(`update: ${JSON.stringify(report.update)}`);
+    step('update banner');
     await popup.screenshot({ path: shot('login') });
 
     await popup.fill('#login-email', tuner.user);
@@ -465,7 +584,8 @@ test('signs in through the popup, plays a station in the player tab, bridges the
     report.ok = true;
     report.summary = `melodica-extension ${report.extension.version} (unpacked, ${report.browser}${report.engine && report.engine !== report.browser ? `, ${report.engine}` : ''}) pointed at melodica-tuner ${tuner.version} ` +
       `via the options page, signed in from the popup, listed ${names.length} stations, played "${now.title}" by ${now.artist} on ${now.station} ` +
-      `in the player tab (readyState ${audio.readyState}, ${audio.currentTime.toFixed(1)}s), and bridged a partnerLogin for the melodica-web page on https://${WEB_HOST}`;
+      `in the player tab (readyState ${audio.readyState}, ${audio.currentTime.toFixed(1)}s), and bridged a partnerLogin for the melodica-web page on https://${WEB_HOST}; ` +
+      `the GitHub gate showed its screen with Pandora's endpoint, let an allowed token through, refused a denied token, went off on a 503, signed out on a 401 and on expiry (fake /auth/me); the update banner announced ${FAKE_VERSION} from the fake releases.json`;
   } catch (err) {
     report.summary = `failed after [${report.steps.join(', ')}]: ${String(err && err.message || err).split('\n')[0]}`;
     throw err;

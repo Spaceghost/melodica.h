@@ -2,9 +2,12 @@
 # survives the popup closing. Protocol calls go through the background.
 
 import { browser, send, loadSettings } from './shared.imba'
-import { StationList, NowPlaying, Transport } from './ui.imba'
+import { StationList, NowPlaying, Transport, Gate, UpdateBanner, gateAllowed, gateLine } from './ui.imba'
 
 const HISTORY_MAX = 20
+# While the player tab is open the background is asked for the gate this often; it
+# re-checks with the auth server once its last check is an hour old.
+const GATE_POLL = 15 * 60 * 1000
 
 tag Player
 	prop stations = []
@@ -24,6 +27,10 @@ tag Player
 	prop traits = null
 	prop fetching = no
 	prop generation = 0
+	prop gate = null
+	prop gateBusy = no
+	prop gateError = ''
+	prop update = null
 
 	get audio
 		document.getElementById('audio')
@@ -38,7 +45,10 @@ tag Player
 		try
 			const hello = await send({type: 'player-hello'})
 			stations = hello.stations or []
+			gate = hello.gate or null
+			update = hello.update or null
 			version = hello.settings and hello.settings.version or browser.runtime.getManifest().version
+			self.gateTimer = setInterval((do pollGate()), GATE_POLL)
 			if hello.pendingPlay
 				const st = stations.find(do(x) x.token === hello.pendingPlay)
 				play(st or {token: hello.pendingPlay, name: ''})
@@ -47,12 +57,50 @@ tag Player
 		catch e
 			if e.kind === 'auth'
 				loggedIn = no
+			elif e.kind === 'gate'
+				await pollGate()
 			else
 				toast(String(e.message or e), 'error')
 		imba.commit()
 
 	def unmount
 		browser.runtime.onMessage.removeListener(self.listener)
+		clearInterval(self.gateTimer) if self.gateTimer
+
+	# The gate as the background knows it (re-checked hourly); a closed gate stops
+	# playback and shows the gate screen in the sidebar.
+	def pollGate
+		try
+			applyGate((await send({type: 'gate'})).gate)
+			update = (await send({type: 'update'})).update
+		catch e
+			null
+
+	def applyGate g
+		gate = g
+		if gate and !gateAllowed(gate) and (song or station)
+			stop(gate.mode === 'denied' ? "Stopped: melodica is not available for your GitHub account ({gate.login})." : 'Stopped: sign in with GitHub to keep listening.')
+		imba.commit()
+
+	def gateAction type
+		gateBusy = yes
+		gateError = ''
+		imba.commit()
+		try
+			applyGate((await send({type})).gate)
+		catch e
+			gateError = String(e.message or e)
+		gateBusy = no
+		imba.commit()
+
+	def githubSignin
+		gateAction('github-signin')
+
+	def gateCheck
+		gateAction('gate-check')
+
+	def githubSignout
+		gateAction('github-signout')
 
 	# Messages from the background (relayed popup commands).
 	def onMessage msg, sender, sendResponse
@@ -67,7 +115,20 @@ tag Player
 			const failed = do(e) sendResponse({ok: no, error: String(e.message or e)})
 			control(msg.action).then(done, failed)
 			return yes
+		if msg.type === 'gate'
+			applyGate(msg.gate)
+			return no
+		if msg.type === 'update'
+			update = msg.update
+			imba.commit()
+			return no
 		no
+
+	def reloadExtension
+		try
+			await send({type: 'update-reload'})
+		catch e
+			toast(String(e.message or e), 'error')
 
 	def toast text, k = ''
 		message = text
@@ -85,6 +146,8 @@ tag Player
 		catch e
 			if e.kind === 'auth'
 				loggedIn = no
+			elif e.kind === 'gate'
+				await pollGate()
 			else
 				toast(String(e.message or e), 'error')
 		imba.commit()
@@ -116,7 +179,10 @@ tag Player
 			startSong(queue.shift())
 		catch e
 			fetching = no
-			if e.kind === 'auth' or e.code === 1002
+			if e.kind === 'gate'
+				toast(String(e.message or e), 'error')
+				await pollGate()
+			elif e.kind === 'auth' or e.code === 1002
 				loggedIn = no
 				toast(String(e.message or e), 'error')
 			else
@@ -362,10 +428,14 @@ tag Player
 			margin-bottom: 12px
 			font-size: 12px
 			color: var(--muted)
+		.gate-status
+			margin: 0 0 12px
+			font-size: 12px
+			color: var(--muted)
 
 	def render
 		<self @keydown=onKey tabindex="-1">
-			<div#app.layout data-view=(loggedIn ? 'player' : 'login')>
+			<div#app.layout data-view=(gate and !gateAllowed(gate) ? 'gate' : (loggedIn ? 'player' : 'login'))>
 				<aside>
 					<h1>
 						"melodica"
@@ -374,7 +444,11 @@ tag Player
 						<span#status> (loggedIn ? "Signed in" : "Not signed in")
 						if loggedIn
 							<button#logout type="button" @click=logout> "Sign out"
-					if loggedIn
+					<p#gate-status.gate-status> gateLine(gate)
+					<UpdateBanner update=update @reload=reloadExtension>
+					if gate and !gateAllowed(gate)
+						<Gate gate=gate busy=gateBusy message=gateError @signin=githubSignin @check=gateCheck @signout=githubSignout>
+					elif loggedIn
 						<StationList stations=stations active=(station and station.token) @select=select @refresh=reload @delete=remove>
 					else
 						<div.signin>

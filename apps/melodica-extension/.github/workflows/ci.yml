@@ -53,6 +53,10 @@ jobs:
         run: node scripts/build.mjs --version "${{ steps.v.outputs.version }}"
       - name: Core unit test (libpiano vector, reference Blowfish, syncTime, envelope)
         run: node core/test.mjs
+      - name: GitHub gate unit test (token claims, expiry, redirect fragment, auth URLs)
+        run: node tests/github.test.mjs
+      - name: Update awareness unit test (version compare, feeds, banner)
+        run: node tests/update.test.mjs
       - name: Firefox manifest lint (web-ext)
         run: npx web-ext lint --source-dir dist/firefox --self-hosted
       - name: Package (zips, .xpi, .crx signed with CRX_PRIVATE_KEY, source tarball)
@@ -104,6 +108,8 @@ jobs:
           {
             echo "melodica-extension $v: a Pandora WebExtension for Chrome, Brave and Firefox (Manifest V3)."
             echo
+            echo "**Access:** melodica requires a GitHub sign-in (used for identity only; nothing is stored) and is available only to an allowlist of GitHub accounts; otherwise it says \"melodica is not available for your GitHub account (<login>).\" This is why it is distributed only from spacegho.st/extensions and not from any store (docs/STORES.md)."
+            echo
             echo "UI and extension scripts are written in [Imba](https://imba.io) and bundled to plain ES modules; the protocol core (Blowfish with Pandora's public partner keys, hex, syncTime, the JSON v5 request envelope) is freestanding [Nelua](https://github.com/Spaceghost/nelua-lang) compiled to WebAssembly with no imports. The extension talks to \`tuner.pandora.com\` directly through its host permission, so no relay sees the login, and it bridges the web client at https://spacegho.st/melodica/app/ so that page can skip its relay too."
             echo
             echo "Install page with buttons, checksums and the CI proof: https://spacegho.st/extensions/#melodica-extension"
@@ -113,17 +119,16 @@ jobs:
             echo "- \`melodica-extension-$v.xpi\`: the Firefox add-on (Firefox shows its install prompt when served as application/x-xpinstall; gecko id \`melodica-extension@spacegho.st\`, update feed \`https://spacegho.st/extensions/dl/melodica-extension/updates.json\`). $xpi_note"
             echo "- \`melodica-extension-$v.crx\`: $crx_note"
             echo "- \`melodica-extension-$v-chrome.zip\`: unpacked extension for Chrome/Chromium/Edge/Brave. Unzip, then chrome://extensions (edge://extensions, brave://extensions) → Developer mode → Load unpacked. Brave uses this Chrome build unchanged."
-            echo "- \`melodica-extension-$v-cws.zip\`: the same Chrome build without \`update_url\`: the package the \`publish-cws\` and \`publish-edge\` jobs of this run upload to the Chrome Web Store and to Microsoft Edge Add-ons (both unlisted) when the repository has the store credentials (see docs/STORES.md); those jobs run after this release is created, so this text cannot say whether they did."
             echo "- \`melodica-extension-$v-firefox.zip\`: the same build with \`browser_specific_settings\` for Firefox (identical bytes to the unsigned .xpi). Unzip, then about:debugging → This Firefox → Load Temporary Add-on (pick manifest.json), or \`web-ext run --source-dir\`."
             echo "- \`melodica-extension-$v-src.tar.gz\`: source tree."
             echo "- \`SHA256SUMS\`"
-            echo "- \`smoke-extension.json\`, \`smoke-extension-login.png\`, \`smoke-extension-stations.png\`, \`smoke-extension-playing.png\`, \`smoke-extension-bridge.png\`: the Chromium proof below."
-            echo "- \`smoke-brave.json\`, \`smoke-brave-login.png\`, \`smoke-brave-stations.png\`, \`smoke-brave-playing.png\`, \`smoke-brave-bridge.png\`: the same proof in Brave (its \`browser\` field is the Brave version the job installed)."
-            echo "- \`smoke-firefox.json\`, \`smoke-firefox-login.png\`, \`smoke-firefox-stations.png\`, \`smoke-firefox-playing.png\`, \`smoke-firefox-real-pandora.png\`, \`smoke-firefox-node-probe.json\`: the Firefox proof below (its \`browser\` field is the Mozilla Firefox the job installed; \`realPandora\` and the node probe are the no-account checks against tuner.pandora.com itself)."
+            echo "- \`smoke-extension.json\`, \`smoke-extension-gate.png\`, \`smoke-extension-gate-denied.png\`, \`smoke-extension-login.png\`, \`smoke-extension-stations.png\`, \`smoke-extension-playing.png\`, \`smoke-extension-bridge.png\`: the Chromium proof below (\`gate\` is the GitHub gate's walk through its states)."
+            echo "- \`smoke-brave.json\`, \`smoke-brave-gate.png\`, \`smoke-brave-gate-denied.png\`, \`smoke-brave-login.png\`, \`smoke-brave-stations.png\`, \`smoke-brave-playing.png\`, \`smoke-brave-bridge.png\`: the same proof in Brave (its \`browser\` field is the Brave version the job installed)."
+            echo "- \`smoke-firefox.json\`, \`smoke-firefox-gate.png\`, \`smoke-firefox-gate-denied.png\`, \`smoke-firefox-login.png\`, \`smoke-firefox-stations.png\`, \`smoke-firefox-playing.png\`, \`smoke-firefox-real-pandora.png\`, \`smoke-firefox-node-probe.json\`: the Firefox proof below (its \`browser\` field is the Mozilla Firefox the job installed; \`realPandora\` and the node probe are the no-account checks against tuner.pandora.com itself)."
             echo
             echo "## Proof"
             echo
-            echo "The \`smoke\` job of this release's workflow loaded this exact Chrome build unpacked into Playwright's Chromium (headed under xvfb) against [melodica-tuner](https://github.com/Spaceghost/melodica-tuner), a stand-in tuner.pandora.com: set the endpoint on the options page, signed in from the popup, listed the fixture's stations, started a station (the player tab opened and the \`<audio>\` element played), and bridged an \`auth.partnerLogin\` for the melodica-web page served locally as https://spacegho.st. \`smoke-extension.json\` is the report. The \`smoke-brave\` job repeated every step in Brave (the current stable from Brave's apt repository, Shields at their defaults) with the same Chrome build; \`smoke-brave.json\` is its report and its \`blocked\` list holds every request Brave refused (none of them may be the extension's, the tuner's or the page's, or the job fails). The \`smoke-firefox\` job installed the \`dist/firefox\` build (the bytes of the -firefox.zip and of the unsigned .xpi) as a temporary add-on in the current Mozilla Firefox from packages.mozilla.org, headless, through geckodriver: it checked that Firefox granted the \`https://tuner.pandora.com/*\` host permission at install, that \`storage.session\` exists and the background is an event page, repeated the login/stations/playback proof against the tuner, and then reset the endpoint to Pandora and signed in with bogus credentials: tuner.pandora.com itself answered \`auth.userLogin\` with code 1002 and the popup said \"Pandora rejected auth.userLogin (code 1002: invalid login). Wrong email address or password.\" (\`smoke-firefox-real-pandora.png\`); \`smoke-firefox-node-probe.json\` is the same no-account probe from Node with the client and wasm core alone. That is the only contact with Pandora in CI: no job signs in to a real account, so stations and playback against Pandora remain unproven here. The signed .xpi and the .crx files were packaged from the same dist/ but no job installed those files themselves in a browser; the bridge to the web page was proven in Chromium and Brave, not in Firefox. Nothing is listed publicly on the Chrome Web Store, addons.mozilla.org or Edge Add-ons: the AMO signature (when present) is on the unlisted channel, and the store uploads (when the credentials exist) go to unlisted/hidden items that only their links reach."
+            echo "The \`smoke\` job of this release's workflow loaded this exact Chrome build unpacked into Playwright's Chromium (headed under xvfb). First the GitHub gate, with the endpoint at Pandora's default and a fake \`/melodica/auth/me\` answering as the local https spacegho.st: the popup showed the gate screen instead of the Pandora login, an allowed token opened it (and its refreshed token was stored), a denied token closed it with \"melodica is not available for your GitHub account (<login>).\" and Pandora calls were refused, a 503 \"auth not configured\" turned it off (\"GitHub gate off\" in the status line), a 401 and an expired token signed out, and the Sign out button removed the token. The update banner: with the local spacegho.st serving a releases.json that names version 99.0.0, the popup showed \"melodica 99.0.0 is available\" linking to the store page (the banner every install gets, including unpacked zips; .crx/policy and Firefox installs also update themselves from the feeds). The real GitHub round trip (launchWebAuthFlow against spacegho.st/melodica/auth/start) is not exercised anywhere in CI. Then, against [melodica-tuner](https://github.com/Spaceghost/melodica-tuner), a stand-in tuner.pandora.com: set the endpoint on the options page (which turns the gate off, as the status line says), signed in from the popup, listed the fixture's stations, started a station (the player tab opened and the \`<audio>\` element played), and bridged an \`auth.partnerLogin\` for the melodica-web page served locally as https://spacegho.st. \`smoke-extension.json\` is the report. The \`smoke-brave\` job repeated every step in Brave (the current stable from Brave's apt repository, Shields at their defaults) with the same Chrome build; \`smoke-brave.json\` is its report and its \`blocked\` list holds every request Brave refused (none of them may be the extension's, the tuner's or the page's, or the job fails). The \`smoke-firefox\` job installed the \`dist/firefox\` build (the bytes of the -firefox.zip and of the unsigned .xpi) as a temporary add-on in the current Mozilla Firefox from packages.mozilla.org, headless, through geckodriver: it checked that Firefox granted the \`https://tuner.pandora.com/*\` host permission at install, that \`storage.session\` exists and the background is an event page, repeated the login/stations/playback proof against the tuner, and then reset the endpoint to Pandora and signed in with bogus credentials: tuner.pandora.com itself answered \`auth.userLogin\` with code 1002 and the popup said \"Pandora rejected auth.userLogin (code 1002: invalid login). Wrong email address or password.\" (\`smoke-firefox-real-pandora.png\`); \`smoke-firefox-node-probe.json\` is the same no-account probe from Node with the client and wasm core alone. That is the only contact with Pandora in CI: no job signs in to a real account, so stations and playback against Pandora remain unproven here. The signed .xpi and the .crx files were packaged from the same dist/ but no job installed those files themselves in a browser; the bridge to the web page was proven in Chromium and Brave, not in Firefox. Nothing is on any store: the AMO signature (when present) is on the unlisted channel, which signs the file and lists nothing; there is no Chrome Web Store or Edge Add-ons item and there will not be one (docs/STORES.md)."
           } > release/RELEASE_BODY.md
           ls -l release
       - uses: actions/upload-artifact@v4
@@ -357,8 +362,12 @@ jobs:
           done
           node -e 'const r=require("./smoke-firefox-node-probe.json"); console.log("node probe: "+r.summary); if (r.ok!==true || !r.userLogin || r.userLogin.code!==1002) { console.error("the Node probe did not get code 1002"); process.exit(1); }'
           node -e 'const r=require("./smoke-firefox.json"); if (!r.realPandora || r.realPandora.code!==1002) { console.error("the Firefox run did not get code 1002 from Pandora"); process.exit(1); }'
-          ls smoke-brave-login.png smoke-brave-stations.png smoke-brave-playing.png smoke-brave-bridge.png
-          ls smoke-firefox-login.png smoke-firefox-stations.png smoke-firefox-playing.png smoke-firefox-real-pandora.png
+          ls smoke-extension-gate.png smoke-extension-gate-denied.png
+          ls smoke-brave-gate.png smoke-brave-gate-denied.png smoke-brave-login.png smoke-brave-stations.png smoke-brave-playing.png smoke-brave-bridge.png
+          ls smoke-firefox-gate.png smoke-firefox-gate-denied.png smoke-firefox-login.png smoke-firefox-stations.png smoke-firefox-playing.png smoke-firefox-real-pandora.png
+          for f in smoke-extension.json smoke-brave.json smoke-firefox.json; do
+            node -e 'const f=process.argv[1]; const u=require("./"+f).update; if (f!=="smoke-firefox.json" && (!u || !u.banner || !/99\.0\.0 is available/.test(u.banner.text))) { console.error(f+": update banner missing"); process.exit(1); } const g=require("./"+f).gate; const want={allowed:"allowed",denied:"denied",unconfigured:"off",revoked:"anon",expired:"anon"}; for (const k in want) if (!g || !g[k] || g[k].mode!==want[k]) { console.error(f+": gate."+k+" is not "+want[k]); process.exit(1); } if (!/GitHub gate off: endpoint is/.test(g.off||"")) { console.error(f+": gate.off missing"); process.exit(1); } console.log(f+": gate states ok")' "$f"
+          done
           sha256sum smoke-extension.json smoke-extension-*.png smoke-brave.json smoke-brave-*.png smoke-firefox.json smoke-firefox-*.png smoke-firefox-node-probe.json >> SHA256SUMS
           cat SHA256SUMS
       - uses: softprops/action-gh-release@v2
@@ -367,101 +376,30 @@ jobs:
           body_path: RELEASE_BODY.md
           files: |
             melodica-extension-${{ needs.build.outputs.version }}-chrome.zip
-            melodica-extension-${{ needs.build.outputs.version }}-cws.zip
             melodica-extension-${{ needs.build.outputs.version }}-firefox.zip
             melodica-extension-${{ needs.build.outputs.version }}.xpi
             melodica-extension-${{ needs.build.outputs.version }}.crx
             melodica-extension-${{ needs.build.outputs.version }}-src.tar.gz
             SHA256SUMS
             smoke-extension.json
+            smoke-extension-gate.png
+            smoke-extension-gate-denied.png
             smoke-extension-login.png
             smoke-extension-stations.png
             smoke-extension-playing.png
             smoke-extension-bridge.png
             smoke-brave.json
+            smoke-brave-gate.png
+            smoke-brave-gate-denied.png
             smoke-brave-login.png
             smoke-brave-stations.png
             smoke-brave-playing.png
             smoke-brave-bridge.png
             smoke-firefox.json
+            smoke-firefox-gate.png
+            smoke-firefox-gate-denied.png
             smoke-firefox-login.png
             smoke-firefox-stations.png
             smoke-firefox-playing.png
             smoke-firefox-real-pandora.png
             smoke-firefox-node-probe.json
-
-  # Chrome Web Store (covers Chrome and Brave; Edge can install from it too). The item is
-  # created once by hand in the developer dashboard with Visibility: Unlisted (docs/STORES.md);
-  # this job uploads the -cws.zip (no update_url) as a new version and submits it for review
-  # through the Chrome Web Store API v2 (chrome-webstore-upload-cli). Visibility is item
-  # metadata set in the dashboard; the API does not change it.
-  publish-cws:
-    needs: [build, release]
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      HAS_CWS: ${{ secrets.CWS_EXTENSION_ID != '' && secrets.CWS_PUBLISHER_ID != '' && secrets.CWS_CLIENT_ID != '' && secrets.CWS_CLIENT_SECRET != '' && secrets.CWS_REFRESH_TOKEN != '' }}
-    steps:
-      - name: Skip (no Chrome Web Store credentials)
-        if: env.HAS_CWS != 'true'
-        run: |
-          echo "Chrome Web Store: skipped; set the secrets CWS_EXTENSION_ID, CWS_PUBLISHER_ID, CWS_CLIENT_ID, CWS_CLIENT_SECRET and CWS_REFRESH_TOKEN (docs/STORES.md) to publish from CI."
-      - uses: actions/download-artifact@v4
-        if: env.HAS_CWS == 'true'
-        with:
-          name: melodica-extension-${{ needs.build.outputs.version }}
-      - uses: actions/setup-node@v4
-        if: env.HAS_CWS == 'true'
-        with:
-          node-version: 22
-      - name: Upload and publish to the Chrome Web Store (unlisted item)
-        if: env.HAS_CWS == 'true'
-        env:
-          EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
-          PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
-          CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
-          CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
-          REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
-        run: |
-          v="${{ needs.build.outputs.version }}"
-          zip="melodica-extension-$v-cws.zip"
-          [[ -s "$zip" ]] || { echo "::error::$zip missing from the release artifact"; exit 1; }
-          unzip -p "$zip" manifest.json | grep -q update_url && { echo "::error::$zip carries update_url; the Chrome Web Store rejects it"; exit 1; }
-          echo "Chrome Web Store: uploading $zip to item $EXTENSION_ID"
-          npx --yes chrome-webstore-upload-cli@4.0.2 upload --source "$zip" --extension-id "$EXTENSION_ID" --publisher-id "$PUBLISHER_ID"
-          echo "Chrome Web Store: submitting the uploaded version for review"
-          npx --yes chrome-webstore-upload-cli@4.0.2 publish --extension-id "$EXTENSION_ID" --publisher-id "$PUBLISHER_ID"
-          echo "Chrome Web Store: submitted; review status is in https://chrome.google.com/webstore/devconsole (item $EXTENSION_ID, listing https://chromewebstore.google.com/detail/$EXTENSION_ID)"
-
-  # Microsoft Edge Add-ons: the product is created once by hand in Partner Center with
-  # Visibility: Hidden (docs/STORES.md); this job uploads the same -cws.zip to its draft
-  # submission and publishes it through the Add-ons REST API v1.1 (scripts/edge-publish.sh).
-  publish-edge:
-    needs: [build, release]
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      HAS_EDGE: ${{ secrets.EDGE_PRODUCT_ID != '' && secrets.EDGE_CLIENT_ID != '' && secrets.EDGE_API_KEY != '' }}
-    steps:
-      - name: Skip (no Edge Add-ons credentials)
-        if: env.HAS_EDGE != 'true'
-        run: |
-          echo "Edge Add-ons: skipped; set the secrets EDGE_PRODUCT_ID, EDGE_CLIENT_ID and EDGE_API_KEY (docs/STORES.md) to publish from CI."
-      - uses: actions/checkout@v4
-        if: env.HAS_EDGE == 'true'
-      - uses: actions/download-artifact@v4
-        if: env.HAS_EDGE == 'true'
-        with:
-          name: melodica-extension-${{ needs.build.outputs.version }}
-          path: release
-      - name: Upload and publish to Microsoft Edge Add-ons (hidden product)
-        if: env.HAS_EDGE == 'true'
-        env:
-          EDGE_PRODUCT_ID: ${{ secrets.EDGE_PRODUCT_ID }}
-          EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
-          EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
-        run: |
-          v="${{ needs.build.outputs.version }}"
-          scripts/edge-publish.sh "release/melodica-extension-$v-cws.zip" "melodica-extension $v from GitHub Actions run ${{ github.run_id }}; see https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}"
