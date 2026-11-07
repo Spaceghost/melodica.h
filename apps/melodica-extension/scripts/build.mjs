@@ -1,7 +1,8 @@
 // Build the extension: Imba -> ES modules with esbuild (one bundle per entry,
 // stable names, no hashing, no inline scripts), copy public/, the wasm core
 // and generated icons, and write one manifest per browser:
-//   dist/chrome/   manifest without Firefox-only keys
+//   dist/chrome/   manifest without Firefox-only keys (self-hosted: carries update_url)
+//   dist/cws/      the Chrome build without update_url, for the Chrome Web Store and Edge Add-ons
 //   dist/firefox/  manifest with browser_specific_settings and background.scripts
 // Also emits build/node/core.js (the Core wrapper for Node) for core/test.mjs.
 //
@@ -164,11 +165,15 @@ const chrome = structuredClone(manifest);
 delete chrome.browser_specific_settings;
 delete chrome.background.scripts;
 chrome.update_url = `${STORE}/update.xml`;
+// The store copy: the Chrome Web Store rejects a manifest with update_url (the store is the
+// updater), and Edge Add-ons takes the same package.
+const cws = structuredClone(chrome);
+delete cws.update_url;
 const firefox = structuredClone(manifest);
 delete firefox.version_name;
 firefox.browser_specific_settings.gecko.update_url = `${STORE}/updates.json`;
 
-for (const [name, m] of [['chrome', chrome], ['firefox', firefox]]) {
+for (const [name, m] of [['chrome', chrome], ['cws', cws], ['firefox', firefox]]) {
   const dir = resolve(dist, name);
   await cp(common, dir, { recursive: true });
   await writeFile(resolve(dir, 'manifest.json'), JSON.stringify(m, null, 2) + '\n');

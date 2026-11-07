@@ -18,6 +18,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # secrets are not allowed in a step's if:, so the check lives here.
+      HAS_AMO: ${{ secrets.AMO_JWT_ISSUER != '' && secrets.AMO_JWT_SECRET != '' }}
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
@@ -69,11 +72,13 @@ jobs:
           fi
           OUT="$PWD/release" scripts/package.sh "$v"
           rm -f "$RUNNER_TEMP/crx.pem"
-      # Mozilla signing happens only when the repository has AMO API credentials
-      # (secrets AMO_JWT_ISSUER + AMO_JWT_SECRET). Without them the .xpi stays unsigned
-      # and the notes say so. `unlisted` keeps it off addons.mozilla.org listings.
-      - name: Sign the .xpi with AMO (only when AMO_JWT_ISSUER/AMO_JWT_SECRET exist)
-        if: env.AMO_JWT_ISSUER != '' && env.AMO_JWT_SECRET != ''
+      # Mozilla signing happens only on tags and only when the repository has AMO API
+      # credentials (secrets AMO_JWT_ISSUER + AMO_JWT_SECRET). Without them the .xpi stays
+      # unsigned and the notes say so. `unlisted` keeps it off addons.mozilla.org listings.
+      # Branch builds are not signed: every one of them is version 0.0.0 to AMO, which
+      # takes a version once (the master build after v0.1.4 failed there with "Not Found").
+      - name: Sign the .xpi with AMO (tags only, when AMO_JWT_ISSUER/AMO_JWT_SECRET exist)
+        if: env.HAS_AMO == 'true' && startsWith(github.ref, 'refs/tags/v')
         env:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
           AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
@@ -108,6 +113,7 @@ jobs:
             echo "- \`melodica-extension-$v.xpi\`: the Firefox add-on (Firefox shows its install prompt when served as application/x-xpinstall; gecko id \`melodica-extension@spacegho.st\`, update feed \`https://spacegho.st/extensions/dl/melodica-extension/updates.json\`). $xpi_note"
             echo "- \`melodica-extension-$v.crx\`: $crx_note"
             echo "- \`melodica-extension-$v-chrome.zip\`: unpacked extension for Chrome/Chromium/Edge/Brave. Unzip, then chrome://extensions (edge://extensions, brave://extensions) → Developer mode → Load unpacked. Brave uses this Chrome build unchanged."
+            echo "- \`melodica-extension-$v-cws.zip\`: the same Chrome build without \`update_url\`: the package the \`publish-cws\` and \`publish-edge\` jobs of this run upload to the Chrome Web Store and to Microsoft Edge Add-ons (both unlisted) when the repository has the store credentials (see docs/STORES.md); those jobs run after this release is created, so this text cannot say whether they did."
             echo "- \`melodica-extension-$v-firefox.zip\`: the same build with \`browser_specific_settings\` for Firefox (identical bytes to the unsigned .xpi). Unzip, then about:debugging → This Firefox → Load Temporary Add-on (pick manifest.json), or \`web-ext run --source-dir\`."
             echo "- \`melodica-extension-$v-src.tar.gz\`: source tree."
             echo "- \`SHA256SUMS\`"
@@ -116,7 +122,7 @@ jobs:
             echo
             echo "## Proof"
             echo
-            echo "The \`smoke\` job of this release's workflow loaded this exact Chrome build unpacked into Playwright's Chromium (headed under xvfb) against [melodica-tuner](https://github.com/Spaceghost/melodica-tuner), a stand-in tuner.pandora.com: set the endpoint on the options page, signed in from the popup, listed the fixture's stations, started a station (the player tab opened and the \`<audio>\` element played), and bridged an \`auth.partnerLogin\` for the melodica-web page served locally as https://spacegho.st. \`smoke-extension.json\` is the report. The \`smoke-brave\` job repeated every step in Brave (the current stable from Brave's apt repository, Shields at their defaults) with the same Chrome build; \`smoke-brave.json\` is its report and its \`blocked\` list holds every request Brave refused (none of them may be the extension's, the tuner's or the page's, or the job fails). This proves the extension against the tuner, not against Pandora; the Firefox build was linted with web-ext, not run; the .xpi and .crx files were packaged from the same dist/ but no job installed them in a browser. Nothing is published to the Chrome Web Store, AMO listings or any Brave listing."
+            echo "The \`smoke\` job of this release's workflow loaded this exact Chrome build unpacked into Playwright's Chromium (headed under xvfb) against [melodica-tuner](https://github.com/Spaceghost/melodica-tuner), a stand-in tuner.pandora.com: set the endpoint on the options page, signed in from the popup, listed the fixture's stations, started a station (the player tab opened and the \`<audio>\` element played), and bridged an \`auth.partnerLogin\` for the melodica-web page served locally as https://spacegho.st. \`smoke-extension.json\` is the report. The \`smoke-brave\` job repeated every step in Brave (the current stable from Brave's apt repository, Shields at their defaults) with the same Chrome build; \`smoke-brave.json\` is its report and its \`blocked\` list holds every request Brave refused (none of them may be the extension's, the tuner's or the page's, or the job fails). This proves the extension against the tuner, not against Pandora; the Firefox build was linted with web-ext, not run; the .xpi and .crx files were packaged from the same dist/ but no job installed them in a browser. Nothing is listed publicly on the Chrome Web Store, addons.mozilla.org or Edge Add-ons: the AMO signature (when present) is on the unlisted channel, and the store uploads (when the credentials exist) go to unlisted/hidden items that only their links reach."
           } > release/RELEASE_BODY.md
           ls -l release
       - uses: actions/upload-artifact@v4
@@ -271,6 +277,7 @@ jobs:
           body_path: RELEASE_BODY.md
           files: |
             melodica-extension-${{ needs.build.outputs.version }}-chrome.zip
+            melodica-extension-${{ needs.build.outputs.version }}-cws.zip
             melodica-extension-${{ needs.build.outputs.version }}-firefox.zip
             melodica-extension-${{ needs.build.outputs.version }}.xpi
             melodica-extension-${{ needs.build.outputs.version }}.crx
@@ -286,3 +293,79 @@ jobs:
             smoke-brave-stations.png
             smoke-brave-playing.png
             smoke-brave-bridge.png
+
+  # Chrome Web Store (covers Chrome and Brave; Edge can install from it too). The item is
+  # created once by hand in the developer dashboard with Visibility: Unlisted (docs/STORES.md);
+  # this job uploads the -cws.zip (no update_url) as a new version and submits it for review
+  # through the Chrome Web Store API v2 (chrome-webstore-upload-cli). Visibility is item
+  # metadata set in the dashboard; the API does not change it.
+  publish-cws:
+    needs: [build, release]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      HAS_CWS: ${{ secrets.CWS_EXTENSION_ID != '' && secrets.CWS_PUBLISHER_ID != '' && secrets.CWS_CLIENT_ID != '' && secrets.CWS_CLIENT_SECRET != '' && secrets.CWS_REFRESH_TOKEN != '' }}
+    steps:
+      - name: Skip (no Chrome Web Store credentials)
+        if: env.HAS_CWS != 'true'
+        run: |
+          echo "Chrome Web Store: skipped; set the secrets CWS_EXTENSION_ID, CWS_PUBLISHER_ID, CWS_CLIENT_ID, CWS_CLIENT_SECRET and CWS_REFRESH_TOKEN (docs/STORES.md) to publish from CI."
+      - uses: actions/download-artifact@v4
+        if: env.HAS_CWS == 'true'
+        with:
+          name: melodica-extension-${{ needs.build.outputs.version }}
+      - uses: actions/setup-node@v4
+        if: env.HAS_CWS == 'true'
+        with:
+          node-version: 22
+      - name: Upload and publish to the Chrome Web Store (unlisted item)
+        if: env.HAS_CWS == 'true'
+        env:
+          EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+          PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
+          CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+        run: |
+          v="${{ needs.build.outputs.version }}"
+          zip="melodica-extension-$v-cws.zip"
+          [[ -s "$zip" ]] || { echo "::error::$zip missing from the release artifact"; exit 1; }
+          unzip -p "$zip" manifest.json | grep -q update_url && { echo "::error::$zip carries update_url; the Chrome Web Store rejects it"; exit 1; }
+          echo "Chrome Web Store: uploading $zip to item $EXTENSION_ID"
+          npx --yes chrome-webstore-upload-cli@4.0.2 upload --source "$zip" --extension-id "$EXTENSION_ID" --publisher-id "$PUBLISHER_ID"
+          echo "Chrome Web Store: submitting the uploaded version for review"
+          npx --yes chrome-webstore-upload-cli@4.0.2 publish --extension-id "$EXTENSION_ID" --publisher-id "$PUBLISHER_ID"
+          echo "Chrome Web Store: submitted; review status is in https://chrome.google.com/webstore/devconsole (item $EXTENSION_ID, listing https://chromewebstore.google.com/detail/$EXTENSION_ID)"
+
+  # Microsoft Edge Add-ons: the product is created once by hand in Partner Center with
+  # Visibility: Hidden (docs/STORES.md); this job uploads the same -cws.zip to its draft
+  # submission and publishes it through the Add-ons REST API v1.1 (scripts/edge-publish.sh).
+  publish-edge:
+    needs: [build, release]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HAS_EDGE: ${{ secrets.EDGE_PRODUCT_ID != '' && secrets.EDGE_CLIENT_ID != '' && secrets.EDGE_API_KEY != '' }}
+    steps:
+      - name: Skip (no Edge Add-ons credentials)
+        if: env.HAS_EDGE != 'true'
+        run: |
+          echo "Edge Add-ons: skipped; set the secrets EDGE_PRODUCT_ID, EDGE_CLIENT_ID and EDGE_API_KEY (docs/STORES.md) to publish from CI."
+      - uses: actions/checkout@v4
+        if: env.HAS_EDGE == 'true'
+      - uses: actions/download-artifact@v4
+        if: env.HAS_EDGE == 'true'
+        with:
+          name: melodica-extension-${{ needs.build.outputs.version }}
+          path: release
+      - name: Upload and publish to Microsoft Edge Add-ons (hidden product)
+        if: env.HAS_EDGE == 'true'
+        env:
+          EDGE_PRODUCT_ID: ${{ secrets.EDGE_PRODUCT_ID }}
+          EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
+          EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
+        run: |
+          v="${{ needs.build.outputs.version }}"
+          scripts/edge-publish.sh "release/melodica-extension-$v-cws.zip" "melodica-extension $v from GitHub Actions run ${{ github.run_id }}; see https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}"
