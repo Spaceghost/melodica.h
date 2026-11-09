@@ -270,6 +270,8 @@ export class Pandora
 		const r = await self.post('auth.userLogin', body, {auth_token: self.partner.authToken, partner_id: self.partner.id})
 		self.user = {authToken: String(r.userAuthToken), id: String(r.userId), email: email, subscriber: !!r.isSubscriber}
 		self.credentials = {email, password}
+		# Every new Pandora session (a sign-in, or the sign-in again after 1001).
+		self.onLogin(self.user) if typeof self.onLogin === 'function'
 		self.user
 
 	def logout

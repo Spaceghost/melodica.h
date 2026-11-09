@@ -56,3 +56,44 @@ Pandora calls (layer 1) other than `auth.partnerLogin` and `test.checkLicensing`
 refused after this browser's access answer said no. The web player's side of this is implemented in melodica-web by
 its own maintainer; the extension's half is proven by the Chromium and Brave smokes
 (`tests/smoke-extension.spec.mjs`, step "bridge remote").
+
+## 3. Session sharing (since 0.6.0)
+
+The contract is melodica-web's `docs/BRIDGE.md` section 4 (agreed at 8a04339); this is
+what the extension does.
+
+- Messages go to the literal origin `https://spacegho.st` and are read only from it,
+  on `/melodica/app/`. `ready` carries `session: 1`.
+- `session-get` answers `{type: 'session', id, session, credential, account, revoked}`.
+  `session` is the current Pandora session `{sid, email, partner, user, syncOffset,
+  createdAt}`; `sid` is minted at each Pandora login (also the one after a 1001).
+  `access` is the extension's current login-ok token (aud `melodica-extension`, which
+  the relay accepts) or `null`; a new token is pushed with a new `session`. It is never
+  taken from the page. `credential` is `{email, password}` only while "Remember me on this device" is on.
+  `account` is `{signedIn, username, github}`; no OAuth token crosses. After the first
+  `session-get` the page also gets an unsolicited `session` on every login, logout,
+  credential or account change.
+- `session-offer` with the page's session: `revoked` when its sid was signed out, `kept`
+  when the extension already has a session (the extension's wins), `invalid` when the
+  access check or Pandora refuses it (a credential that came with it is used only on
+  1001), else `signed-in`: the extension takes the session, calls login-ok with it, and
+  remembers the credential if one came.
+- `session-logout {sid}`: the sid goes on `revokedSids` (storage.local, last 8); if it is
+  the extension's session, the extension signs out (session, sealed login and key) and
+  pushes `session: null`. Signing out in the extension does the same.
+- When the page's `account.signedIn` is true and the extension is not signed in to
+  spacegho.st, the extension tries one silent sign-in (`prompt=none`,
+  `launchWebAuthFlow({interactive: false})`); `login_required` does nothing.
+- The background accepts these only from this extension's content script in the top
+  frame of a tab on `https://spacegho.st/melodica/app/` (`sender.id`, `frameId === 0`,
+  `sender.tab`, `sender.url` origin and path, and `sender.origin` where the browser sets
+  it); anything else gets `{ok: false, error: 'not allowed'}`.
+- spacegho.st sign-out both ways: the page sends `{type: 'account-signout', id}` and the
+  extension signs out of spacegho.st (revoking its refresh token) and answers `result`;
+  when the extension signs out of spacegho.st itself it posts `{type: 'account-signout'}`
+  (no `id`) to a page that has asked for the session, followed by a `session` whose
+  `account.signedIn` is false.
+  A sign-out made while no page has asked for the session sets `accountSignoutPending`
+  (storage.local, no secrets); the next page gets `account-signout` right after the answer
+  to its first `session-get`. Signing in to spacegho.st again clears it. `account-signout`
+  from the page is answered `ok: true` whether or not the extension was signed in.

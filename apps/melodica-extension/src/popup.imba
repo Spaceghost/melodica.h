@@ -37,6 +37,12 @@ tag Popup
 				loggedIn = no
 				pickView()
 				accessMessage(msg.state.access)
+			elif msg.state.loggedIn === yes and !loggedIn
+				# Signed in elsewhere (the web app handed over its session).
+				loggedIn = yes
+				message = ''
+				kind = ''
+				pickView()
 			imba.commit()
 		if msg.type === 'account'
 			account = msg.account

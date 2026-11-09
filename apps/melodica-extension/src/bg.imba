@@ -16,6 +16,7 @@
 import { Core } from './core.imba'
 import { Pandora, PandoraError, QUALITIES } from './pandora.imba'
 import { browser, loadSettings, normalizeEndpoint, fromBase64, toBase64, SETTINGS_DEFAULTS } from './shared.imba'
+import { seal, unseal, wipe, vaultAvailable } from './vault.imba'
 import { normalizeAccountBase, randomString, pkceChallenge, authorizeUrl, parseRedirect, tokenForm, storedTokens, accessFresh, policyFrom, accountLabel, jwtClaims, CLIENT_ID, TAB_CLIENT_ID, TAB_REDIRECT, POLICY_DEFAULT } from './account.imba'
 import { feedUrl, latestVersion, bannerState, compareVersions, STORE_URL } from './update.imba'
 import { Engine } from './engine.imba'
@@ -32,7 +33,7 @@ const TAB_ENGINE = !browser.offscreen and (browser.runtime.getManifest().backgro
 # back to the web app page, where a content script hands over the redirect address.
 const SIGNIN_PENDING_FOR = 10 * 60 * 1000
 let engineWaiters = []
-const SESSION_KEYS = {session: null, stations: [], player: null, log: [], melodica: null}
+const SESSION_KEYS = {session: null, stations: [], player: null, log: [], melodica: null, meta: null}
 const PLAYER_IDLE = {status: 'idle', station: null, track: null, position: 0, duration: 0, volume: 80, quality: 'high', queueLength: 0, error: '', history: [], changedAt: 0}
 const PLAYER_ACTIONS = new Set(['play', 'resume', 'pause', 'toggle', 'next', 'love', 'ban', 'tired', 'sleep', 'stop', 'volume', 'quality'])
 const LOG_MAX = 200
@@ -71,9 +72,11 @@ let access = {email: '', allowed: no, spots: yes, checkedAt: 0, message: '', err
 # melodica access token (12 h); with it (or the spacegho.st account's token)
 # /oauth/melodica/me names the user and /oauth/melodica/username changes the name.
 # Kept in session storage; never logged; no email is kept here.
-const MELODICA_IDLE = {token: '', exp: 0, username: '', chosen: no, suggested: '', notice: '', later: no}
+const MELODICA_IDLE = {token: '', exp: 0, username: '', chosen: no, suggested: '', notice: '', later: no, github: ''}
 const MELODICA_TOKEN_FOR = 11 * 60 * 60 * 1000
 let melodica = Object.assign({}, MELODICA_IDLE)
+# The current Pandora session's id and start (docs/BRIDGE.md 4.1): minted at each login.
+let sessionMeta = null
 let melodicaAsking = null
 let accessChecking = null
 let accessBooted = no
@@ -117,8 +120,29 @@ def boot
 		note("permissions.getAll failed: {e and e.message or e}")
 	note("restored session for {client.user.email}") if client.restore(saved.session)
 	melodica = Object.assign({}, MELODICA_IDLE, saved.melodica) if saved.melodica and typeof saved.melodica === 'object'
-	if settings.remember and settings.email and settings.password
-		client.credentials = {email: settings.email, password: settings.password}
+	let meta = saved.meta and typeof saved.meta === 'object' ? saved.meta : null
+	# A plaintext password left by versions before 0.6.0: seal it, then erase it.
+	const old = (await browser.storage.local.get({password: ''})).password
+	if old
+		if settings.remember and settings.email and vaultAvailable()
+			try
+				await seal({credential: {email: settings.email, password: old}, session: null, meta: null})
+				note('remember: the plaintext password was sealed')
+			catch e
+				note("remember: sealing failed ({e and e.message or e}); forgotten")
+		await browser.storage.local.remove('password')
+	# "Remember me": resume the sealed Pandora session (the browser was closed); the
+	# sealed password is used only when Pandora answers 1001.
+	if settings.remember
+		const v = await unseal()
+		if v
+			if !client.loggedIn and v.session and client.restore(v.session)
+				meta = v.meta or meta
+				note("resumed the remembered session for {client.user.email}")
+			client.credentials = v.credential if v.credential and v.credential.email and v.credential.password
+	sessionMeta = meta
+	sessionMeta = {sid: newSid(), createdAt: Date.now()} if client.loggedIn and !(sessionMeta and sessionMeta.sid)
+	client.onLogin = do sessionStarted()
 	if saved.player and typeof saved.player === 'object'
 		player = Object.assign({}, PLAYER_IDLE, saved.player)
 		# A worker restart mid-song in Chromium keeps the offscreen document and its
@@ -236,9 +260,11 @@ def accountView
 
 def setAccount patch
 	const joined = patch.signedIn === yes and !account.signedIn
+	const changed = patch.signedIn !== undefined and !!patch.signedIn !== !!account.signedIn
 	account = Object.assign({}, account, patch, {checkedAt: Date.now()})
 	# Signing in with GitHub can rename the user (the GitHub login): ask again.
 	refreshMe(no).catch(do(e) null) if joined and state and state.client.loggedIn
+	sessionChanged() if changed and state
 	broadcast({type: 'account', account: accountView()})
 	playerChanged(player)
 	account
@@ -340,6 +366,7 @@ def accountFinish url
 	const tokens = r.status === 200 ? storedTokens(r.body) : null
 	throw new PandoraError("spacegho.st did not accept the sign-in ({r.body and r.body.error or 'HTTP ' + r.status}).", null, 0, 'account') unless tokens
 	tokens.clientId = got.clientId
+	await browser.storage.local.remove('accountSignoutPending')
 	await browser.storage.local.set({account: tokens})
 	note('account: signed in')
 	await checkAccount(yes)
@@ -367,7 +394,136 @@ def accountCode msg, sender
 	throw new PandoraError('The sign-in did not come back to the web app page.', null, 0, 'account') unless from.startsWith(TAB_REDIRECT)
 	await accountFinish(String(msg.url or from))
 
-def accountSignout
+# ---- session sharing with the web app (melodica-web docs/BRIDGE.md, section 4)
+
+const BRIDGE_ORIGIN = 'https://spacegho.st'
+const BRIDGE_PATH = '/melodica/app/'
+const REVOKED_MAX = 8
+
+# Session messages come only from this extension's content script in the top frame
+# of https://spacegho.st/melodica/app/ (exact origin).
+def bridgeSender sender
+	let ok = no
+	try
+		const u = new URL(String(sender and sender.url or ''))
+		ok = sender.id === browser.runtime.id and sender.frameId === 0 and !!sender.tab and u.origin === BRIDGE_ORIGIN and u.pathname.startsWith(BRIDGE_PATH)
+		ok = no if sender.origin and sender.origin !== BRIDGE_ORIGIN
+	catch e
+		ok = no
+	throw new PandoraError('not allowed', null, 0, 'bridge') unless ok
+
+# The tabs whose page asked for the session (they get the unsolicited pushes).
+def sessionTabs add = null, keep = yes
+	let list = (await session.get({sessionTabs: []})).sessionTabs or []
+	if add !== null and keep and !list.includes(add)
+		list = list.concat([add])
+		await session.set({sessionTabs: list})
+	list
+
+def revokedSids
+	const got = (await browser.storage.local.get({revokedSids: []})).revokedSids
+	Array.isArray(got) ? got : []
+
+def addRevoked sid
+	return unless sid
+	const list = (await revokedSids()).filter(do(x) x !== sid).concat([sid]).slice(-REVOKED_MAX)
+	await browser.storage.local.set({revokedSids: list})
+
+def sessionView
+	const c = state.client
+	const u = c.user
+	const s = c.loggedIn and sessionMeta ? {sid: sessionMeta.sid, email: u.email, partner: {authToken: c.partner.authToken, id: c.partner.id}, user: {authToken: u.authToken, id: u.id}, syncOffset: Number(state.core.syncOffset) or 0, createdAt: sessionMeta.createdAt} : null
+	const cred = c.loggedIn and state.settings.remember and c.credentials and c.credentials.email and c.credentials.password ? {email: c.credentials.email, password: c.credentials.password} : null
+	const tokenNow = s and melodica.token and melodica.exp > Date.now() ? melodica.token : null
+	{session: s, access: tokenNow, credential: cred, account: {signedIn: !!account.signedIn, username: (account.signedIn and melodica.username) or null, github: melodica.github or null}, revoked: await revokedSids()}
+
+# Push the session to every page that asked for it (no page: nothing is sent).
+def sessionChanged
+	try
+		const tabs = await sessionTabs()
+		return unless tabs.length
+		const message = {type: 'session-state', view: await sessionView()}
+		for tabId in tabs
+			browser.tabs.sendMessage(tabId, message).catch do(e)
+				const left = (await sessionTabs()).filter(do(x) x !== tabId)
+				await session.set({sessionTabs: left})
+	catch e
+		note("session push failed: {e and e.message or e}")
+
+def validSession s
+	s and typeof s === 'object' and typeof s.sid === 'string' and s.sid.length >= 16 and typeof s.email === 'string' and s.email and s.partner and typeof s.partner.authToken === 'string' and Number.isFinite(Number(s.partner.id)) and s.user and typeof s.user.authToken === 'string' and typeof s.user.id === 'string' and Number.isInteger(Number(s.syncOffset))
+
+# The page offers its Pandora session (BRIDGE.md 4.3): taken only when the extension
+# has none; checked with one call; a credential is used only on 1001.
+def sessionOffer msg
+	const s = msg.session
+	return 'invalid' unless validSession(s)
+	return 'revoked' if (await revokedSids()).includes(s.sid)
+	const client = state.client
+	if client.loggedIn
+		sessionChanged()
+		return 'kept'
+	const email = s.email.trim()
+	const allowed = await accessAsk(email)
+	await setAccess(email, allowed)
+	return 'invalid' unless allowed.allowed
+	const cred = msg.credential and typeof msg.credential.email === 'string' and typeof msg.credential.password === 'string' and msg.credential.password ? {email: msg.credential.email.trim(), password: msg.credential.password} : null
+	client.restore({partner: {authToken: s.partner.authToken, id: Number(s.partner.id)}, user: {authToken: s.user.authToken, id: s.user.id, email, subscriber: no}, syncOffset: Number(s.syncOffset)})
+	sessionMeta = {sid: s.sid, createdAt: Number(s.createdAt) or Date.now()}
+	client.credentials = cred
+	let stations = null
+	try
+		stations = await client.stations()
+	catch e
+		note("session offer: refused ({e and e.message or e})")
+		client.logout()
+		client.credentials = null
+		sessionMeta = null
+		await persist()
+		return 'invalid'
+	const keep = !!cred and vaultAvailable()
+	await browser.storage.local.set({email, remember: keep})
+	Object.assign(state.settings, {email, remember: keep})
+	await wipe() unless keep
+	await persist()
+	await remember('stations', stations)
+	note('session offer: signed in from the web app')
+	playerChanged(player)
+	sessionChanged()
+	melodicaLogin(email, yes).catch(do(e) note("login-ok failed: {e and e.message or e}"))
+	'signed-in'
+
+def sessionLogout sid
+	return unless sid
+	await addRevoked(sid)
+	if sessionMeta and sessionMeta.sid === sid and state.client.loggedIn
+		note('session: signed out from the web app')
+		await forgetPandora('signed out on the web app')
+	else
+		sessionChanged()
+
+# The page is signed in to spacegho.st and the extension is not: sign in without a
+# prompt (prompt=none). login_required (no spacegho.st browser session) does nothing.
+let silentTried = no
+def silentAccountFor acct
+	return unless acct and acct.signedIn === yes and !account.signedIn and !silentTried
+	return unless browser.identity and browser.identity.launchWebAuthFlow
+	silentTried = yes
+	accountSilent().catch(do(e) note("account: silent sign-in did not finish ({e and e.message or e})"))
+
+def accountSilent
+	const base = await accountBase()
+	const verifier = randomString(32)
+	const st = randomString(16)
+	const redirectUri = browser.identity.getRedirectURL('oauth')
+	await session.set({accountPending: {verifier, state: st, clientId: CLIENT_ID, redirectUri, base, at: Date.now()}})
+	const url = authorizeUrl(base, {clientId: CLIENT_ID, redirectUri, challenge: await pkceChallenge(verifier), state: st, prompt: 'none'})
+	note('account: silent sign-in')
+	const back = await browser.identity.launchWebAuthFlow({url, interactive: no})
+	await accountFinish(back)
+
+def accountSignout fromPage = no
+	const was = !!account.signedIn
 	const tokens = await storedAccount()
 	await browser.storage.local.remove('account')
 	if tokens and tokens.refresh
@@ -376,7 +532,19 @@ def accountSignout
 		catch e
 			note("account: revoke failed: {e and e.message or e}")
 	note('account: signed out')
-	setAccount({signedIn: no, label: '', email: '', sub: '', spots: POLICY_DEFAULT.spots, error: ''})
+	const out = setAccount({signedIn: no, label: '', email: '', sub: '', spots: POLICY_DEFAULT.spots, error: ''})
+	# Signing out of spacegho.st here signs the web app out too (BRIDGE.md 4.4).
+	if was and !fromPage
+		# No page has asked yet: tell the next one, right after its first session-get.
+		if (await sessionTabs()).length
+			pushSessionTabs({type: 'session-account-signout'})
+		else
+			await browser.storage.local.set({accountSignoutPending: yes})
+	out
+
+def pushSessionTabs message
+	for tabId in await sessionTabs()
+		browser.tabs.sendMessage(tabId, message).catch(do(e) null)
 
 # Engine playlist items follow verified compatibility state.
 # Slot handling follows verified access and account compatibility state.
@@ -459,14 +627,7 @@ def runAccessCheck
 
 def denyAccess
 	note('access: not allowed; signing out of Pandora')
-	await stopPlayback('melodica access withdrawn')
-	state.client.logout()
-	await setMelodica(MELODICA_IDLE)
-	await browser.storage.local.set({password: '', remember: no})
-	Object.assign(state.settings, {password: '', remember: no})
-	await persist()
-	await remember('stations', [])
-	playerChanged(player)
+	await forgetPandora('melodica access withdrawn')
 
 # ---- the melodica username (docs/ACCOUNT.md, Usernames)
 
@@ -513,6 +674,7 @@ def runMelodicaLogin email, prompt
 		patch.chosen = out.username_chosen === yes
 	patch.later = no if prompt
 	await setMelodica(patch)
+	sessionChanged()
 	await refreshMe(no)
 	yes
 
@@ -557,7 +719,7 @@ def refreshMe prompt = no
 	note("me: HTTP {r.status}")
 	const b = r.body
 	return no unless r.status === 200 and b and typeof b.username === 'string' and b.username
-	const patch = {username: b.username, chosen: b.username_chosen === yes, suggested: typeof b.suggested === 'string' ? b.suggested : '', notice: typeof b.notice === 'string' ? b.notice : ''}
+	const patch = {github: b.github and typeof b.github.login === 'string' ? b.github.login : '', username: b.username, chosen: b.username_chosen === yes, suggested: typeof b.suggested === 'string' ? b.suggested : '', notice: typeof b.notice === 'string' ? b.notice : ''}
 	patch.later = no if prompt or patch.notice
 	await setMelodica(patch)
 	yes
@@ -575,7 +737,45 @@ def setUsername raw
 	throw new PandoraError(text, null, 0, 'username')
 
 def persist
-	await session.set({session: state.client.loggedIn ? state.client.snapshot() : null})
+	const client = state.client
+	await session.set({session: client.loggedIn ? client.snapshot() : null, meta: client.loggedIn ? sessionMeta : null})
+	await sealRemembered()
+
+# While "Remember me" is on, the session and login are sealed (vault.imba).
+def sealRemembered
+	return unless state.settings.remember and state.client.loggedIn
+	const c = state.client.credentials
+	try
+		await seal({credential: (c and c.email and c.password ? {email: c.email, password: c.password} : null), session: state.client.snapshot(), meta: sessionMeta})
+	catch e
+		note("remember: sealing failed ({e and e.message or e})")
+
+def newSid
+	const b = crypto.getRandomValues(new Uint8Array(18))
+	btoa(String.fromCharCode(...b)).split('+').join('-').split('/').join('_')
+
+# A new Pandora session (a sign-in, or the sign-in again after 1001).
+def sessionStarted
+	sessionMeta = {sid: newSid(), createdAt: Date.now()}
+	persist().then((do sessionChanged()), (do(e) null))
+
+# Sign out of Pandora everywhere: the session, the sealed login and its key; the sid
+# goes on the revoked list (docs/BRIDGE.md 4.4).
+def forgetPandora why
+	const sid = sessionMeta and sessionMeta.sid
+	await stopPlayback(why)
+	state.client.logout()
+	state.client.credentials = null
+	sessionMeta = null
+	await setMelodica(MELODICA_IDLE)
+	await wipe()
+	await browser.storage.local.set({remember: no})
+	state.settings.remember = no
+	await addRevoked(sid) if sid
+	await persist()
+	await remember('stations', [])
+	playerChanged(player)
+	sessionChanged()
 
 def remember key, value
 	state.saved[key] = value
@@ -937,16 +1137,12 @@ def handle msg, sender
 			throw new PandoraError(allowed.message, null, 0, 'access') unless allowed.allowed
 			await client.login(email, password)
 			note("login ok: user id {client.user.id.length} chars, token {client.user.authToken.length} chars, subscriber={client.user.subscriber}")
-			const patch = {email}
-			if msg.remember
-				patch.remember = yes
-				patch.password = password
-			else
-				patch.remember = no
-				patch.password = ''
-			await browser.storage.local.set(patch)
-			Object.assign(state.settings, patch)
+			const keep = !!msg.remember and vaultAvailable()
+			await browser.storage.local.set({email, remember: keep})
+			Object.assign(state.settings, {email, remember: keep})
+			await wipe() unless keep
 			await persist()
+			sessionChanged()
 			const stations = await client.stations()
 			await remember('stations', stations)
 			playerChanged(player)
@@ -954,15 +1150,19 @@ def handle msg, sender
 			melodicaLogin(email, yes).catch(do(e) note("login-ok failed: {e and e.message or e}"))
 			{email, stations}
 		when 'logout'
-			client.logout()
-			await setMelodica(MELODICA_IDLE)
-			await browser.storage.local.set({password: '', remember: no})
-			Object.assign(state.settings, {password: '', remember: no})
-			await persist()
-			await remember('stations', [])
-			await stopPlayback('signed out')
-			playerChanged(player)
+			await forgetPandora('signed out')
 			{}
+		when 'remember'
+			const on = !!msg.on and vaultAvailable()
+			await browser.storage.local.set({remember: on})
+			state.settings.remember = on
+			if on
+				await sealRemembered()
+			else
+				await wipe()
+				note('remember: forgotten')
+			sessionChanged()
+			{remember: on}
 		when 'stations'
 			const stations = await client.stations()
 			await remember('stations', stations)
@@ -1027,6 +1227,28 @@ def handle msg, sender
 			{}
 		when 'bridge'
 			await bridge(msg)
+		when 'bridge-session-get'
+			bridgeSender(sender)
+			await sessionTabs(sender.tab.id, yes)
+			silentAccountFor(msg.account)
+			const view = await sessionView()
+			if (await browser.storage.local.get({accountSignoutPending: no})).accountSignoutPending
+				await browser.storage.local.remove('accountSignoutPending')
+				view.accountSignout = yes
+			view
+		when 'bridge-session-offer'
+			bridgeSender(sender)
+			await sessionTabs(sender.tab.id, yes)
+			silentAccountFor(msg.account)
+			{outcome: await sessionOffer(msg)}
+		when 'bridge-account-signout'
+			bridgeSender(sender)
+			await accountSignout(yes) if account.signedIn
+			{}
+		when 'bridge-session-logout'
+			bridgeSender(sender)
+			await sessionLogout(String(msg.sid or ''))
+			{}
 		else
 			throw new PandoraError("Unknown message type {msg.type}.", null, 0, 'client')
 
@@ -1067,10 +1289,9 @@ browser.storage.onChanged.addListener do(changes, area)
 	# sign-out, a test): ask the policy again.
 	await checkAccount(yes) if changes.account or changes.accountBase
 	state.settings.quality = changes.quality.newValue if changes.quality and QUALITIES.includes(changes.quality.newValue)
-	if changes.remember or changes.password or changes.email
-		const s = await loadSettings()
-		Object.assign(state.settings, s)
-		state.client.credentials = s.remember and s.email and s.password ? {email: s.email, password: s.password} : null
+	# "Remember me" and the sealed login are changed only through the background
+	# (login, logout, the 'remember' message), which keeps state.settings itself.
+	state.settings.email = changes.email.newValue or '' if changes.email
 
 browser.runtime.onInstalled.addListener do(details)
 	console.info("melodica-extension {browser.runtime.getManifest().version} {details.reason}")

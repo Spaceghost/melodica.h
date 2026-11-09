@@ -20,6 +20,7 @@ tag Options
 	prop endpoint = ''
 	prop quality = 'high'
 	prop remember = no
+	prop rememberLoaded = no
 	prop message = ''
 	prop kind = ''
 	prop version = ''
@@ -40,6 +41,7 @@ tag Options
 		endpoint = s.endpoint
 		quality = s.quality
 		remember = s.remember
+		rememberLoaded = s.remember
 		version = browser.runtime.getManifest().version
 		await checkPermission()
 		await loadAccount()
@@ -119,9 +121,12 @@ tag Options
 
 	def save
 		const value = normalizeEndpoint(endpoint)
-		const patch = {endpoint: value, quality: quality, remember: remember}
-		patch.password = '' unless remember
-		await saveSettings(patch)
+		await saveSettings({endpoint: value, quality: quality})
+		# Unticking "Remember me" forgets the sealed login and its key (bg.imba); sent
+		# only when the box changed, so saving the endpoint never touches it.
+		if !!remember !== !!rememberLoaded
+			remember = (await send({type: 'remember', on: !!remember})).remember
+			rememberLoaded = remember
 		endpoint = value
 		message = "Saved. Requests go to {value}"
 		kind = 'info'
@@ -203,7 +208,7 @@ tag Options
 											<option value="low"> "low"
 									<label.check>
 										<input#remember type="checkbox" bind=remember>
-										<span> "Remember the password on this device (kept unencrypted in extension storage)"
+										<span> "Remember me on this device"
 									<div.ext-actions>
 										<button#save.primary type="button" @click=save> "Save"
 										<button#reset type="button" @click=reset> "Reset to Pandora"

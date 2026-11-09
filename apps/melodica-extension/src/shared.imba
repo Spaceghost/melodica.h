@@ -9,7 +9,6 @@ export const SETTINGS_DEFAULTS = {
 	quality: 'high'
 	remember: no
 	email: ''
-	password: ''
 	volume: 80
 }
 

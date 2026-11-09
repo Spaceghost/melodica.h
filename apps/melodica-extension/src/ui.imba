@@ -99,9 +99,7 @@ export tag Login
 					<input#login-password type="password" autocomplete="current-password" required bind=password>
 				<label.check>
 					<input#login-remember type="checkbox" bind=remember>
-					<span> "Remember password on this device"
-				if remember
-					<p#remember-warning.warn> "The password is kept in the extension's local storage, unencrypted."
+					<span> "Remember me on this device"
 				<button#login-button.primary type="submit" disabled=busy> (busy ? "Signing in…" : "Sign in")
 				<p#login-message.message .error=(kind === 'error') .info=(kind === 'info') role="status"> message
 				<p.fine> "Sign-in and every Pandora call go from the extension straight to Pandora; no relay sees them."

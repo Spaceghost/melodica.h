@@ -85,7 +85,7 @@ const tuner = {
   https: process.env.TUNER_HTTPS_URL || '',
   http: process.env.TUNER_HTTP_URL || '',
   user: process.env.TUNER_USER || 'test@example.com',
-  password: process.env.TUNER_PASSWORD || 'test',
+  password: process.env.TUNER_PASSWORD || 'pw-Zq7mK3vT9xR2wL',
   version: '',
   proc: null,
   dir: null,
@@ -238,6 +238,8 @@ test.afterAll(async () => {
     access: report.access,
     account: report.account,
     username: report.username,
+    remember: report.remember,
+    session: report.session,
     spots: report.spots,
     update: report.update,
     audio: report.audio,
@@ -391,12 +393,25 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     report.access = { notListed: { message: await popup.locator('#login-message').textContent(), userLogin: 0 } };
     step('not on the allow-list: not logged in');
     acct.allow(tuner.user);
+    await popup.check('#login-remember');
     await popup.click('#login-button');
     await popup.waitForFunction(() => document.getElementById('app').dataset.view === 'player' || /error/.test(document.getElementById('login-message')?.className || ''), null, { timeout: 60_000, polling: 500 }).catch(() => {});
     const outcome = await popup.evaluate(() => ({ view: document.getElementById('app').dataset.view, message: document.getElementById('login-message')?.textContent || '' }));
     console.log(`login outcome ${at()}: ${JSON.stringify(outcome)}`);
     expect(outcome.view, `login outcome (message: "${outcome.message}")`).toBe('player');
     step('logged in');
+    // "Remember me": the password is sealed (vault.imba). No extension storage holds it
+    // as text; only {v, iv, ct} is in storage.local.
+    const dump = async (pg = popup) => pg.evaluate(async () => JSON.stringify({ local: await chrome.storage.local.get(null), session: await chrome.storage.session.get(null) }));
+    await expect.poll(async () => JSON.parse(await dump()).local.vault ? 'sealed' : 'none', { timeout: 10_000 }).toBe('sealed');
+    const stored = await dump();
+    expect(stored.includes(tuner.password), 'the password is not in extension storage').toBe(false);
+    expect(Object.keys(JSON.parse(stored).local.vault).sort()).toEqual(['ct', 'iv', 'v']);
+    expect(JSON.parse(stored).local.password, 'no plaintext password key').toBeUndefined();
+    const keyKind = await popup.evaluate(() => new Promise((ok) => { const r = indexedDB.open('melodica-vault'); r.onsuccess = () => { const g = r.result.transaction('keys').objectStore('keys').get('vault'); g.onsuccess = () => ok(g.result ? `${g.result.type}/${g.result.extractable}/${g.result.algorithm.name}` : 'none'); }; r.onerror = () => ok('error'); }));
+    expect(keyKind, 'a non-extractable AES-GCM key in IndexedDB').toBe('secret/false/AES-GCM');
+    report.remember = { sealed: true, passwordInStorage: false, key: keyKind };
+    step('remember: password sealed, not in storage');
 
     const stations = popup.locator('#station-list button.station');
     await expect(stations.first()).toBeVisible();
@@ -690,9 +705,14 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     // every push as it arrives).
     await page.evaluate(() => { window.__t = []; window.addEventListener('message', (ev) => { if (ev.source === window && ev.data && ev.data.melodica === 1 && ev.data.type === 'state') window.__t.push({ at: performance.now(), status: ev.data.state.status }); }); });
     const rounds = [];
+    const xsend = (m) => pop2.evaluate((mm) => chrome.runtime.sendMessage(mm), m);
+    // The transport is disabled while an ad plays (the tuner puts one after every
+    // song): time only clicks made outside inserted items.
+    const noAd = async () => { for (let k = 0; k < 120; k++) { const st = (await xsend({ type: 'player-get' })).state; if (!(st.track && st.track.ad) && st.status !== 'loading') return; await pop2.waitForTimeout(250); } };
     for (let i = 0; i < 6; i++) {
       for (const want of ['paused', 'playing']) {
         await pop2.waitForTimeout(400 + 150 * i);
+        await noAd();
         const n = await page.evaluate(() => window.__t.length);
         const t0 = await page.evaluate(() => performance.now());
         await pop2.click('#play');
@@ -708,7 +728,9 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     // The web app's own sequence (melodica-web tests/extension-real.spec.mjs): change
     // the station, set the volume, then pause and resume straight away, while the new
     // station may still be loading.
-    const xsend = (m) => pop2.evaluate((mm) => chrome.runtime.sendMessage(mm), m);
+    // The page repeats its subscribe (melodica-web refreshes every few seconds); here
+    // every 120 ms, so answers cross the background's pushes.
+    await page.evaluate(() => { window.__refresh = setInterval(() => window.postMessage({ melodica: 1, type: 'subscribe' }, location.origin), 120); });
     const sts = (await xsend({ type: 'player-get' })).state.stations;
     for (let i = 0; i < 4; i++) {
       const st = sts[(i + 1) % sts.length];
@@ -725,6 +747,7 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
         rounds.push({ seq: `station+${action}`, want, reply: reply && reply.state && reply.state.status, ms: first ? Math.round(first.at - t0) : null, after: seen.map((x) => `${x.status}@${Math.round(x.at - t0)}`).filter((x, j, a) => j === 0 || x.split('@')[0] !== a[j - 1].split('@')[0]).join('>') });
       }
     }
+    await page.evaluate(() => clearInterval(window.__refresh));
     console.log(`popup -> page latency: ${JSON.stringify(rounds)}`);
     for (const r of rounds) expect(r.ms, `${r.seq || 'popup'} ${r.want} -> page within 500 ms (${JSON.stringify(r)})`).toBeLessThan(500);
     for (const r of rounds) expect(r.after.split('>').pop().split('@')[0], `${r.seq || 'popup'} ${r.want}: last pushed status (${JSON.stringify(r)})`).toBe(r.want);
@@ -863,6 +886,58 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     await expect(ctl.locator('#account-signin')).toHaveText('Sign in with spacegho.st');
     report.account.refresh = { refreshed: acct.tokens.refreshed, rotated: true, revoked: acct.tokens.revoked };
     step('refresh rotated, signed out');
+
+    // Session sharing with the web app (melodica-web docs/BRIDGE.md section 4): the page
+    // asks for the session, gets it (with the credential: "remember" is on); only the
+    // content script on https://spacegho.st/melodica/app/ may ask.
+    const bridgeAsk = (msg) => page.evaluate((m) => new Promise((ok) => {
+      const id = `s-${Math.random()}`;
+      const on = (ev) => { if (ev.source === window && ev.data && ev.data.melodica === 1 && (ev.data.type === 'session' || ev.data.type === 'result') && ev.data.id === id) { removeEventListener('message', on); ok(ev.data); } };
+      addEventListener('message', on);
+      window.postMessage({ melodica: 1, ...m, id }, 'https://spacegho.st');
+      setTimeout(() => ok({ timeout: true }), 15000);
+    }), msg);
+    await page.evaluate(() => { window.__sessions = []; window.__acctOut = 0; addEventListener('message', (ev) => { if (ev.source === window && ev.data && ev.data.melodica === 1 && ev.data.type === 'session' && !ev.data.id) window.__sessions.push(ev.data); if (ev.source === window && ev.data && ev.data.melodica === 1 && ev.data.type === 'account-signout' && !ev.data.id) window.__acctOut += 1; }); });
+    const sready = await page.evaluate(() => new Promise((ok) => { const on = (ev) => { if (ev.data && ev.data.type === 'ready') { removeEventListener('message', on); ok(ev.data); } }; addEventListener('message', on); window.postMessage({ melodica: 1, type: 'hello' }, 'https://spacegho.st'); }));
+    expect(sready.session, 'ready says session: 1').toBe(1);
+    const got = await bridgeAsk({ type: 'session-get' });
+    expect(got.session && got.session.sid && got.session.sid.length >= 16, 'a session with a sid').toBe(true);
+    expect(got.session.email).toBe(tuner.user);
+    expect(got.session.partner.authToken && got.session.user.authToken && Number.isInteger(got.session.syncOffset), 'the Pandora session').toBeTruthy();
+    expect(got.credential, 'the remembered credential').toEqual({ email: tuner.user, password: tuner.password });
+    // The spacegho.st sign-out above happened with no page asking: the first session-get
+    // is followed by account-signout (BRIDGE.md 4.6), once.
+    await page.waitForFunction(() => window.__acctOut === 1, null, { timeout: 5_000 });
+    expect((await dump(ctl)).includes('accountSignoutPending'), 'the pending flag is cleared').toBe(false);
+    const acctOut = await bridgeAsk({ type: 'account-signout' });
+    expect(acctOut.ok, 'account-signout from the page is answered ok').toBe(true);
+    const notApp = await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'bridge-session-get' }));
+    expect(notApp, 'an extension page is not the web app').toEqual(expect.objectContaining({ ok: false, error: 'not allowed' }));
+    // The page logs out: the extension signs out too and pushes session: null.
+    const n0 = await page.evaluate(() => window.__sessions.length);
+    const lo = await bridgeAsk({ type: 'session-logout', sid: got.session.sid });
+    expect(lo.ok).toBe(true);
+    await expect.poll(async () => (await bgState()).loggedIn, { timeout: 10_000 }).toBe(false);
+    await page.waitForFunction((k) => window.__sessions.slice(k).some((x) => x.session === null), n0, { timeout: 10_000 });
+    const afterOut = JSON.parse(await dump(ctl));
+    expect(afterOut.local.vault, 'logout wiped the sealed login').toBeUndefined();
+    expect(afterOut.local.revokedSids, 'the sid is revoked').toContain(got.session.sid);
+    // The revoked sid offered back is refused; a fresh page session signs the extension in.
+    const back = await bridgeAsk({ type: 'session-offer', session: got.session });
+    expect(back.outcome).toBe('revoked');
+    const offer = { ...got.session, sid: `page-${Date.now()}-abcdefgh` };
+    const signed = await bridgeAsk({ type: 'session-offer', session: offer, credential: { email: tuner.user, password: tuner.password } });
+    expect(signed.outcome, `offer outcome (${JSON.stringify(signed)})`).toBe('signed-in');
+    await expect.poll(async () => (await bgState()).loggedIn, { timeout: 10_000 }).toBe(true);
+    const again = await bridgeAsk({ type: 'session-get' });
+    expect(again.session.sid, 'the page session became the extension\'s').toBe(offer.sid);
+    await expect.poll(async () => typeof (await bridgeAsk({ type: 'session-get' })).access, { timeout: 15_000 }).toBe('string');
+    expect(acct.loginOks.at(-1), 'login-ok with the offered session').toEqual({ client: 'extension', pandora: true });
+    const kept = await bridgeAsk({ type: 'session-offer', session: { ...offer, sid: `other-${Date.now()}-abcdefgh` } });
+    expect(kept.outcome, 'the extension keeps its session').toBe('kept');
+    expect((await dump(ctl)).includes(tuner.password), 'the offered password is not in storage as text').toBe(false);
+    report.session = { get: true, refusedFromExtensionPage: true, logoutBoth: true, revoked: true, offerSignedIn: true, kept: true, accountSignoutPending: true };
+    step('session shared with the web app; logout signs out both');
 
     // Access withdrawn: the next check stops the music and signs out of Pandora; the
     // login card shows the answer.

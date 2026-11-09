@@ -387,8 +387,15 @@ reads the real feed, so it shows none).
   asks (the override is shown when the `accountBase` storage key is set).
 - **Audio quality**: high / medium / low, picked from Pandora's `audioUrlMap`
   (falls back to the next available).
-- **Remember password**: kept unencrypted in `storage.local`, only when
-  ticked; used for the automatic re-login after Pandora's code 1001.
+- **Remember me on this device**: the Pandora session and login are sealed with
+  AES-GCM under a non-extractable key generated once and kept in the extension's
+  own IndexedDB (`src/vault.imba`); `storage.local` holds only the ciphertext and
+  iv (`vault`), never the password, and nothing goes to `storage.sync`. At start-up
+  the sealed session is resumed; the password is used only when Pandora answers
+  1001 (session expired). Signing out or unticking it deletes the sealed record,
+  the key and the session. A plaintext password left by versions before 0.6.0 is
+  sealed at start-up and erased. Where IndexedDB or WebCrypto is missing, nothing
+  is remembered.
 - **Check for updates**: reads the store feed now (above).
 - **Copy diagnostics**: the last 50 lines of the background log (boot,
   permissions, each request's method, size, syncTime, clock offset and which

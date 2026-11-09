@@ -23,11 +23,15 @@ import { browser, toBase64, fromBase64 } from './shared.imba'
 const NAME = 'melodica-extension'
 const VERSION = browser.runtime.getManifest().version
 const METHOD = /^[a-z]+\.[A-Za-z]+$/
+# melodica-web docs/BRIDGE.md section 1: messages go to and come from this exact
+# origin only, on the web app's path.
+const ORIGIN = 'https://spacegho.st'
+const PATH = '/melodica/app/'
 
 let subscribed = no
 
 def announce
-	window.postMessage({melodica: 1, type: 'ready', name: NAME, version: VERSION, player: yes}, location.origin)
+	window.postMessage({melodica: 1, type: 'ready', name: NAME, version: VERSION, player: yes, session: 1}, ORIGIN)
 
 # The page never sees audio URLs (the track's or the play log's).
 def strip song
@@ -40,8 +44,15 @@ def publicState state
 	return state unless state and typeof state === 'object'
 	Object.assign({}, state, {track: strip(state.track), history: Array.isArray(state.history) ? state.history.map(strip) : []})
 
+# Answers to a subscribe (the page repeats it every few seconds) and the
+# background's pushes can cross: a state older than the newest one sent is
+# dropped, so a stale "paused" never lands after "playing".
+let newest = 0
 def pushState state
-	window.postMessage({melodica: 1, type: 'state', state: publicState(state)}, location.origin)
+	const at = state and Number(state.changedAt) or 0
+	return if at and at < newest
+	newest = at if at > newest
+	window.postMessage({melodica: 1, type: 'state', state: publicState(state)}, ORIGIN)
 
 # Right after browser start the background (service worker, offscreen document or
 # Firefox background page) may not be listening yet: ask again for up to ~20 s
@@ -65,7 +76,7 @@ def subscribe
 def handleCommand data
 	const id = String(data.id)
 	const reply = do(fields)
-		window.postMessage(Object.assign({melodica: 1, type: 'result', id}, fields), location.origin)
+		window.postMessage(Object.assign({melodica: 1, type: 'result', id}, fields), ORIGIN)
 	try
 		const action = String(data.action or '')
 		let r
@@ -92,10 +103,49 @@ def handleCommand data
 	catch e
 		reply({ok: no, error: String(e and e.message or e)})
 
-# State pushes from the background reach a subscribed page.
+# State pushes from the background reach a subscribed page; session pushes reach a
+# page that has asked for the session at least once.
 browser.runtime.onMessage.addListener do(msg)
 	pushState(msg.state) if subscribed and msg and msg.type === 'player-state'
+	postSession(msg.view) if sessionAsked and msg and msg.type === 'session-state' and msg.view
+	window.postMessage({melodica: 1, type: 'account-signout'}, ORIGIN) if sessionAsked and msg and msg.type === 'session-account-signout'
 	no
+
+# ---- session sharing (BRIDGE.md section 4); the background checks the sender.
+let sessionAsked = no
+
+def postSession view, id = undefined
+	const m = {melodica: 1, type: 'session', session: view.session or null, access: (view.session and view.access) or null, credential: view.credential or null, account: view.account or null, revoked: view.revoked or []}
+	m.id = id if id !== undefined
+	window.postMessage(m, ORIGIN)
+
+def sessionMessage data
+	const id = String(data.id)
+	const result = do(fields)
+		window.postMessage(Object.assign({melodica: 1, type: 'result', id}, fields), ORIGIN)
+	try
+		if data.type === 'session-get'
+			sessionAsked = yes
+			const r = await browser.runtime.sendMessage({type: 'bridge-session-get', account: data.account or null})
+			return result({ok: no, error: r and r.error or 'the extension did not answer'}) unless r and r.ok
+			postSession(r, id)
+			# A spacegho.st sign-out made while no page was open (BRIDGE.md 4.6).
+			window.postMessage({melodica: 1, type: 'account-signout'}, ORIGIN) if r.accountSignout
+		elif data.type === 'session-offer'
+			sessionAsked = yes
+			const r = await browser.runtime.sendMessage({type: 'bridge-session-offer', session: data.session or null, credential: data.credential or null, account: data.account or null})
+			return result({ok: no, error: r and r.error or 'the extension did not answer'}) unless r and r.ok
+			result({ok: yes, outcome: r.outcome})
+		elif data.type === 'account-signout'
+			const r = await browser.runtime.sendMessage({type: 'bridge-account-signout'})
+			return result({ok: no, error: r and r.error or 'the extension did not answer'}) unless r and r.ok
+			result({ok: yes})
+		elif data.type === 'session-logout'
+			const r = await browser.runtime.sendMessage({type: 'bridge-session-logout', sid: String(data.sid or '')})
+			return result({ok: no, error: r and r.error or 'the extension did not answer'}) unless r and r.ok
+			result({ok: yes})
+	catch e
+		result({ok: no, error: String(e and e.message or e)})
 
 def methodOf search
 	return null unless typeof search === 'string' and search.startsWith('?') and search.length < 4096
@@ -114,7 +164,7 @@ def bodyBytes body
 def handleRequest data
 	const id = String(data.id)
 	const reply = do(fields)
-		window.postMessage(Object.assign({melodica: 1, type: 'response', id}, fields), location.origin)
+		window.postMessage(Object.assign({melodica: 1, type: 'response', id}, fields), ORIGIN)
 	const failed = do(error, status = 0)
 		reply({ok: no, status, body: new Uint8Array(0), error})
 	return failed('method not allowed') unless methodOf(data.search)
@@ -127,7 +177,7 @@ def handleRequest data
 		failed(String(e and e.message or e))
 
 window.addEventListener 'message', do(event)
-	return unless event.source === window and event.origin === location.origin
+	return unless event.source === window and event.origin === ORIGIN and location.pathname.startsWith(PATH)
 	const data = event.data
 	return unless data and typeof data === 'object' and data.melodica === 1
 	if data.type === 'hello'
@@ -141,5 +191,7 @@ window.addEventListener 'message', do(event)
 		browser.runtime.sendMessage({type: 'player-subscribe', on: no}).catch(do(e) null)
 	elif data.type === 'command'
 		handleCommand(data)
+	elif data.type === 'session-get' or data.type === 'session-offer' or data.type === 'session-logout' or data.type === 'account-signout'
+		sessionMessage(data)
 
 announce()
