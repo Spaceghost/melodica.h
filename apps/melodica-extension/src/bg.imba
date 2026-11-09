@@ -984,8 +984,13 @@ def subscribeTab tabId, on
 		set.delete(tabId)
 	await saveSubscribers()
 
+let lastPushedStatus = ''
 def pushSubscribers message
 	const set = await subscriberSet()
+	const st = message and message.state
+	if st and st.status !== lastPushedStatus
+		lastPushedStatus = st.status
+		note("push {st.status} (changedAt {st.changedAt}) to {set.size} tab(s)")
 	for tabId in Array.from(set)
 		browser.tabs.sendMessage(tabId, message).catch do(e)
 			# Only a tab that is gone (or has no content script) stops being a subscriber.
@@ -1170,7 +1175,7 @@ def handle msg, sender
 	const client = state.client
 	# Stale account and access answers are asked again; player traffic (the views,
 	# the bridge) is not held up by those round trips.
-	const quick = msg.type === 'player' or msg.type === 'player-get' or msg.type === 'player-subscribe' or msg.type === 'engine-state'
+	const quick = msg.type === 'player' or msg.type === 'player-get' or msg.type === 'player-subscribe' or msg.type === 'engine-state' or msg.type === 'engine-log'
 	if !accountChecking and account.checkedAt and Date.now() - account.checkedAt > ACCOUNT_MAX_AGE
 		quick ? checkAccount().catch(do(e) null) : await checkAccount()
 	if !accessChecking and access.checkedAt and Date.now() - access.checkedAt > ACCESS_MAX_AGE
@@ -1355,6 +1360,9 @@ def handle msg, sender
 			engineWaiters = []
 			setTimeout((do waiting.forEach(do(f) f())), 0)
 			{saved: player}
+		when 'engine-log'
+			note("engine: {String(msg.line or '').slice(0, 300)}")
+			{}
 		when 'engine-state'
 			playerChanged(msg.state) if msg.state and typeof msg.state === 'object'
 			maybeReload('playback stopped') if !player.track

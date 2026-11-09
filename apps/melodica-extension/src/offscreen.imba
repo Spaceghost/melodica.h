@@ -17,7 +17,9 @@ const engine = new Engine({
 		registerAd: do(ad) send({type: 'register-ad', adToken: ad.adToken, stationId: ad.stationId, trackingTokens: ad.trackingTokens})
 	}
 	report: do(state) browser.runtime.sendMessage({type: 'engine-state', state}).catch(do(e) null)
-	log: do(line) console.debug("melodica offscreen {line}")
+	log: do(line)
+		console.debug("melodica offscreen {line}")
+		browser.runtime.sendMessage({type: 'engine-log', line: String(line).slice(0, 300)}).catch(do(e) null)
 })
 
 # Commands from the background: {type: 'engine', op, args}.

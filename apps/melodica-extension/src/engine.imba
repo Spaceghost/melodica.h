@@ -69,7 +69,12 @@ export class Engine
 		set({station: {token: station.token, name: station.name or ''}, track: null, position: 0, duration: 0, status: 'loading', error: ''})
 		await next()
 
+	# One diagnostics line per transport change (src presence only, never the URL).
+	def trace what
+		log("{what}: status {state.status}, track {state.track ? (state.track.ad ? 'ad' : 'song') : 'none'}, src {audio.src ? 'set' : 'none'}, paused {audio.paused}, ended {audio.ended}, ready {audio.readyState}, held {held}, fetching {fetching}")
+
 	def resume
+		trace('resume')
 		held = no
 		if state.track and audio.src
 			# Report "playing" at once (views and the web page update without
@@ -78,6 +83,7 @@ export class Engine
 			const p = audio.play()
 			if p and p.catch
 				p.catch do(e)
+					log("resume play() refused: {e and e.name}")
 					set({status: 'paused'}) if audio.paused and state.status === 'playing'
 		elif state.station
 			await next()
@@ -87,6 +93,7 @@ export class Engine
 	# Reported at once (the reply and the views say paused without waiting for the
 	# element's pause event); the element's own events agree with it afterwards.
 	def pause
+		trace('pause')
 		held = yes
 		audio.pause()
 		set({status: 'paused'}) if state.track and (state.status === 'playing' or state.status === 'loading')
@@ -231,6 +238,7 @@ export class Engine
 		audio.volume = Math.max(0, Math.min(1, (state.volume / 100) * Math.min(1, gain)))
 
 	def onPlay
+		trace('play event') if state.status !== 'playing'
 		set({status: 'playing', error: ''})
 		updateMediaSession()
 
@@ -239,6 +247,7 @@ export class Engine
 		return if audio.ended
 		# A pause event queued before a resume arrives after it: the element plays.
 		return unless audio.paused
+		trace('pause event') if state.status === 'playing'
 		set({status: 'paused'}) if state.track and state.status !== 'stopped' and state.status !== 'loading'
 
 	def onTime force = no
