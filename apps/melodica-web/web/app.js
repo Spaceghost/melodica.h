@@ -1768,7 +1768,7 @@ function installScrobbleEvents() {
   if ('IntersectionObserver' in window) {
     new IntersectionObserver((entries) => {
       if (entries.some((e) => e.isIntersecting)) moreListens();
-    }, { rootMargin: '200px' }).observe(el.listensMore);
+    }, { root: $('listens-box'), rootMargin: '0px' }).observe(el.listensMore); // inside the box only, once it is scrolled to
   }
 }
 

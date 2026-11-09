@@ -192,9 +192,11 @@
       <section id="listens-panel" class="panel listens" aria-labelledby="listens-head" hidden>
         <div class="panel-head"><h3 id="listens-head">Your listens</h3>
           <a id="listens-board" class="fine nowrap" href="https://spacegho.st/scrobble/leaderboard" rel="noopener">Leaderboard</a></div>
-        <ol id="listens" class="history listens-list"></ol>
+        <div id="listens-box" class="listens-box" tabindex="0" aria-label="Your listens, scrollable">
+          <ol id="listens" class="history listens-list"></ol>
+          <button id="listens-more" type="button" class="quiet listens-more" hidden>Show more</button>
+        </div>
         <p id="listens-empty" class="fine">Listens counted on spacegho.st show here.</p>
-        <button id="listens-more" type="button" class="quiet listens-more" hidden>Show more</button>
       </section>
     </section>
   </section>

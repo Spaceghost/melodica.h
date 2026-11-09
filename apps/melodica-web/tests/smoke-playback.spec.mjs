@@ -597,7 +597,41 @@ test.describe.serial('remember me on this device', () => {
 // ad; the last 15 listens, then more on scroll; the settings; crew only when the server
 // says so; logout clears the listens. The ad test runs last: the workflow's tuner
 // report reads the ad steps from the tuner's log, which each begin() resets.
+// The listens scroll inside their own box (about 15 rows; at most 60vh on phones): the
+// page's own scrolling never loads more, scrolling the box does, and the page footer
+// stays reachable below it.
+async function scrollListensBox(page, width) {
+  const box = page.locator('#listens-box');
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await page.waitForTimeout(800);
+  expect(await page.locator('#listens li').count(), 'scrolling the page loads nothing').toBe(15);
+  for (let i = 0; i < 6 && await page.locator('#listens li').count() < 40; i++) {
+    await box.evaluate((b) => { b.scrollTop = b.scrollHeight; });
+    await page.waitForTimeout(600);
+  }
+  await expect(page.locator('#listens li')).toHaveCount(40);
+  await expect(page.locator('#listens-more')).toBeHidden();
+  const m = await box.evaluate((b) => ({ client: b.clientHeight, scroll: b.scrollHeight, rem: parseFloat(getComputedStyle(document.documentElement).fontSize), vh: innerHeight, overflow: getComputedStyle(b).overflowY }));
+  report[`listensBox${width}`] = m;
+  expect(m.overflow).toBe('auto');
+  expect(m.scroll, 'the box scrolls on its own').toBeGreaterThan(m.client);
+  expect(m.client, 'about 15 rows tall at most').toBeLessThanOrEqual(Math.ceil(15 * 3.3 * m.rem) + 1);
+  if (width <= 760) expect(m.client, 'at most 60vh on phones').toBeLessThanOrEqual(Math.ceil(0.6 * m.vh) + 1);
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await expect(page.locator('footer.foot')).toBeInViewport();
+}
+
 test.describe.serial('scrobbling to spacegho.st', () => {
+  test('at 390 wide: the listens scroll in their own box and the footer stays reachable', async ({ page }) => {
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await begin(page, { ads: 0, scrobble: true });
+    await expect(page.locator('#listens-panel')).toBeVisible();
+    await expect(page.locator('#listens li')).toHaveCount(15);
+    await scrollListensBox(page, 390);
+    await page.screenshot({ path: resolve(ARTIFACTS, 'scrobble-listens-390.png'), fullPage: true });
+  });
+
   const key = () => `e:${tuner.user.trim().toLowerCase()}`;
   test.beforeEach(() => { scrobbles.reset(); scrobbles.defaultOn = true; scrobbles.seedCount = 40; });
   test.afterAll(() => { if (scrobbles) { scrobbles.reset(); scrobbles.defaultOn = false; } });
@@ -661,12 +695,7 @@ test.describe.serial('scrobbling to spacegho.st', () => {
     expect(scrobbles.requests[0], 'the first request').toBe('GET /scrobble/api/me');
     await expect.poll(async () => page.locator('#listens li').count()).toBeGreaterThanOrEqual(15);
     await expect(page.locator('#listens li .hist-title').first()).toHaveText('Seed Song 1');
-    for (let i = 0; i < 4 && await page.locator('#listens-more').isVisible(); i++) {
-      await page.locator('#listens-more').scrollIntoViewIfNeeded();
-      await page.waitForTimeout(500);
-    }
-    await expect(page.locator('#listens li')).toHaveCount(40);
-    await expect(page.locator('#listens-more')).toBeHidden();
+    await scrollListensBox(page, 1280);
     expect(scrobbles.requests.filter((r) => r.startsWith('GET /scrobble/api/me/listens?') && /before=/.test(r)).length, 'pages after the first').toBe(2);
     await page.screenshot({ path: resolve(ARTIFACTS, 'scrobble-listens.png'), fullPage: true });
 
