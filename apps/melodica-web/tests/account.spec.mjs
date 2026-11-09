@@ -40,7 +40,7 @@ const ORIGIN = 'https://spacegho.st';
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.wasm': 'application/wasm' };
 // The site worker's APP_CSP: connect-src 'self' covers the account server on the same origin.
 const csp = (nonce) => `default-src 'none'; script-src 'self' 'nonce-${nonce}' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; ` +
-  `img-src 'self' data: https:; media-src https: http:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; worker-src 'self'`;
+  `img-src 'self' data: https:; media-src https: http: blob:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; worker-src 'self'`;
 
 // The real Worker, with test data for this origin.
 async function realBackend(issuer, dir) {

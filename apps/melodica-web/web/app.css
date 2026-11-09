@@ -21,7 +21,7 @@
   --cover-shadow: 0 24px 60px rgba(0, 0, 0, 0.5); --bar-shadow: 0 -12px 30px rgba(0, 0, 0, 0.3);
   --err: #f0998f;
   --wash-opacity: 0.55; --quiet: 0.78;
-  --bar-h: 0px;
+  --bar-h: 5.25rem; /* the player bar pinned to the bottom of the viewport */
   --display: "Palatino Linotype", Palatino, "Book Antiqua", "URW Palladio L", "Iowan Old Style", Georgia, serif;
   --body: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, "Cascadia Mono", "JetBrains Mono", "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
@@ -164,13 +164,12 @@ a.button:hover, a.button:focus-visible { background: var(--gold-2); text-decorat
 /* ---- player grid */
 .player {
   flex: 1; width: 100%; max-width: 1240px; margin: 0 auto;
-  display: grid; grid-template-columns: minmax(15rem, 18rem) minmax(0, 1fr); grid-template-rows: auto auto auto 1fr;
-  grid-template-areas: "rail stage" "rail bar" "rail deck" "rail shelf";
+  display: grid; grid-template-columns: minmax(15rem, 18rem) minmax(0, 1fr); grid-template-rows: auto auto 1fr;
+  grid-template-areas: "rail stage" "rail deck" "rail shelf";
   gap: 0 1.5rem; align-items: start;
 }
 .rail { grid-area: rail; }
 .stage { grid-area: stage; }
-.controls-bar { grid-area: bar; }
 .deck { grid-area: deck; }
 .shelf { grid-area: shelf; }
 
@@ -246,8 +245,6 @@ a.button:hover, a.button:focus-visible { background: var(--gold-2); text-decorat
 .progress progress { flex: 1; height: 4px; width: auto; }
 
 /* controls */
-.controls-bar { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; padding: 0.6rem 0 0.2rem; }
-.mini { display: none; }
 .controls { display: flex; justify-content: center; align-items: center; gap: 0.7rem; }
 button.round {
   width: 46px; height: 46px; padding: 0; border-radius: 50%; display: inline-grid; place-items: center;
@@ -356,7 +353,6 @@ button.round:disabled { opacity: 0.4; }
 .site-nav a { font: 600 0.72rem var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); text-decoration: none; padding: 0.45rem 0.55rem; border-radius: 999px; white-space: nowrap; }
 .site-nav a:hover { color: var(--gold-2); }
 .site-nav a[aria-current="page"] { color: var(--gold); background: var(--ink-2); }
-.site-nav a[data-k="home"] { display: none; }
 @media (max-width: 760px) { .site-nav { order: 3; flex-basis: 100%; justify-content: flex-start; margin: 0 -0.3rem; } }
 
 /* the Scrobbles panels: tabs over the shared UI's views */
@@ -391,7 +387,6 @@ button.primary.danger:hover { background: var(--warn); border-color: var(--warn)
   .wash { display: none; }
 }
 @media (max-width: 760px) {
-  :root { --bar-h: 6.6rem; }
   .app { padding: 8px 10px 0; }
   .player { display: flex; flex-direction: column; align-items: stretch; gap: 0.6rem; min-height: 100%; }
   .stage { padding: 0.8rem 0.4rem 0.4rem; gap: 0.6rem; }
@@ -401,16 +396,6 @@ button.primary.danger:hover { background: var(--warn); border-color: var(--warn)
   .deck { padding: 0; gap: 0.3rem 1.2rem; }
   .rail { position: static; max-height: none; overflow: visible; box-shadow: none; }
   .station-list { max-height: 40vh; }
-  .controls-bar {
-    order: 5; position: sticky; bottom: 0; z-index: 4;
-    margin: auto -10px 0; padding: 0.5rem 10px max(0.5rem, env(safe-area-inset-bottom));
-    background: var(--solid); border-top: 1px solid var(--line); box-shadow: var(--bar-shadow);
-    gap: 0.25rem;
-  }
-  .mini { display: flex; justify-content: center; gap: 0.4rem; width: 100%; font-size: 0.8rem; color: var(--muted); min-width: 0; }
-  .mini span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
-  .mini span:empty { display: none; }
-  .mini #mini-title { color: var(--text); }
   .controls { gap: 0.45rem; }
   button.round { width: 44px; height: 44px; }
   button.round.big { width: 56px; height: 56px; margin: 0 0.1rem; }
@@ -439,3 +424,73 @@ button.primary.danger:hover { background: var(--warn); border-color: var(--warn)
   .live-state { font-size: 0; } /* the dot alone */
   .live-state[data-state="open"]::before { width: 0.6rem; height: 0.6rem; margin: 0; }
 }
+
+/* ---- the player bar: pinned to the bottom of the viewport on every route (0.11.0) */
+body { padding-bottom: calc(var(--bar-h) + env(safe-area-inset-bottom)); min-height: 100dvh; }
+.controls-bar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 0 1rem;
+  min-height: var(--bar-h); padding: 0.45rem max(16px, env(safe-area-inset-right)) max(0.45rem, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  background: var(--solid); border-top: 1px solid var(--line); box-shadow: var(--bar-shadow);
+}
+.bar-progress { position: absolute; left: 0; right: 0; top: -1px; width: 100%; height: 3px; border: 0; background: transparent; appearance: none; }
+.bar-progress::-webkit-progress-bar { background: transparent; }
+.bar-progress::-webkit-progress-value { background: var(--gold); }
+.bar-progress::-moz-progress-bar { background: var(--gold); }
+.bar-now { display: flex; align-items: center; gap: 0.7rem; min-width: 0; color: var(--text); }
+.bar-now:hover, .bar-now:focus-visible { text-decoration: none; }
+.bar-cover { width: 48px; height: 48px; flex: none; border-radius: 8px; object-fit: cover; background: var(--ink-2); border: 1px solid var(--line-2); }
+.mini { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.mini span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mini #mini-title { color: var(--text); font-family: var(--display); font-size: 1rem; }
+.mini #mini-artist { color: var(--muted); font-size: 0.82rem; }
+.mini span:empty { display: none; }
+.bar-signin { grid-column: 1 / -1; justify-self: center; padding: 0.4rem 1rem; border: 1px solid var(--line); border-radius: 999px; color: var(--gold-2); }
+.bar-resume {
+  position: absolute; left: 50%; bottom: calc(100% + 0.6rem); transform: translateX(-50%);
+  padding: 0.6rem 1.4rem; border: 0; border-radius: 999px; background: var(--gold); color: var(--on-accent);
+  font: 700 0.95rem var(--display); box-shadow: var(--bar-shadow); cursor: pointer; white-space: nowrap;
+}
+.bar-resume[hidden] { display: none; }
+.bar-resume:hover, .bar-resume:focus-visible { background: var(--gold-2); }
+.controls-bar[data-state="signin"] { min-height: 3rem; }
+.controls-bar[data-state="signin"] > :not(.bar-signin):not(.bar-progress) { display: none; }
+.controls { display: flex; align-items: center; gap: 0.5rem; }
+.bar-volume { justify-self: end; display: flex; align-items: center; }
+.bar-volume input[type=range] { width: 8rem; }
+@media (max-width: 760px) {
+  :root { --bar-h: 7.4rem; }
+  .controls-bar { grid-template-columns: minmax(0, 1fr); justify-items: center; gap: 0.3rem; padding-top: 0.5rem; }
+  .bar-now { justify-self: stretch; }
+  .bar-cover { width: 36px; height: 36px; }
+  .bar-volume { display: none; }
+  .controls { gap: 0.4rem; }
+}
+:root:has(.controls-bar[data-state="signin"]) { --bar-h: 3rem; }
+
+/* ---- routes inside the shell (0.11.0): one design for every /melodica/ page */
+.route-view { width: 100%; max-width: 1240px; margin: 0 auto; padding: 0.5rem 0 1.5rem; }
+#app[data-route]:not([data-route="app"]) > .view { display: none !important; }
+#app[data-route]:not([data-route="app"]) > .route-view { display: block !important; }
+.route-body { display: grid; gap: 1.2rem; }
+.route-body > h2, .route-body .route-title { font-size: 1.8rem; color: var(--gold-2); }
+.route-body section, .route-body .card, .route-body .quick-item, .route-body .app {
+  background: var(--glass); border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem 1.2rem;
+}
+.route-body .wrap { max-width: none; padding: 0; margin: 0; }
+.route-body .hero { padding: 0.5rem 0 0; }
+.route-body .hero h1 { font-family: var(--display); font-size: 2.2rem; color: var(--gold-2); }
+.route-body .lede, .route-body .tagline { color: var(--muted); max-width: 46rem; }
+.route-body .grid, .route-body .quick-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); gap: 1rem; }
+.route-body .button { display: inline-block; padding: 0.45rem 1rem; border-radius: 999px; border: 1px solid var(--line); color: var(--gold-2); }
+.route-body .button-big { padding: 0.6rem 1.2rem; font-size: 1.05rem; background: var(--gold); color: var(--on-accent); border-color: transparent; }
+.route-body .button-quiet { background: transparent; color: var(--gold-2); border-color: var(--line); }
+.route-body ul { padding-left: 1.1rem; }
+.route-body .sha { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); word-break: break-all; }
+.route-body img { max-width: 100%; height: auto; }
+.route-body .sui-host { max-height: calc(100dvh - var(--bar-h) - 12rem); min-height: 16rem; overflow: auto; }
+.route-body .sui-map-host { max-height: none; min-height: 60dvh; overflow: visible; padding-bottom: 0.5rem; }
+.route-body .account-menu { position: static; display: grid; gap: 0.6rem; box-shadow: none; max-width: 32rem; }
+a.button.github-signin { display: flex; justify-content: center; margin-top: 0.6rem; min-height: 44px; align-items: center; background: transparent; color: var(--text); border: 1px solid var(--line); }
+.github-signin[hidden] { display: none; }
+a.button.github-signin:hover, a.button.github-signin:focus-visible { background: var(--ink-2); color: var(--gold-2); }

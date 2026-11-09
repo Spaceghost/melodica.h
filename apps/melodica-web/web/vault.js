@@ -53,10 +53,10 @@ export class Vault {
   }
 
   // The stored object, or null (nothing stored, no key, or it does not decrypt).
-  async read() {
+  async read(id = RECORD_ID) {
     if (!this.available) return null;
     try {
-      const rec = await this.get(RECORD_ID);
+      const rec = await this.get(id);
       if (!rec || rec.v !== 1) return null;
       const k = await this.key(false);
       if (!k) return null;
@@ -68,12 +68,12 @@ export class Vault {
     }
   }
 
-  async write(obj) {
+  async write(obj, id = RECORD_ID) {
     if (!this.available) return false;
     const k = await this.key(true);
     const iv = this.crypto.getRandomValues(new Uint8Array(12));
     const ct = new Uint8Array(await this.crypto.subtle.encrypt({ name: 'AES-GCM', iv }, k, new TextEncoder().encode(JSON.stringify(obj))));
-    await this.put(RECORD_ID, { v: 1, iv, ct });
+    await this.put(id, { v: 1, iv, ct });
     return true;
   }
 

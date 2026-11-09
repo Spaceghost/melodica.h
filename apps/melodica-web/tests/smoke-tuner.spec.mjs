@@ -59,7 +59,7 @@ const MIME = {
 // The site worker's APP_CSP with the tuner's two origins in connect-src and
 // its plain-http audio/art allowed (Pandora's CDN is http too).
 const csp = (nonce) => `default-src 'none'; script-src 'self' 'nonce-${nonce}' 'wasm-unsafe-eval'; ` +
-  `style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; media-src https: http:; ` +
+  `style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; media-src https: http: blob:; ` +
   `connect-src 'self' ${new URL(tuner.https).origin} ${new URL(tuner.http).origin}; font-src 'self'; ` +
   `base-uri 'none'; form-action 'none'; frame-ancestors 'none'; worker-src 'self'`;
 

@@ -490,11 +490,11 @@ The page works under:
 
 ```
 default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline';
-img-src 'self' data: https:; media-src https: http:; connect-src 'self'; font-src 'self'
+img-src 'self' data: https:; media-src https: http: blob:; connect-src 'self'; font-src 'self'
 ```
 
 `'wasm-unsafe-eval'` is required to compile the module; `img-src https:` for
-cover art; `media-src https:` for Pandora's CDN; `connect-src` must include
+cover art; `media-src https:` for Pandora's CDN and `blob:` for a saved copy (Resume); `connect-src` must include
 the relay's origin if it is not same-origin.
 
 ### Hosting notes (spacegho.st)
@@ -522,7 +522,7 @@ on this device"); nothing secret is in `localStorage`. An optional
 spacegho.st sign-in (see "spacegho.st account") adds its tokens to
 `localStorage` until you sign out of it on the page. Unless you turn
 scrobbling off, the artist, title, album, length and cover URL of each song you
-listen to go to Spacegho.st Scrobbles (see "Scrobbling"). Playlist inserts never do; nor do
+listen to go to Spacegho.st Scrobbles (see "Scrobbling"); album art is cached there. Playlist inserts never do; nor do
 station names, Pandora ids or stream URLs. Nothing else leaves the browser.
 
 ## Remember me on this device
@@ -560,6 +560,28 @@ the migration and the unchecked box, and that five reloads, a rejected relay
 token and a relay token older than 11 h each go straight to the player without
 the login card ever showing; `tests/node-unit.mjs` checks the session
 export and restore in the wasm module.
+
+## Resume
+
+The device that plays a song keeps a "last playing" record in the same encrypted
+store (record `last`, only while "Remember me" is on): the station, the song with
+its audio link, the position and the rest of the playlist. It is written every 2 s
+while playing and on pause, page hide and tab hide. A reload, back/forward or a new
+visit shows that song in the player bar, paused at its position, with Resume.
+
+While a song plays, the page also keeps a copy of its audio, and of the next
+song's, in the Cache API (keyed by track token). A copy is deleted when its song
+ends, and the copies are cleared on sign-out. Pandora's CDN sent no CORS headers
+when checked, so those downloads stream through the relay
+(`GET /melodica/api/?audio=<url>`). That endpoint needs the relay token, accepts
+only Pandora audio hosts, and stores and logs nothing. If a link has expired (an
+estimate: 50 minutes after its playlist), Resume plays the copy from the saved
+position and then continues the station. Without a copy it says "That song's link
+expired; continuing the station" and starts a new playlist. A full disk only
+means there is no copy.
+
+As a remote, the page never downloads or keeps audio. The extension holds the
+record (`state.last`, docs/BRIDGE.md), and the page shows it and sends `resume`.
 
 ## Signed in on the page or the extension: signed in on both
 

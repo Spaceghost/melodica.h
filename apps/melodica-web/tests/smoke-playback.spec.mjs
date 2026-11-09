@@ -61,6 +61,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const DIST = resolve(process.env.MELODICA_DIST || resolve(here, '..', 'dist'));
 const ARTIFACTS = resolve(here, 'artifacts');
 const APP_PATH = '/melodica/app/';
+const SHELL_PATHS = new Set(['/melodica/', '/melodica/listens/', '/melodica/leaderboard/', '/melodica/map/', '/melodica/account/', '/melodica/extension/']);
+const sitePage = await import('../site/src/page.js');
 const TUNER_DIR = process.env.MELODICA_TUNER_DIR || resolve(here, '..', '..', 'melodica-tuner');
 
 const tuner = {
@@ -78,7 +80,7 @@ const MIME = {
   '.css': 'text/css; charset=utf-8', '.wasm': 'application/wasm',
 };
 const csp = (nonce) => `default-src 'none'; script-src 'self' 'nonce-${nonce}' 'wasm-unsafe-eval'; ` +
-  `style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; media-src https: http:; ` +
+  `style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; media-src https: http: blob:; ` +
   `connect-src 'self' ${new URL(tuner.https || 'https://x').origin} ${new URL(tuner.http || 'http://x').origin}; font-src 'self'; ` +
   `base-uri 'none'; form-action 'none'; frame-ancestors 'none'; worker-src 'self'`;
 
@@ -136,6 +138,21 @@ test.beforeAll(async () => {
       if (r.headers.getSetCookie().length) out['set-cookie'] = r.headers.getSetCookie();
       res.writeHead(r.status, out);
       res.end(Buffer.from(await r.arrayBuffer()));
+      return;
+    }
+    // The shell as the site Worker serves it (site/src/worker.js): index.html with a base
+    // for every route, and the hub and the extension page as fragments from site/src/page.js.
+    if (SHELL_PATHS.has(url.pathname)) {
+      if (url.searchParams.has('fragment')) {
+        const html = url.pathname === '/melodica/' ? sitePage.hub(null, { prefix: '/melodica' }) : sitePage.render(null, { prefix: '/melodica' });
+        const from = html.indexOf('<header class="hero'); const main = html.slice(from >= 0 ? from : html.indexOf('<main'), html.lastIndexOf('</main>') + 7).replace(/<script[\s\S]*?<\/script>/gi, '');
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        res.end(main);
+        return;
+      }
+      const page = (await readFile(resolve(DIST, 'index.html'), 'utf8')).replace(/<head>/i, `<head>\n<base href="${APP_PATH}">`);
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': csp(randomBytes(16).toString('base64')).replace("base-uri 'none'", "base-uri 'self'") });
+      res.end(page);
       return;
     }
     if (!url.pathname.startsWith(APP_PATH)) { res.writeHead(404); res.end(); return; }
@@ -689,6 +706,305 @@ async function scrollListensBox(page, width) {
   await expect(page.locator('footer.foot')).toBeInViewport();
 }
 
+// ---------------------------------------------------------------- the app shell (0.11.0)
+// Every /melodica/ route is one document: the bar stays pinned to the bottom of the
+// viewport on every route and at every scroll position, and the audio never stops.
+const SHELL_ROUTES = ['home', 'listens', 'leaderboard', 'map', 'account', 'extension', 'app'];
+const shellPath = (k) => (k === 'home' ? '/melodica/' : `/melodica/${k}/`);
+
+// The bar's box: its bottom is the viewport's bottom, whatever the scroll.
+async function barAt(page) {
+  return page.evaluate(() => {
+    const r = document.getElementById('bar').getBoundingClientRect();
+    return { top: r.top, bottom: r.bottom, height: r.height, vh: innerHeight, position: getComputedStyle(document.getElementById('bar')).position };
+  });
+}
+
+async function checkRouteScroll(page, k, width) {
+  const out = [];
+  for (const where of ['top', 'middle', 'bottom']) {
+    await page.evaluate((w) => {
+      const max = document.documentElement.scrollHeight - innerHeight;
+      scrollTo(0, w === 'top' ? 0 : w === 'middle' ? Math.round(max / 2) : max);
+    }, where);
+    await page.waitForTimeout(250);
+    const b = await barAt(page);
+    out.push({ where, ...b });
+    expect(b.position, `${k} ${width} ${where}: fixed`).toBe('fixed');
+    expect(Math.abs(b.bottom - b.vh), `${k} ${width} ${where}: bar bottom ${b.bottom} vs viewport ${b.vh}`).toBeLessThanOrEqual(0.5);
+    await expect(page.locator('#bar')).toBeInViewport();
+    if (where === 'bottom') {
+      // Nothing of the route ends up under the bar: the last content clears its top.
+      const last = await page.evaluate(() => {
+        const v = document.getElementById(document.getElementById('app').dataset.route === 'app' ? 'view-player' : 'route-body');
+        return v.getBoundingClientRect().bottom;
+      });
+      expect(last, `${k} ${width}: content clears the bar`).toBeLessThanOrEqual(b.top + 1);
+      await page.screenshot({ path: resolve(ARTIFACTS, `shell-${k}-${width}.png`) });
+    }
+  }
+  return out;
+}
+
+async function audioTime(page) {
+  return page.evaluate(() => { const a = document.getElementById('audio'); return { t: a.currentTime, paused: a.paused, src: a.currentSrc }; });
+}
+
+test.describe.serial('the app shell', () => {
+  const key = () => `e:${tuner.user.trim().toLowerCase()}`;
+  test.beforeEach(() => { scrobbles.reset(); scrobbles.defaultOn = true; scrobbles.seedCount = 40; scrobbles.crewViewers.add(key()); });
+  test.afterAll(() => { if (scrobbles) { scrobbles.reset(); scrobbles.defaultOn = false; } });
+
+  test('every route while playing at 1280 and 390: one document, the bar pinned to the viewport bottom, the audio advancing', async ({ page }) => {
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    test.setTimeout(240_000);
+    const evidence = await begin(page, { every: 0, scrobble: true });
+    await expect.poll(async () => (await audioTime(page)).t, { timeout: 20_000 }).toBeGreaterThan(0.5);
+    await page.evaluate(() => { window.__shellDoc = Math.random(); });
+    const doc = await page.evaluate(() => window.__shellDoc);
+    const loads = [];
+    page.on('domcontentloaded', () => loads.push(page.url()));
+    const shell = {};
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: width > 760 ? 800 : 844 });
+      for (const k of SHELL_ROUTES) {
+        const before = await audioTime(page);
+        await page.click(`#site-nav a[data-k="${k}"]`);
+        await expect(page).toHaveURL(`${origin}${shellPath(k)}`);
+        await expect(page.locator('#app')).toHaveAttribute('data-route', k);
+        await expect(page.locator(`#site-nav a[data-k="${k}"]`)).toHaveAttribute('aria-current', 'page');
+        if (k === 'home') await expect(page.locator('#route-body')).toContainText('Launch the player', { timeout: 10_000 });
+        if (k === 'extension') await expect(page.locator('#route-body h1, #route-body h2').first()).toBeVisible({ timeout: 10_000 });
+        if (k === 'listens') await expect(page.locator('#route-body li.hist').first()).toBeVisible({ timeout: 10_000 });
+        if (k === 'leaderboard') await expect(page.locator('#route-body')).toContainText('Slow Light', { timeout: 10_000 });
+        if (k === 'map') await expect(page.locator('#route-body svg').first()).toBeVisible({ timeout: 10_000 });
+        if (k === 'account') await expect(page.locator('#route-body .account-menu')).toBeVisible();
+        if (k === 'app') await expect(page.locator('#view-player')).toBeVisible();
+        await expect(page.locator('#mini-title')).not.toHaveText('');
+        shell[`${k}${width}`] = await checkRouteScroll(page, k, width);
+        await page.waitForTimeout(600);
+        const after = await audioTime(page);
+        expect(after.paused, `${k} ${width}: still playing`).toBe(false);
+        // The same song keeps advancing, or the station moved on to the next one.
+        if (after.src === before.src) expect(after.t, `${k} ${width}: currentTime advances`).toBeGreaterThan(before.t);
+      }
+    }
+    expect(await page.evaluate(() => window.__shellDoc), 'the same document throughout').toBe(doc);
+    expect(loads, 'no page loads, only history entries').toEqual([]);
+    // Back and forward walk the routes inside the document too.
+    await page.goBack();
+    await expect(page.locator('#app')).toHaveAttribute('data-route', 'extension');
+    await page.goForward();
+    await expect(page.locator('#app')).toHaveAttribute('data-route', 'app');
+    expect((await audioTime(page)).paused).toBe(false);
+    // The bar's cover and title open the player.
+    await page.click('#site-nav a[data-k="leaderboard"]');
+    await page.click('#bar-expand');
+    await expect(page.locator('#app')).toHaveAttribute('data-route', 'app');
+    report.shell = shell;
+    expect(evidence.errors, 'page errors').toEqual([]);
+  });
+
+  test('deep links and reloads: each route is served the shell; signed out, the bar says Sign in to play', async ({ page }) => {
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: width > 760 ? 800 : 844 });
+      for (const k of SHELL_ROUTES) {
+        await page.goto(`${origin}${shellPath(k)}`);
+        await expect(page.locator('#app')).toHaveAttribute('data-route', k);
+        await expect(page.locator('#bar')).toHaveAttribute('data-state', 'signin', { timeout: 15_000 });
+        await expect(page.locator('#bar-signin')).toBeVisible();
+        const b = await barAt(page);
+        expect(Math.abs(b.bottom - b.vh), `${k} ${width} signed out`).toBeLessThanOrEqual(0.5);
+        if (k !== 'app') await page.reload();
+        await expect(page.locator('#app')).toHaveAttribute('data-route', k);
+      }
+      await page.screenshot({ path: resolve(ARTIFACTS, `shell-signedout-${width}.png`) });
+    }
+  });
+});
+
+// ---------------------------------------------------------------- Resume (0.11.0)
+// The tuner's tones are 10 s long; these tests stretch them (MP3 frames repeated)
+// so a song can be played to 1:23. Every audio request the page makes is recorded.
+// An MP3 whose first frame is a Xing/Info header states its own length (10 s here);
+// without it the browser reckons the length from the size, so repeats count.
+function withoutInfoFrame(buf) {
+  let o = 0;
+  if (buf.subarray(0, 3).toString('latin1') === 'ID3') o = 10 + (((buf[6] & 0x7f) << 21) | ((buf[7] & 0x7f) << 14) | ((buf[8] & 0x7f) << 7) | (buf[9] & 0x7f));
+  const h = buf.readUInt32BE(o);
+  if ((h >>> 21) !== 0x7ff) return buf.subarray(o);
+  const br = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320][(h >>> 12) & 0xf] * 1000;
+  const sr = [44100, 48000, 32000][(h >>> 10) & 3];
+  const len = Math.floor((144 * br) / sr) + ((h >>> 9) & 1);
+  const first = buf.subarray(o, o + len).toString('latin1');
+  return first.includes('Xing') || first.includes('Info') ? buf.subarray(o + len) : buf.subarray(o);
+}
+
+async function longAudio(page, { refuse = () => false } = {}) {
+  const seen = [];
+  const cache = new Map();
+  await page.route(/\/audio\/[^/?]+\.(mp3|m4a)(\?|$)/, async (route) => {
+    const u = route.request().url();
+    seen.push(u);
+    if (refuse(u)) { await route.fulfill({ status: 403, headers: { 'access-control-allow-origin': '*' }, body: 'expired' }); return; }
+    if (!cache.has(u)) {
+      if (page.isClosed()) return;
+      // The MP3 of the same song (the tuner's android partner hands out m4a, which
+      // does not concatenate); the browser sniffs the type.
+      const headers = { ...route.request().headers() }; delete headers.range;
+      let r;
+      try { r = await route.fetch({ url: u.replace(/-\d+\.m4a(\?|$)/, '-128.mp3$1'), headers }); } catch { return; } // the test has ended
+      let one;
+      try { one = withoutInfoFrame(await r.body()); } catch { return; } // the page went away meanwhile
+      cache.set(u, Buffer.concat(Array(14).fill(one)));
+    }
+    const body = cache.get(u);
+    const cors = { 'content-type': 'audio/mpeg', 'access-control-allow-origin': '*', 'accept-ranges': 'bytes' };
+    // Ranges, so the media element can seek.
+    const m = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range || '');
+    if (m) {
+      const from = Number(m[1]);
+      const to = m[2] ? Math.min(Number(m[2]), body.length - 1) : body.length - 1;
+      const part = body.subarray(from, to + 1);
+      await route.fulfill({ status: 206, body: part, headers: { ...cors, 'content-range': `bytes ${from}-${to}/${body.length}`, 'content-length': String(part.length) } });
+      return;
+    }
+    await route.fulfill({ status: 200, body, headers: { ...cors, 'content-length': String(body.length) } });
+  });
+  return seen;
+}
+
+// Plays to `at` seconds (seeking just before it, then playing through it).
+async function playTo(page, at) {
+  await expect.poll(async () => page.evaluate(() => { const a = document.getElementById('audio'); return Number.isFinite(a.duration) ? a.duration : 0; }), { timeout: 20_000 }).toBeGreaterThan(at + 5);
+  await page.evaluate((t) => { document.getElementById('audio').currentTime = t; }, at - 1.5);
+  await expect.poll(async () => (await audioTime(page)).t, { timeout: 10_000 }).toBeGreaterThanOrEqual(at);
+  return (await audioTime(page)).t;
+}
+
+const hasCopy = (page, token) => page.evaluate(async (t) => {
+  const c = await caches.open('melodica-audio-v1');
+  return !!(await c.match(`${location.origin}/melodica/__audio/${encodeURIComponent(t)}`));
+}, token);
+const copies = (page) => page.evaluate(async () => (await (await caches.open('melodica-audio-v1')).keys()).map((r) => decodeURIComponent(r.url.split('/__audio/')[1])));
+const songToken = (page) => page.evaluate(() => { const li = document.querySelector('#history li[data-token]'); return li ? li.dataset.token : ''; });
+
+async function expectResumedAt(page, at, info) {
+  await expect(page.locator('#bar-resume')).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('#bar-resume')).toHaveText(`Resume at ${fmt(at)}`);
+  await page.screenshot({ path: resolve(ARTIFACTS, `resume-${info}.png`) });
+  await page.click('#bar-resume');
+  await expect.poll(async () => (await audioTime(page)).paused, { timeout: 20_000 }).toBe(false);
+  const t = (await audioTime(page)).t;
+  expect(Math.abs(t - at), `${info}: resumed at ${t}, left at ${at}`).toBeLessThanOrEqual(1);
+  await expect(page.locator('#bar-resume')).toBeHidden();
+  return t;
+}
+const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+
+test.describe.serial('Resume: the last song on this device', () => {
+  test('play to 1:23, leave the site, come back with history.back: Resume plays on from 1:23', async ({ page }) => {
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    test.setTimeout(180_000);
+    await longAudio(page);
+    await begin(page, { every: 0 });
+    const title = (await page.locator('#np-title').textContent()).trim();
+    const at = await playTo(page, 83);
+    await page.goto(`${tuner.http}/`); // another site
+    await page.goBack();
+    await expect(page.locator('#mini-title')).toHaveText(title, { timeout: 30_000 });
+    await expect(page.locator('#app')).toHaveAttribute('data-view', 'player');
+    expect((await audioTime(page)).paused, 'shown paused').toBe(true);
+    await expectResumedAt(page, at, 'back');
+    await expect(page.locator('#np-title')).toHaveText(title);
+  });
+
+  test('a reload: the same, paused at its position until Resume', async ({ page }) => {
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    test.setTimeout(180_000);
+    await longAudio(page);
+    await begin(page, { every: 0 });
+    const title = (await page.locator('#np-title').textContent()).trim();
+    const at = await playTo(page, 83);
+    await page.reload();
+    await expect(page.locator('#mini-title')).toHaveText(title, { timeout: 30_000 });
+    await expect(page.locator('#time-cur')).toHaveText(fmt(at));
+    await page.waitForTimeout(1500);
+    expect((await audioTime(page)).paused, 'nothing plays before Resume').toBe(true);
+    await expectResumedAt(page, at, 'reload');
+  });
+
+  test("an expired link (403): Resume plays this device's copy at its position, then the station goes on", async ({ page }) => {
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    test.setTimeout(240_000);
+    let expired = new Set();
+    const seen = await longAudio(page, { refuse: (u) => expired.has(u) });
+    await begin(page, { every: 0 });
+    const title = (await page.locator('#np-title').textContent()).trim();
+    const token = await songToken(page);
+    expect(token).not.toBe('');
+    await expect.poll(() => hasCopy(page, token), { timeout: 30_000, message: 'a copy of the playing song' }).toBe(true);
+    expect((await copies(page)).length, 'the playing song and the next at most').toBeLessThanOrEqual(2);
+    const at = await playTo(page, 83);
+    // Every link handed out so far now answers 403, like an expired Pandora link.
+    expired = new Set(seen);
+    await page.reload();
+    await expect(page.locator('#mini-title')).toHaveText(title, { timeout: 30_000 });
+    await expectResumedAt(page, at, 'expired');
+    expect((await audioTime(page)).src, 'played from the copy').toMatch(/^blob:/);
+    await expect(page.locator('#player-message')).toContainText("That song's link expired");
+    // To the end of it: the next song is from a new playlist, and the copy is deleted.
+    const before = seen.length;
+    await page.evaluate(() => { const a = document.getElementById('audio'); a.currentTime = a.duration - 1; });
+    await expect(page.locator('#np-title')).not.toHaveText(title, { timeout: 30_000 });
+    await expect.poll(async () => (await audioTime(page)).paused, { timeout: 20_000 }).toBe(false);
+    expect((await audioTime(page)).src).not.toMatch(/^blob:/);
+    expect(seen.slice(before).some((u) => !expired.has(u)), 'a fresh link').toBe(true);
+    await expect.poll(() => hasCopy(page, token), { timeout: 10_000 }).toBe(false);
+  });
+
+  test('the link and the copy both gone: "That song\'s link expired; continuing the station"', async ({ page }) => {
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    test.setTimeout(180_000);
+    let expired = new Set();
+    const seen = await longAudio(page, { refuse: (u) => expired.has(u) });
+    await begin(page, { every: 0 });
+    const title = (await page.locator('#np-title').textContent()).trim();
+    await playTo(page, 20);
+    expired = new Set(seen);
+    await page.evaluate(async () => caches.delete('melodica-audio-v1'));
+    await page.reload();
+    await expect(page.locator('#bar-resume')).toBeVisible({ timeout: 30_000 });
+    await page.evaluate(async () => caches.delete('melodica-audio-v1')); // a copy started again before the reload finished
+    await page.click('#bar-resume');
+    await expect(page.locator('#player-message')).toHaveText("That song's link expired; continuing the station", { timeout: 20_000 });
+    await expect(page.locator('#np-title')).not.toHaveText(title, { timeout: 30_000 });
+    await expect.poll(async () => (await audioTime(page)).paused, { timeout: 20_000 }).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------- Sign in with GitHub (0.11.0)
+test('the login card: Sign in with GitHub goes to spacegho.st GitHub sign-in, then the authorize round trip', async ({ page }) => {
+  test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+  let started = '';
+  await page.route(/\/oauth\/github\/start/, async (route) => { started = route.request().url(); await route.fulfill({ status: 200, contentType: 'text/plain', body: 'github' }); });
+  await page.goto(appUrl);
+  await expect(page.locator('#app')).toHaveAttribute('data-view', 'login', { timeout: 30_000 });
+  await expect(page.locator('#login-github')).toBeVisible();
+  await page.screenshot({ path: resolve(ARTIFACTS, 'login-github.png') });
+  await page.click('#login-github');
+  await expect.poll(() => started).not.toBe('');
+  const next = new URL(started).searchParams.get('next');
+  expect(next).toMatch(/^\/oauth\/authorize\?/);
+  const q = new URLSearchParams(next.split('?')[1]);
+  expect(q.get('response_type')).toBe('code');
+  expect(q.get('code_challenge_method')).toBe('S256');
+  expect(q.get('redirect_uri')).toBe(`${origin}/melodica/app/`);
+});
+
+// (Before the scrobbling tests: the CI's tuner report reads the log the last test leaves,
+// and that one plays inserts.)
 test.describe.serial('scrobbling to spacegho.st', () => {
   test('at 390 wide: the listens scroll in their own box and the footer stays reachable', async ({ page }) => {
     test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
@@ -774,19 +1090,33 @@ test.describe.serial('scrobbling to spacegho.st', () => {
     await page.locator('#listens-panel').scrollIntoViewIfNeeded();
     await page.screenshot({ path: resolve(ARTIFACTS, 'panels-leaderboard-1280.png') });
     await expect(page.locator('#tab-map')).toBeVisible();
-    await page.locator('#tab-map').press('ArrowRight'); // keyboard: wraps to the first tab
-    await expect(page.locator('#tab-listens')).toHaveAttribute('aria-selected', 'true');
+    // One map: the player's Map tab opens the /melodica/map/ route, the same view the nav opens.
     await page.click('#tab-map');
-    await expect(page.locator('#sui-map svg').first()).toBeVisible({ timeout: 10_000 });
-    await expect(page.locator('#sui-map')).not.toContainText('Invalid');
+    await expect(page).toHaveURL(`${origin}/melodica/map/`);
+    await expect(page.locator('#route-body svg').first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('#route-body')).not.toContainText('Invalid');
     expect(scrobbles.requests.some((r) => r.startsWith('GET /scrobble/api/game')), 'the map read the game').toBe(true);
+    const shape = (p) => p.evaluate(() => { const h = document.querySelector('#route-body .sui-host'); const walk = (n, d) => d > 4 ? '' : `${n.tagName}.${[...n.classList].sort().join('.')}[${[...n.children].map((c) => walk(c, d + 1)).join(',')}]`; return walk(h, 0); });
+    const fromTab = await shape(page);
+    await page.screenshot({ path: resolve(ARTIFACTS, 'map-from-player-tab-1280.png') });
+    await page.click('#site-nav a[data-k="app"]');
+    await page.click('#site-nav a[data-k="map"]');
+    await expect(page.locator('#route-body svg').first()).toBeVisible({ timeout: 10_000 });
+    await page.waitForTimeout(500);
+    await page.screenshot({ path: resolve(ARTIFACTS, 'map-page-1280.png') });
+    expect(await shape(page), 'the player tab map and the map page are one view').toBe(fromTab);
+    expect(await page.locator('#sui-map svg').count(), 'no second map in the player').toBe(0);
+    await page.click('#site-nav a[data-k="app"]');
     await page.locator('#listens-panel').scrollIntoViewIfNeeded();
     await page.screenshot({ path: resolve(ARTIFACTS, 'panels-map-1280.png') });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(500);
     expect(await page.evaluate(() => document.documentElement.scrollWidth), 'no sideways page scroll at 390').toBeLessThanOrEqual(390);
-    await page.locator('#listens-panel').scrollIntoViewIfNeeded();
+    await page.click('#site-nav a[data-k="map"]');
+    await expect(page.locator('#route-body svg').first()).toBeVisible({ timeout: 10_000 });
     await page.screenshot({ path: resolve(ARTIFACTS, 'panels-map-390.png') });
+    await page.click('#site-nav a[data-k="app"]');
+    await page.locator('#listens-panel').scrollIntoViewIfNeeded();
     await page.click('#tab-leaderboard');
     await page.screenshot({ path: resolve(ARTIFACTS, 'panels-leaderboard-390.png') });
     await page.evaluate(() => window.scrollTo(0, 0));
@@ -842,3 +1172,4 @@ test.describe.serial('scrobbling to spacegho.st', () => {
     expect(evidence.errors).toEqual([]);
   });
 });
+

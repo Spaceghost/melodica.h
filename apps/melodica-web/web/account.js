@@ -123,6 +123,13 @@ export class Account {
     return u.toString();
   }
 
+  // The same authorize round trip, by way of GitHub: spacegho.st signs in (or links)
+  // the GitHub identity first, then continues to the authorize URL (a /oauth/ path).
+  async githubUrl() {
+    const u = new URL(await this.startUrl());
+    return `${this.origin}/oauth/github/start?next=${encodeURIComponent(u.pathname + u.search)}`;
+  }
+
   // After the authorize round trip: code/state/iss (or error) in the query. Exchanges the
   // code, cleans the address bar. Returns {done, error} ({done:false} when the URL carries
   // nothing of ours).

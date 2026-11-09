@@ -21,12 +21,44 @@ export function listenThreshold(durationS) {
   return Math.min(d / 2, MAX_NEEDED_S);
 }
 
+// The Music Genome traits behind a song, from Pandora's explanation ("We're playing this
+// track because it features A, B and C."), for additional_info.genome: at most 12
+// strings of at most 64 characters, or null when the text is not that shape.
+export const GENOME_MAX = 12;
+export const GENOME_LEN = 64;
+const EXPLAIN_PREFIX = "We're playing this track because it features ";
+export function genomeTraits(explanation) {
+  if (typeof explanation !== 'string' || !explanation.startsWith(EXPLAIN_PREFIX)) return null;
+  let body = explanation.slice(EXPLAIN_PREFIX.length).trim();
+  if (body.endsWith('.')) body = body.slice(0, -1);
+  if (!body) return null;
+  const parts = body.split(', ');
+  const tail = parts.pop();
+  const cut = tail.lastIndexOf(' and ');
+  if (cut > 0) parts.push(tail.slice(0, cut), tail.slice(cut + 5)); else parts.push(tail);
+  return validGenome(parts);
+}
+export function validGenome(list) {
+  if (!Array.isArray(list)) return null;
+  const out = [];
+  for (const t of list) {
+    const v = typeof t === 'string' ? t.trim() : '';
+    if (!v || v.length > GENOME_LEN || /[\u0000-\u001f]/.test(v)) continue;
+    if (!out.includes(v)) out.push(v);
+    if (out.length === GENOME_MAX) break;
+  }
+  return out.length ? out : null;
+}
+
 // The ListenBrainz track_metadata for a song (no station, Pandora ids or stream URLs).
 export function trackMetadata(song, durationS) {
   const info = { submission_client: SUBMISSION_CLIENT };
   const d = Number(durationS);
   if (Number.isFinite(d) && d > 0) info.duration_ms = Math.round(d * 1000);
-  if (typeof song.coverArt === 'string' && /^https:\/\//.test(song.coverArt)) info.art_url = song.coverArt;
+  // As Pandora gives it (its art is often http): Scrobbles keeps a cached copy (art_cached).
+  if (typeof song.coverArt === 'string' && /^https?:\/\//i.test(song.coverArt)) info.art_url = song.coverArt;
+  const genome = validGenome(song.genome);
+  if (genome) info.genome = genome;
   const m = { artist_name: String(song.artist || ''), track_name: String(song.title || ''), additional_info: info };
   if (song.album) m.release_name = String(song.album);
   return m;
@@ -84,6 +116,12 @@ export class Scrobbles {
     const q = new URLSearchParams({ limit: String(limit) });
     if (before) q.set('before', before);
     return this.call(`me/listens?${q}`);
+  }
+  // A crew thumb on the map's town for this artist (melodica-scrobble Conquest v2).
+  thumb(direction, song) {
+    const body = { direction, artist_name: String(song.artist || '') };
+    if (song.title) body.track_name = String(song.title);
+    return this.call('game/thumb', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   }
   submit(listenType, song, durationS, listenedAt) {
     const entry = { track_metadata: trackMetadata(song, durationS) };

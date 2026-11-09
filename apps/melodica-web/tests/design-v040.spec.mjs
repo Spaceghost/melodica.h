@@ -23,7 +23,7 @@ const ARTIFACTS = resolve(here, 'artifacts');
 const APP_PATH = '/melodica/app/';
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.wasm': 'application/wasm' };
 const csp = (nonce) => `default-src 'none'; script-src 'self' 'nonce-${nonce}' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; ` +
-  `img-src 'self' data: https:; media-src https: http:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; worker-src 'self'`;
+  `img-src 'self' data: https:; media-src https: http: blob:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; worker-src 'self'`;
 const SIZES = [[1920, 1080], [2560, 1440]];
 
 function serveDir(dir) {
@@ -89,8 +89,14 @@ async function render(browser, url, w, h, scheme) {
   await page.evaluate(() => document.fonts.ready);
   await page.waitForTimeout(1600); // the wash fades in over 1.2 s (no transition with reduced motion, but be safe)
   const shot = await page.screenshot({ mask: [page.locator('#status'), page.locator('footer.foot')], animations: 'disabled' });
+  // 0.11.0 moved the controls into the player bar pinned to the viewport and added the
+  // top menu, so the page is compared where the design must not change: the stage
+  // (cover, title, artist, album, quality, progress).
+  // Whole pixels: the stage may sit at a fractional offset (a 1 px taller element shot).
+  const box = await page.locator('section.stage').boundingBox();
+  const stage = await page.screenshot({ animations: 'disabled', clip: { x: Math.round(box.x), y: Math.round(box.y), width: Math.floor(box.width), height: Math.floor(box.height) } });
   await ctx.close();
-  return shot;
+  return { shot, stage };
 }
 
 for (const scheme of ['dark', 'light']) {
@@ -100,13 +106,15 @@ for (const scheme of ['dark', 'light']) {
       const name = `design-v040-${scheme}-${w}x${h}`;
       const before = await render(browser, old.url, w, h, scheme);
       const after = await render(browser, now.url, w, h, scheme);
-      await writeFile(resolve(ARTIFACTS, `${name}-v040.png`), before);
-      await writeFile(resolve(ARTIFACTS, `${name}-now.png`), after);
+      await writeFile(resolve(ARTIFACTS, `${name}-v040.png`), before.shot);
+      await writeFile(resolve(ARTIFACTS, `${name}-now.png`), after.shot);
       // The v0.4.0 render is the reference for this run's comparison.
-      const ref = info.snapshotPath(`${name}.png`);
-      await mkdir(dirname(ref), { recursive: true });
-      await writeFile(ref, before);
-      expect(after).toMatchSnapshot(`${name}.png`, { maxDiffPixelRatio: 0.01, threshold: 0.02 });
+      for (const part of ['stage']) {
+        const ref = info.snapshotPath(`${name}-${part}.png`);
+        await mkdir(dirname(ref), { recursive: true });
+        await writeFile(ref, before[part]);
+        expect(after[part]).toMatchSnapshot(`${name}-${part}.png`, { maxDiffPixelRatio: 0.01, threshold: 0.02 });
+      }
     });
   }
 }

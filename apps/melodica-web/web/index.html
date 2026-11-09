@@ -18,7 +18,7 @@
     <a href="https://spacegho.st/melodica/app/" data-k="app" aria-current="page">Player</a>
     <a href="https://spacegho.st/melodica/listens/" data-k="listens">Listens</a>
     <a href="https://spacegho.st/melodica/leaderboard/" data-k="leaderboard">Leaderboard</a>
-    <a href="https://spacegho.st/melodica/map/" data-k="map">Map</a>
+    <a href="https://spacegho.st/melodica/map/" data-k="map" hidden>Map</a>
     <a href="https://spacegho.st/melodica/extension/" data-k="extension">Extension</a>
     <a href="https://spacegho.st/melodica/account/" data-k="account">Account</a>
   </nav>
@@ -81,6 +81,7 @@
         <span>Remember me on this device</span></label>
       <button id="login-button" type="submit" class="primary">Sign in</button>
       <p id="login-message" class="message" role="status"></p>
+      <a id="login-github" class="button github-signin" href="#" hidden>Sign in with GitHub</a>
       <p id="account-line" class="fine account-line-login" hidden>
         <a id="account-signin" href="#">Sign in with spacegho.st</a>
         <span id="account-signed" hidden>spacegho.st: <b id="account-name"></b> ·
@@ -119,31 +120,6 @@
         <span id="time-len">0:00</span>
       </div>
     </section>
-
-    <div class="controls-bar">
-      <div class="mini" aria-hidden="true"><span id="mini-title"></span><span id="mini-artist"></span></div>
-      <div class="controls">
-        <button id="btn-love" type="button" class="round" aria-label="Love this song" aria-pressed="false" title="Love (+)">
-          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
-        </button>
-        <button id="btn-ban" type="button" class="round" aria-label="Ban this song" aria-pressed="false" title="Ban (-)">
-          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/></svg>
-        </button>
-        <button id="btn-play" type="button" class="round big" aria-label="Play" title="Play / pause (space)" data-state="paused">
-          <svg class="ico-play" aria-hidden="true" viewBox="0 0 24 24"><path class="fill" d="M8 5v14l11-7z"/></svg>
-          <svg class="ico-pause" aria-hidden="true" viewBox="0 0 24 24"><path class="fill" d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
-        </button>
-        <button id="btn-next" type="button" class="round" aria-label="Next song" title="Next song (n)">
-          <svg aria-hidden="true" viewBox="0 0 24 24"><path class="fill" d="M5 5v14l10-7zM17 5h2v14h-2z"/></svg>
-        </button>
-        <button id="btn-tired" type="button" class="round" aria-label="Tired of this song" title="Tired of this song (t)">
-          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-        </button>
-        <button id="btn-explain" type="button" class="round" aria-label="Why is this song playing?" title="Why this song? (e)">
-          <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.3 9.2a2.8 2.8 0 0 1 5.4 1c0 1.8-2.7 2.5-2.7 4"/><path d="M12 17.3h.01"/></svg>
-        </button>
-      </div>
-    </div>
 
     <div class="deck">
       <label class="deck-item" for="volume">
@@ -228,6 +204,7 @@
     </section>
   </section>
 
+  <section id="route-view" class="route-view" aria-live="polite" hidden><div id="route-body" class="route-body"></div></section>
   <section id="view-error" class="view error" hidden>
     <div class="card">
       <h2 tabindex="-1">melodica could not start</h2>
@@ -295,6 +272,40 @@
     </div>
   </form>
 </dialog>
+
+<div id="bar" class="controls-bar" role="region" aria-label="Player">
+  <progress id="bar-progress" class="bar-progress" value="0" max="1" aria-hidden="true"></progress>
+  <a id="bar-expand" class="bar-now" href="https://spacegho.st/melodica/app/" title="Open the full player">
+<img id="bar-cover" class="bar-cover" alt="" src="data:,">
+<span class="mini"><span id="mini-title"></span><span id="mini-artist"></span></span>
+  </a>
+  <button id="bar-resume" class="bar-resume" type="button" hidden>Resume<span id="bar-resume-at"></span></button>
+  <a id="bar-signin" class="bar-signin" href="https://spacegho.st/melodica/app/" hidden>Sign in to play</a>
+  <div class="controls">
+    <button id="btn-love" type="button" class="round" aria-label="Love this song" aria-pressed="false" title="Love (+)">
+      <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+    </button>
+    <button id="btn-ban" type="button" class="round" aria-label="Ban this song" aria-pressed="false" title="Ban (-)">
+      <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/></svg>
+    </button>
+    <button id="btn-play" type="button" class="round big" aria-label="Play" title="Play / pause (space)" data-state="paused">
+      <svg class="ico-play" aria-hidden="true" viewBox="0 0 24 24"><path class="fill" d="M8 5v14l11-7z"/></svg>
+      <svg class="ico-pause" aria-hidden="true" viewBox="0 0 24 24"><path class="fill" d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
+    </button>
+    <button id="btn-next" type="button" class="round" aria-label="Next song" title="Next song (n)">
+      <svg aria-hidden="true" viewBox="0 0 24 24"><path class="fill" d="M5 5v14l10-7zM17 5h2v14h-2z"/></svg>
+    </button>
+    <button id="btn-tired" type="button" class="round" aria-label="Tired of this song" title="Tired of this song (t)">
+      <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+    <button id="btn-explain" type="button" class="round" aria-label="Why is this song playing?" title="Why this song? (e)">
+      <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.3 9.2a2.8 2.8 0 0 1 5.4 1c0 1.8-2.7 2.5-2.7 4"/><path d="M12 17.3h.01"/></svg>
+    </button>
+  </div>
+  <label class="bar-volume" for="bar-volume"><span class="sr">Volume</span>
+<input id="bar-volume" type="range" min="0" max="100" value="80" aria-label="Volume"></label>
+</div>
+
 
 <audio id="audio" preload="auto"></audio>
 

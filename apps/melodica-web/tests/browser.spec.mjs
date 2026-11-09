@@ -52,7 +52,7 @@ const MIME = {
 // The site worker's APP_CSP, with the relay origin added to connect-src
 // because the local server is a different origin from the relay.
 const csp = (nonce) => `default-src 'none'; script-src 'self' 'nonce-${nonce}' 'wasm-unsafe-eval'; ` +
-  `style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; media-src https: http:; ` +
+  `style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; media-src https: http: blob:; ` +
   `connect-src 'self' ${new URL(RELAY).origin}; font-src 'self'; base-uri 'none'; form-action 'none'; ` +
   `frame-ancestors 'none'; worker-src 'self'`;
 

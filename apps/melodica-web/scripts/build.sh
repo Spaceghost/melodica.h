@@ -43,7 +43,7 @@ emcc -O2 -std=c99 -Wall -Wextra \
     -sEXPORTED_RUNTIME_METHODS="[$RUNTIME]" \
     -o dist/melodica.js
 
-cp web/index.html web/app.js web/app.css web/piano.js web/bridge.js web/account.js web/vault.js web/scrobble.js dist/
+cp web/index.html web/app.js web/app.css web/piano.js web/bridge.js web/account.js web/vault.js web/scrobble.js web/lastplay.js dist/
 # The shared Scrobbles UI, fetched by scripts/fetch-scrobble-ui.sh (pinned, not in git).
 for f in scrobble-ui.js scrobble-ui.css; do
   [ -f "web/vendor/scrobble-ui/$f" ] || { echo "build: web/vendor/scrobble-ui/$f missing: run scripts/fetch-scrobble-ui.sh" >&2; exit 1; }

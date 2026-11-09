@@ -4,8 +4,9 @@
 import { PianoClient, PianoError, resolveApiBase } from './piano.js';
 import { BridgeTransport, bridgeAllowed } from './bridge.js';
 import { Vault } from './vault.js';
+import { AudioCopies, LAST_ID, lastRecord, validLast, urlExpired } from './lastplay.js';
 import { Account, USERNAME_RE, USERNAME_FORMAT, normalizeUsername } from './account.js';
-import { Scrobbles, ListenTracker, PAGE_SIZE } from './scrobble.js';
+import { Scrobbles, ListenTracker, PAGE_SIZE, genomeTraits } from './scrobble.js';
 
 const VERSION = '__MELODICA_WEB_VERSION__';
 const STORAGE = {
@@ -52,7 +53,7 @@ const el = {
   app: $('app'), status: $('status'),
   viewLogin: $('view-login'), viewPlayer: $('view-player'), viewError: $('view-error'),
   remoteSignin: $('remote-signin'), remoteSigninOpen: $('remote-signin-open'), remoteSigninHelp: $('remote-signin-help'),
-  accountLine: $('account-line'), accountSignin: $('account-signin'), accountSigned: $('account-signed'),
+  accountLine: $('account-line'), accountSignin: $('account-signin'), loginGithub: $('login-github'), accountSigned: $('account-signed'),
   accountName: $('account-name'), accountSignout: $('account-signout'),
   accountMenuLine: $('account-menu-line'), accountMenuName: $('account-menu-name'), accountMenuSignout: $('account-menu-signout'),
   loginForm: $('login-form'), email: $('login-email'), password: $('login-password'),
@@ -85,6 +86,9 @@ const el = {
   scrobbleSettings: $('scrobble-settings'), scrobbleOn: $('scrobble-on'), scrobbleBoard: $('scrobble-board'),
   scrobbleMessage: $('scrobble-message'), scrobbleCrewWrap: $('scrobble-crew-wrap'), scrobbleNotice: $('scrobble-notice'),
   listensFallback: $('listens-fallback'), liveState: $('live-state'), siteNav: $('site-nav'),
+  bar: $('bar'), barCover: $('bar-cover'), barProgress: $('bar-progress'), barVolume: $('bar-volume'),
+  barSignin: $('bar-signin'), barExpand: $('bar-expand'), routeView: $('route-view'), routeBody: $('route-body'),
+  barResume: $('bar-resume'), barResumeAt: $('bar-resume-at'),
   audio: $('audio'),
 };
 
@@ -140,6 +144,10 @@ const state = {
   keepMessage: false, // a skip reason should outlive the next song change
   scrobbles: null,    // Scrobbles: spacegho.st/scrobble/ (web/scrobble.js)
   scrobble: null,     // what the page knows of it (newScrobbleState)
+  copies: null,       // AudioCopies: this device's copies of the playing and next song (web/lastplay.js)
+  resume: null,       // the last-playing record shown paused with Resume, or null
+  resuming: false,    // Resume is trying the song's link, then its copy
+  blobUrl: '',        // a copy being played (revoked when the song changes)
 };
 
 // ---------------------------------------------------------------- helpers
@@ -149,6 +157,16 @@ function show(view) {
   el.app.dataset.view = view.id.replace('view-', '');
   el.account.hidden = view !== el.viewPlayer;
   el.account.open = false;
+  updateBar();
+}
+
+// The player bar (pinned to the bottom of the viewport on every route): the player's
+// controls, or a slim "Sign in to play" while nobody is signed in.
+function updateBar() {
+  if (!el.bar) return;
+  const signin = !state.remote && el.app.dataset.view !== 'player';
+  el.bar.dataset.state = signin ? 'signin' : 'player';
+  el.barSignin.hidden = !signin;
 }
 
 function setStatus(text, isError = false) {
@@ -209,7 +227,7 @@ function apiBaseFromPage() {
   if (explicit && !trustedApiParam(explicit)) explicit = '';
   const fromQuery = !!explicit;
   if (!explicit) explicit = (tag && tag.dataset.api) || '';
-  return { apiBase: resolveApiBase(explicit, location.href), fromQuery };
+  return { apiBase: resolveApiBase(explicit, document.baseURI), fromQuery };
 }
 function trustedApiParam(value) {
   if (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) return true;
@@ -340,6 +358,7 @@ async function deleteStation(st) {
 
 function setCover(url) {
   el.cover.src = url || FALLBACK_COVER;
+  el.barCover.src = url || FALLBACK_COVER;
   el.wash.src = url || 'data:,';
   if (url) el.cover.addEventListener('error', () => { el.cover.src = FALLBACK_COVER; el.wash.src = 'data:,'; }, { once: true });
 }
@@ -360,6 +379,8 @@ function setProgress(cur, len) {
     el.timeLen.textContent = fmtTime(len);
   }
   el.progress.value = cur;
+  el.barProgress.max = el.progress.max;
+  el.barProgress.value = cur;
   if (lenChanged || curText !== el.timeCur.textContent) {
     el.timeCur.textContent = curText;
     el.progress.setAttribute('aria-valuetext', `${curText} of ${fmtTime(len)}`);
@@ -500,6 +521,8 @@ function rememberSong(song) {
 // ---------------------------------------------------------------- playback
 
 function stopPlayback(reason) {
+  clearResume();
+  revokeBlob();
   el.audio.pause();
   el.audio.removeAttribute('src');
   el.audio.load();
@@ -562,7 +585,8 @@ async function fetchPlaylist() {
       throw err;
     }
     if (state.playGen !== gen) return null;
-    return (songs || []).filter((s) => s && (s.isInsert ? state.policy.inserts : s.audioUrl)).map((s) => (s.quality = quality, s));
+    const at = Date.now();
+    return (songs || []).filter((s) => s && (s.isInsert ? state.policy.inserts : s.audioUrl)).map((s) => (s.quality = quality, s.fetchedAt = at, s));
   } finally {
     if (state.fetching === gen) state.fetching = null;
   }
@@ -572,6 +596,8 @@ async function nextSong() {
   if (!state.station) return;
   const gen = state.playGen;
   try {
+    // Songs whose links have gone stale (a long pause, a resumed queue) are passed over.
+    while (state.queue.length && !state.queue[0].isInsert && urlExpired(state.queue[0])) state.queue.shift();
     if (state.queue.length === 0) {
       const songs = await fetchPlaylist();
       if (songs === null) return;
@@ -643,9 +669,12 @@ function applyVolume() {
 }
 
 function playSong(song) {
+  clearResume();
   displaySong(song);
   applyVolume();
+  revokeBlob();
   el.audio.src = song.audioUrl;
+  keepCopies(song);
   const p = el.audio.play();
   if (p && p.catch) {
     p.catch((err) => {
@@ -660,7 +689,7 @@ function playSong(song) {
 }
 
 // Everything about a new song except playing it (shared with remote mode).
-function displaySong(song) {
+function displaySong(song, { shown = false } = {}) {
   state.song = song;
   if (song.isInsert) el.app.dataset.insert = 'true';
   else delete el.app.dataset.insert;
@@ -680,7 +709,7 @@ function displaySong(song) {
   updateQualityChip();
   updateRatingButtons();
   if (!song.isInsert) rememberSong(song);
-  if (!state.remote) scrobbleStart(song);
+  if (shown) { /* shown paused for Resume: nothing is playing yet */ } else if (!state.remote) { scrobbleStart(song); loadGenome(song); }
   else scheduleListensRefresh();
   if (state.keepMessage) state.keepMessage = false;
   else playerMessage('');
@@ -720,6 +749,7 @@ async function rateSong(song, kind) {
   try {
     const r = await state.client.rate(song, kind);
     song.rating = r.rating;
+    crewThumb(kind === 'love' ? 'up' : 'down', song);
     updateHistoryItem(song);
     if (song === state.song) {
       updateRatingButtons();
@@ -788,9 +818,10 @@ function togglePlay() {
       if (st) playStation(st);
       return;
     }
-    remoteCommand('toggle');
+    remoteCommand(remoteResumable() ? 'resume' : 'toggle');
     return;
   }
+  if (state.resume) { resumeLast(); return; }
   if (!state.song) {
     const st = lastStation();
     if (st) playStation(st);
@@ -814,7 +845,7 @@ function saveVolume() {
 }
 function setVolume(v) {
   state.volume = clamp(Math.round(v), 0, 100);
-  el.volume.value = String(state.volume);
+  el.volume.value = el.barVolume.value = String(state.volume);
   applyVolume();
   clearTimeout(volumeSaveTimer);
   volumeSaveTimer = setTimeout(saveVolume, 400);
@@ -972,6 +1003,7 @@ function askRemoteStations() {
 
 let remoteStationsKey = '';
 let remoteChangedAt = 0;
+let remoteNotice = '';
 function renderRemote(rs) {
   // Command replies are not ordered against the extension's pushes: never draw a state
   // older than the one on screen (docs/BRIDGE.md 2, changedAt).
@@ -996,7 +1028,8 @@ function renderRemote(rs) {
   markActiveStation();
 
   // Now playing.
-  const t = rs.track && (rs.track.title || rs.track.trackToken) ? rs.track : null;
+  // Nothing loaded in the extension: the song it played last, paused, with Resume.
+  const t = rs.track && (rs.track.title || rs.track.trackToken) ? rs.track : (rs.last && rs.last.trackToken ? rs.last : null);
   if (t) {
     if (!state.song || state.song.trackToken !== (t.trackToken || '') || state.song.title !== (t.title || '')) {
       const known = state.history.find((s) => s.trackToken && s.trackToken === t.trackToken);
@@ -1015,12 +1048,16 @@ function renderRemote(rs) {
   }
   setPlayIcon(rs.status === 'playing');
   const len = Number(rs.duration) || (t && Number(t.duration)) || 0;
-  setProgress(Number(rs.position) || 0, len);
+  const onLast = t && t === rs.last;
+  setProgress(Number(onLast ? rs.last.position : rs.position) || 0, len);
+  updateResumeUi();
+  if (rs.notice && rs.notice !== remoteNotice) playerMessage(rs.notice);
+  remoteNotice = rs.notice || '';
 
   // Settings the extension owns.
   if (Number.isFinite(Number(rs.volume)) && !remoteVolumeBusy) {
     state.volume = clamp(Math.round(Number(rs.volume)), 0, 100);
-    el.volume.value = String(state.volume);
+    el.volume.value = el.barVolume.value = String(state.volume);
   }
   if (QUALITIES.includes(rs.quality)) { state.quality = rs.quality; el.quality.value = rs.quality; }
 
@@ -1057,6 +1094,9 @@ function enterRemote() {
   try { if (state.client && state.client.fn) state.client.logout(); } catch (_) { /* not loaded yet */ }
   state.remote = true;
   el.app.dataset.mode = 'remote';
+  // A remote never downloads or keeps audio: the extension's engine plays (and saves) it.
+  if (state.copies) state.copies.clear();
+  updateBar();
   el.audio.pause();
   el.audio.removeAttribute('src');
   el.audio.load();
@@ -1099,6 +1139,7 @@ function updateAccountLine() {
   el.accountLine.hidden = !available;
   const signedIn = available && a.signedIn;
   el.accountSignin.hidden = signedIn;
+  el.loginGithub.hidden = !available;
   el.accountSigned.hidden = !signedIn;
   el.accountName.textContent = signedIn ? a.label : '';
   el.accountMenuLine.hidden = !signedIn;
@@ -1117,6 +1158,15 @@ async function setupAccount() {
   await refreshPolicy();
   if (a.signedIn) await a.profile();
   updateAccountLine();
+}
+
+async function githubSignIn(ev) {
+  ev.preventDefault();
+  try {
+    location.assign(await state.account.githubUrl());
+  } catch (err) {
+    loginMessage(describeError(err), 'error');
+  }
 }
 
 async function accountSignIn(ev) {
@@ -1294,6 +1344,7 @@ async function loadSaved() {
 
 async function forgetSaved() {
   state.saved = null;
+  if (state.copies) state.copies.clear();
   await state.vault.wipe();
 }
 
@@ -1511,6 +1562,7 @@ async function enterPlayer() {
   visibleStationButton()?.focus();
   refreshMe({ prompt: true }); // not awaited: the username never holds up playback
   loadScrobbles();
+  await offerResume();
 }
 
 // Signing out here signs out the extension too (docs/BRIDGE.md 4.4).
@@ -1569,6 +1621,7 @@ function renderScrobbleSettings() {
   const sc = state.scrobble;
   el.scrobbleSettings.hidden = !(sc && sc.loaded);
   el.listensPanel.hidden = !(sc && sc.loaded);
+  el.siteNav.querySelector('a[data-k="map"]').hidden = !(sc && sc.loaded && sc.crew);
   if (!sc || !sc.loaded) return;
   const links = state.scrobbles.links; // on this page's origin
   $('scrobble-dashboard').href = links.dashboard;
@@ -1839,6 +1892,8 @@ async function startUi() {
 }
 
 function showPane(name, focus = true) {
+  // One map: the player's Map tab is the /melodica/map/ route of the shell.
+  if (name === 'map' && location.pathname.startsWith(SHELL_BASE)) { go('map'); return; }
   uiPane = name;
   for (const tab of el.listensPanel.querySelectorAll('[role="tab"]')) {
     const on = tab.dataset.pane === name;
@@ -1853,6 +1908,7 @@ function showPane(name, focus = true) {
     const opts = { client: ui.client, live: ui.live };
     if (name === 'listens') { opts.pageSize = 25; opts.scrollRoot = host; } // scrolls inside its own box (0.9.1)
     if (name === 'leaderboard') opts.window = '7d';
+    if (name === 'map') opts.onStation = stationFromSeeds;
     ui.views[name] = ui.mod[PANES[name]](host, opts);
   } catch (err) {
     console.debug('[scrobble-ui]', describeError(err));
@@ -1960,6 +2016,7 @@ function installEvents() {
     }
   });
   el.accountSignin.addEventListener('click', accountSignIn);
+  el.loginGithub.addEventListener('click', githubSignIn);
   el.remoteSigninOpen.addEventListener('click', openExtensionLogin);
   el.accountSignout.addEventListener('click', accountSignOut);
   el.accountMenuSignout.addEventListener('click', () => { el.account.open = false; accountSignOut(); });
@@ -1999,6 +2056,8 @@ function installEvents() {
   el.explainClose.addEventListener('click', () => { el.explainPanel.hidden = true; el.explain.focus(); });
   el.volume.addEventListener('input', () => setVolume(Number(el.volume.value)));
   el.volume.addEventListener('change', saveVolume);
+  el.barVolume.addEventListener('input', () => setVolume(Number(el.barVolume.value)));
+  el.barVolume.addEventListener('change', () => { saveVolume(); el.volume.dispatchEvent(new Event('change')); });
   el.quality.addEventListener('change', () => {
     if (state.remote) { remoteCommand('quality', { value: QUALITIES.includes(el.quality.value) ? el.quality.value : 'high' }); return; }
     setQuality(QUALITIES.includes(el.quality.value) ? el.quality.value : 'high');
@@ -2039,9 +2098,14 @@ function installEvents() {
       if (t !== el.timeCur.textContent) el.timeCur.textContent = t;
     }
   });
-  a.addEventListener('ended', () => { state.consecutiveAudioErrors = 0; nextSong(); });
+  a.addEventListener('ended', () => {
+    state.consecutiveAudioErrors = 0;
+    if (state.song && state.copies) state.copies.drop(state.song.trackToken); // its copy is done with
+    nextSong();
+  });
+  a.addEventListener('pause', () => persistLast());
   a.addEventListener('error', () => {
-    if (!state.song) return;
+    if (!state.song || state.resuming) return; // Resume tries the copy next (resumeLast)
     state.consecutiveAudioErrors += 1;
     const code = a.error ? a.error.code : 0;
     const why = code === 4 ? `this browser cannot play ${state.song.audioFormat} audio` : `audio error ${code}`;
@@ -2092,10 +2156,405 @@ function installEvents() {
   });
 }
 
+
+// ---------------------------------------------------------------- Conquest v2 (0.11.0)
+// The crew's map (melodica-scrobble): a thumb is a vote for its artist's town, and a
+// listen carries the song's Music Genome traits. Neither ever holds up playback; the
+// server's 403 (not crew), 404 unknown_town and 429 thumbs_spent are expected answers.
+const genomes = new Map(); // trackToken -> traits (or null), one explain per song
+async function loadGenome(song) {
+  if (!song || song.isInsert || !song.trackToken || song.genome !== undefined) return;
+  if (genomes.has(song.trackToken)) { song.genome = genomes.get(song.trackToken); return; }
+  genomes.set(song.trackToken, null);
+  if (genomes.size > 200) genomes.delete(genomes.keys().next().value);
+  try {
+    const traits = genomeTraits(await state.client.explain(song));
+    genomes.set(song.trackToken, traits);
+    song.genome = traits;
+  } catch (err) {
+    console.debug('[genome]', describeError(err));
+  }
+}
+
+function crewThumb(direction, song) {
+  if (state.remote || !state.scrobbles || !state.scrobble || !state.scrobble.crew || !song || song.isInsert) return;
+  state.scrobbles.thumb(direction, song).catch((err) => {
+    if (![403, 404, 429].includes(err && err.status)) console.debug('[thumb]', describeError(err));
+  });
+}
+
+// The map's "start a station here": a Pandora station from the town's first seed that
+// Pandora finds (a song, else its artist), then played.
+async function stationFromSeeds(station) {
+  if (state.remote) throw new Error('The extension is playing: start stations there.');
+  if (!state.client || !state.client.session()) throw new Error('Sign in to play first.');
+  const seeds = Array.isArray(station && station.seeds) ? station.seeds : [];
+  const low = (v) => String(v || '').trim().toLowerCase();
+  for (const seed of seeds) {
+    if (!seed || !seed.artist_name) continue;
+    const q = seed.track_name ? `${seed.track_name} ${seed.artist_name}` : seed.artist_name;
+    let r;
+    try { r = await state.client.search(q); } catch (err) { console.debug('[map]', describeError(err)); continue; }
+    const songs = (r.songs || []).filter((x) => x && x.musicId);
+    const artists = (r.artists || []).filter((x) => x && x.musicId);
+    const pick = (seed.track_name && (songs.find((x) => low(x.artist) === low(seed.artist_name) && low(x.title) === low(seed.track_name))
+      || songs.find((x) => low(x.artist) === low(seed.artist_name))))
+      || artists.find((x) => low(x.name) === low(seed.artist_name)) || songs[0] || artists[0];
+    if (!pick) continue;
+    const before = new Set(state.stations.map((x) => x.id));
+    state.stations = await state.client.createStation(pick.musicId);
+    buildStations();
+    const created = state.stations.find((x) => !before.has(x.id)) || state.stations.find((x) => low(x.name).startsWith(low(seed.artist_name)));
+    if (created) { playStation(created); return { id: created.id, name: created.name }; }
+    return { name: station.name || '' };
+  }
+  throw new Error('Pandora found none of this town\'s seeds.');
+}
+
+// ---------------------------------------------------------------- resume (0.11.0)
+// The song this device plays is kept in the encrypted store (record "last": station,
+// song with its link, position, the rest of the playlist) every 2 s while playing and
+// on pause, pagehide and hidden; a reload, a back/forward or a new visit shows it
+// paused there with Resume. Its audio is also copied (the playing song and the next
+// one), so Resume still plays it after its link has expired. Only the playing device
+// does this: as a remote the extension keeps its own (state.last, docs/BRIDGE.md).
+const PERSIST_MS = 2000;
+let lastWrite = Promise.resolve();
+
+// The encrypted write is asynchronous and may not finish while the page goes away;
+// the position at that moment also goes to sessionStorage (this tab only; a token and a
+// number), and a reload or back/forward takes it when it names the same song.
+const LAST_HINT = 'melodica.lastPosition';
+function persistLast({ leaving = false } = {}) {
+  if (state.remote || !state.remember || state.resume || state.resuming || !state.vault) return;
+  const rec = lastRecord({ station: state.station, song: state.song, position: el.audio.currentTime, queue: state.queue });
+  if (!rec) return;
+  if (leaving) { try { sessionStorage.setItem(LAST_HINT, JSON.stringify({ t: rec.song.trackToken, p: rec.position })); } catch (_) { /* unavailable */ } }
+  lastWrite = lastWrite.then(() => (state.remember && !state.remote ? state.vault.write(rec, LAST_ID) : null))
+    .catch((err) => console.debug('[last]', describeError(err)));
+}
+
+function keepCopies(song) {
+  const c = state.copies;
+  if (!c || state.remote || !state.remember || !song || song.isInsert) return;
+  const next = state.queue[0] && !state.queue[0].isInsert ? state.queue[0] : null;
+  c.keep([song.trackToken, next && next.trackToken]);
+  c.save(song).then(() => { if (next && state.song === song && state.queue[0] === next) c.save(next); });
+}
+
+function revokeBlob() {
+  if (state.blobUrl) { URL.revokeObjectURL(state.blobUrl); state.blobUrl = ''; }
+}
+
+function remoteResumable() {
+  const rs = state.remoteState;
+  if (!state.remote || !rs || !rs.last || !rs.last.trackToken) return false;
+  const t = rs.track && (rs.track.title || rs.track.trackToken) ? rs.track : null;
+  return !t || (rs.status === 'paused' && t.trackToken === rs.last.trackToken);
+}
+
+function updateResumeUi() {
+  const rs = state.remoteState;
+  const pos = state.remote ? (remoteResumable() ? Number(rs.last.position) || 0 : -1) : (state.resume ? state.resume.position : -1);
+  const on = pos >= 0;
+  el.barResume.hidden = !on;
+  el.barResumeAt.textContent = on && pos >= 1 ? ` at ${fmtTime(pos)}` : '';
+  if (on) el.app.dataset.resume = 'true'; else delete el.app.dataset.resume;
+}
+
+function clearResume() {
+  if (!state.resume) return;
+  state.resume = null;
+  updateResumeUi();
+}
+
+// The page's own last-playing record, shown paused at its position (nothing plays).
+async function offerResume() {
+  if (state.remote || state.song || !state.vault || !state.remember) return;
+  let rec = null;
+  try { rec = await state.vault.read(LAST_ID); } catch (_) { rec = null; }
+  if (!validLast(rec) || state.remote || state.song) return;
+  try {
+    const hint = JSON.parse(sessionStorage.getItem(LAST_HINT) || 'null');
+    if (hint && hint.t === rec.song.trackToken && Number(hint.p) > rec.position) rec.position = Number(hint.p);
+  } catch (_) { /* no hint */ }
+  const st = state.stations.find((s) => s.id === rec.station.id);
+  if (st) showResumable(st, rec);
+}
+
+function showResumable(st, rec) {
+  state.station = st;
+  store.set(STORAGE.station, st.id);
+  markActiveStation();
+  state.playGen += 1;
+  state.queue = rec.queue.slice();
+  displaySong({ ...rec.song }, { shown: true });
+  setProgress(rec.position, rec.song.duration || 0);
+  setPlayIcon(false);
+  state.resume = rec;
+  updateResumeUi();
+  renderUpNext();
+}
+
+// Resolves true once `src` plays from `pos`, 'blocked' (autoplay), or false (an error,
+// e.g. an expired link's 403, or nothing within 15 s).
+function playFrom(src, pos) {
+  const a = el.audio;
+  return new Promise((ok) => {
+    let timer = 0;
+    const done = (v) => { clearTimeout(timer); a.removeEventListener('playing', onPlaying); a.removeEventListener('error', onError); ok(v); };
+    const onPlaying = () => done(true);
+    const onError = () => done(false);
+    timer = setTimeout(() => done(false), 15_000);
+    a.addEventListener('playing', onPlaying);
+    a.addEventListener('error', onError);
+    applyVolume();
+    a.src = src;
+    a.addEventListener('loadedmetadata', () => { if (Math.abs(a.currentTime - pos) > 0.5) a.currentTime = pos; }, { once: true });
+    try { a.currentTime = pos; } catch (_) { /* after the metadata, above */ }
+    const p = a.play();
+    if (p && p.catch) p.catch((err) => { if (err && err.name === 'NotAllowedError') done('blocked'); });
+  });
+}
+
+async function resumeLast() {
+  const rec = state.resume;
+  if (!rec || state.resuming || state.remote) return;
+  const song = state.song;
+  const gen = state.playGen;
+  state.resuming = true;
+  playerMessage('Resuming…', 'info', 0);
+  let r = false;
+  let copy = false;
+  try {
+    if (!urlExpired(song)) r = await playFrom(song.audioUrl, rec.position);
+    if (r !== true && r !== 'blocked' && state.playGen === gen && state.copies) {
+      const u = await state.copies.blobUrl(song.trackToken);
+      if (u) {
+        r = await playFrom(u, rec.position);
+        if (r === true) { revokeBlob(); state.blobUrl = u; copy = true; } else URL.revokeObjectURL(u);
+      }
+    }
+  } finally {
+    state.resuming = false;
+  }
+  if (state.playGen !== gen || state.resume !== rec) return;
+  if (r === 'blocked') { playerMessage('Press Resume to start (the browser blocks autoplay).', 'info', 0); return; }
+  state.resume = null;
+  updateResumeUi();
+  if (r === true) {
+    updateMediaSession(song);
+    scrobbleStart(song);
+    if (copy) {
+      // The rest of that playlist has expired links too: the station goes on fresh.
+      state.queue = [];
+      renderUpNext();
+      playerMessage("That song's link expired; playing this device's copy, then continuing the station.");
+    } else {
+      playerMessage('');
+      keepCopies(song);
+    }
+    persistLast();
+    return;
+  }
+  // Neither its link nor a copy plays: the station goes on with a new playlist.
+  el.audio.removeAttribute('src');
+  state.queue = [];
+  renderUpNext();
+  playerMessage("That song's link expired; continuing the station");
+  state.keepMessage = true;
+  nextSong();
+}
+
+function installResume() {
+  state.copies = new AudioCopies({
+    relayRequest: (u) => {
+      let host = '';
+      try { host = new URL(u).hostname; } catch (_) { return null; }
+      if (!/(^|\.)(pandora\.com|p-cdn\.us|p-cdn\.com)$/i.test(host)) return null;
+      const token = state.client && state.client.accessToken;
+      return [`${state.apiBase}?audio=${encodeURIComponent(u)}`, { credentials: 'omit', headers: token ? { 'x-melodica-access': token } : {} }];
+    },
+    log: (m) => console.debug('[copies]', m),
+  });
+  setInterval(() => { if (!el.audio.paused && !state.resuming) persistLast(); }, PERSIST_MS);
+  addEventListener('pagehide', () => persistLast({ leaving: true }));
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') persistLast({ leaving: true }); });
+  // Back/forward from the page cache: the song as it was, paused, with Resume.
+  addEventListener('pageshow', (e) => {
+    if (!e.persisted || state.remote || !state.song || state.song.isInsert || !el.audio.paused || state.resume) return;
+    const rec = lastRecord({ station: state.station, song: state.song, position: el.audio.currentTime, queue: state.queue });
+    if (rec) { state.resume = rec; setPlayIcon(false); updateResumeUi(); }
+  });
+  el.barResume.addEventListener('click', () => { if (state.remote) remoteCommand('resume'); else resumeLast(); });
+}
+
+// ---------------------------------------------------------------- the shell (0.11.0)
+// Every /melodica/ page is this one document: the hub, the player, Listens, the
+// Leaderboard, the Map, the Account and the Extension page are routes (history.pushState),
+// so the <audio> element and the extension link live on across them, and the player bar
+// stays pinned to the bottom of the viewport. The site Worker serves this page for each
+// route; the hub and the extension page come from it as fragments (?fragment=1).
+const SHELL_BASE = '/melodica/';
+const ROUTES = { '': 'home', 'app/': 'app', 'listens/': 'listens', 'leaderboard/': 'leaderboard', 'map/': 'map', 'account/': 'account', 'extension/': 'extension' };
+const ROUTE_PATH = Object.fromEntries(Object.entries(ROUTES).map(([p, r]) => [r, SHELL_BASE + p]));
+const ROUTE_TITLE = {
+  home: 'melodica · Pandora players for every device', app: 'melodica — Pandora in the browser', listens: 'Your listens · melodica',
+  leaderboard: 'Leaderboard · melodica', map: 'Map · melodica', account: 'Account · melodica', extension: 'The melodica extension · melodica',
+};
+const ROUTE_HEAD = { listens: 'Your listens', leaderboard: 'Leaderboard', map: 'Map', account: 'Account' };
+function routeOf(pathname) {
+  if (!pathname.startsWith(SHELL_BASE)) return 'app';
+  return ROUTES[pathname.slice(SHELL_BASE.length)] || 'app';
+}
+let route = '';
+let routeGen = 0;
+let routeUi = null;          // {live, view} of a Listens/Leaderboard/Map route
+let accountMenuHome = null;  // where the account menu lives when it is not on the Account route
+const fragments = new Map();
+
+function leaveRoute() {
+  const r = routeUi;
+  routeUi = null;
+  if (r) {
+    try { if (r.view) r.view.unmount(); } catch (_) { /* gone */ }
+    try { if (r.live) r.live.close(); } catch (_) { /* closed */ }
+  }
+  const menu = el.account.querySelector('.account-menu') || el.routeBody.querySelector('.account-menu');
+  if (menu && accountMenuHome && menu.parentNode !== accountMenuHome) accountMenuHome.append(menu);
+  el.routeBody.replaceChildren();
+}
+
+function routeHeading(text) {
+  const h = document.createElement('h2');
+  h.className = 'route-title';
+  h.textContent = text;
+  h.tabIndex = -1;
+  return h;
+}
+
+async function mountRouteUi(name, host, gen) {
+  let mod;
+  try { mod = await import(UI_MODULE); } catch (err) {
+    host.textContent = 'The listens could not be loaded.';
+    console.debug('[scrobble-ui]', describeError(err));
+    return;
+  }
+  if (gen !== routeGen) return;
+  // Without a token the panels would only be refused: say how to get one instead.
+  let token = null;
+  try { token = await uiToken(); } catch (_) { token = null; }
+  if (gen !== routeGen) return;
+  if (!token) {
+    const p = document.createElement('p');
+    p.className = 'muted route-signin';
+    const a = document.createElement('a');
+    a.href = ROUTE_PATH.app;
+    a.textContent = 'Sign in to the player';
+    p.append(a, document.createTextNode(state.remote ? ' or to spacegho.st in the extension to see this.' : ' to see this.'));
+    host.replaceChildren(p);
+    return;
+  }
+  const client = mod.createClient({ base: location.origin, token: uiToken });
+  const live = client.live();
+  const opts = { client, live };
+  if (name === 'listens') { opts.pageSize = 25; opts.scrollRoot = host; }
+  if (name === 'leaderboard') opts.window = '7d';
+  if (name === 'map') opts.onStation = stationFromSeeds;
+  let view = null;
+  try { view = mod[PANES[name]](host, opts); } catch (err) { console.debug('[scrobble-ui]', describeError(err)); }
+  routeUi = { live, view };
+  host.addEventListener('sui:error', (ev) => console.debug('[scrobble-ui]', name, ev.detail && ev.detail.code));
+}
+
+function fragment(path) {
+  if (!fragments.has(path)) {
+    fragments.set(path, fetch(`${path}?fragment=1`, { credentials: 'same-origin', headers: { accept: 'text/html' } })
+      .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`)))));
+    fragments.get(path).catch(() => fragments.delete(path));
+  }
+  return fragments.get(path);
+}
+
+async function showFragment(path, gen) {
+  let html;
+  try { html = await fragment(path); } catch (err) {
+    if (gen !== routeGen) return;
+    const p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = `This page could not be loaded (${describeError(err)}).`;
+    el.routeBody.replaceChildren(p);
+    return;
+  }
+  if (gen !== routeGen) return;
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  for (const n of doc.querySelectorAll('script, style, link')) n.remove();
+  el.routeBody.replaceChildren(...[...doc.body.childNodes].map((n) => document.adoptNode(n)));
+  // The hub's leaderboard: the shared panel, as on the Leaderboard route.
+  const board = el.routeBody.querySelector('[data-hub-board]');
+  if (board) { board.replaceChildren(); board.classList.add('sui-host'); mountRouteUi('leaderboard', board, gen); }
+}
+
+function renderRoute(next, { focus = false } = {}) {
+  const gen = ++routeGen;
+  if (next !== route) leaveRoute();
+  route = next;
+  el.app.dataset.route = next;
+  document.title = ROUTE_TITLE[next] || ROUTE_TITLE.app;
+  for (const a of el.siteNav.querySelectorAll('a')) {
+    if (a.dataset.k === next) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  }
+  el.routeView.hidden = next === 'app';
+  if (next === 'app') return;
+  if (el.routeBody.childNodes.length) return; // already drawn (popstate to the same route)
+  if (next === 'home' || next === 'extension') {
+    showFragment(ROUTE_PATH[next], gen);
+  } else if (PANES[next]) {
+    const host = document.createElement('div');
+    host.className = `sui-host${next === 'map' ? ' sui-map-host' : ''}`;
+    host.tabIndex = 0;
+    el.routeBody.replaceChildren(routeHeading(ROUTE_HEAD[next]), host);
+    mountRouteUi(next, host, gen);
+  } else if (next === 'account') {
+    const menu = el.account.querySelector('.account-menu');
+    if (menu) { accountMenuHome = el.account; menu.classList.add('card'); }
+    el.routeBody.replaceChildren(routeHeading(ROUTE_HEAD.account), ...(menu ? [menu] : []));
+  }
+  if (focus) { const h = el.routeBody.querySelector('h1, h2'); if (h) { h.tabIndex = -1; h.focus({ preventScroll: true }); } }
+  scrollTo(0, 0);
+}
+
+function go(next, { replace = false } = {}) {
+  const path = ROUTE_PATH[next];
+  if (!path) return;
+  if (location.pathname !== path) history[replace ? 'replaceState' : 'pushState']({ route: next }, '', path);
+  renderRoute(next, { focus: true });
+}
+
+function installShell() {
+  if (!location.pathname.startsWith(SHELL_BASE)) return;
+  // Same-origin links to a route are handled here; anything else (downloads, other
+  // sites, a modified click) navigates as usual.
+  document.addEventListener('click', (e) => {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const a = e.target.closest && e.target.closest('a[href]');
+    if (!a || a.target === '_blank' || a.hasAttribute('download')) return;
+    const u = new URL(a.href, location.href);
+    if (u.origin !== location.origin || !(u.pathname.slice(SHELL_BASE.length) in ROUTES) || !u.pathname.startsWith(SHELL_BASE) || u.search) return;
+    e.preventDefault();
+    go(ROUTES[u.pathname.slice(SHELL_BASE.length)]);
+  });
+  addEventListener('popstate', () => renderRoute(routeOf(location.pathname)));
+  for (const a of [el.barExpand, el.barSignin]) a.href = `${location.origin}${ROUTE_PATH.app}`;
+  renderRoute(routeOf(location.pathname));
+}
+
 async function main() {
-  el.volume.value = String(state.volume);
+  el.volume.value = el.barVolume.value = String(state.volume);
   el.quality.value = state.quality;
   installEvents();
+  installShell();
+  installResume();
   installScrobbleEvents();
   installMediaSession();
   showIdle();

@@ -186,6 +186,7 @@ assert.equal('bridge' in new PianoClient({ apiBase: 'https://relay.example/api/'
   const L = (href) => { const u = new URL(href); return { origin: u.origin, pathname: u.pathname, protocol: u.protocol, hostname: u.hostname }; };
   assert.equal(bridgeAllowed(L('https://spacegho.st/melodica/app/')), true);
   assert.equal(bridgeAllowed(L('https://spacegho.st/melodica/app/?x=1')), true);
+  assert.equal(bridgeAllowed(L('https://spacegho.st/melodica/listens/')), true, 'a shell route');
   assert.equal(bridgeAllowed(L('https://spacegho.st/other/')), false, 'another path on the origin');
   assert.equal(bridgeAllowed(L('https://evil.spacegho.st/melodica/app/')), false, 'a subdomain');
   assert.equal(bridgeAllowed(L('https://spacegho.st.evil.example/melodica/app/')), false);

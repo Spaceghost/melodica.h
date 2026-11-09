@@ -35,7 +35,7 @@ const MIME = {
 // the fake content script fetches from the page world (a real extension does
 // its fetch from its own context).
 const csp = (nonce) => `default-src 'none'; script-src 'self' 'nonce-${nonce}' 'wasm-unsafe-eval'; ` +
-  `style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; media-src https: http:; ` +
+  `style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; media-src https: http: blob:; ` +
   `connect-src 'self' ${new URL(RELAY).origin}; font-src 'self'; base-uri 'none'; form-action 'none'; ` +
   `frame-ancestors 'none'; worker-src 'self'`;
 

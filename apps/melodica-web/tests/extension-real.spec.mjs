@@ -59,7 +59,7 @@ const SYNC_MS = 1000;
 const EXT_MS = 5000;
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.wasm': 'application/wasm' };
 const csp = (nonce) => `default-src 'none'; script-src 'self' 'nonce-${nonce}' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; ` +
-  `img-src 'self' data: https: http:; media-src https: http:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; worker-src 'self'`;
+  `img-src 'self' data: https: http:; media-src https: http: blob:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; worker-src 'self'`;
 
 const tuner = {
   https: process.env.TUNER_HTTPS_URL || '', http: process.env.TUNER_HTTP_URL || '',

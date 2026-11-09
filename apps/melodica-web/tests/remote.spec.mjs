@@ -39,12 +39,14 @@ const MIME = {
 };
 // The site worker's APP_CSP, unchanged: remote mode needs nothing new.
 const csp = (nonce) => `default-src 'none'; script-src 'self' 'nonce-${nonce}' 'wasm-unsafe-eval'; ` +
-  `style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; media-src https: http:; ` +
+  `style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; media-src https: http: blob:; ` +
   `connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; worker-src 'self'`;
 
 let server = null;
 let base = '';
 const apiHits = [];
+const audioHits = [];
+const SHELL_PATHS = new Set(['/melodica/', '/melodica/listens/', '/melodica/leaderboard/', '/melodica/map/', '/melodica/account/', '/melodica/extension/']);
 
 // Chromium logs "Failed to load resource" for the expected 503 from /auth/me.
 function expectedResourceError(msg) {
@@ -64,6 +66,16 @@ test.beforeAll(async () => {
       apiHits.push(`${req.method} ${url.pathname}${url.search}`);
       res.writeHead(500); res.end('remote mode must not use the relay'); return;
     }
+    // The shell's routes (site/src/worker.js): index.html with a base; small fragments.
+    if (SHELL_PATHS.has(url.pathname)) {
+      if (url.searchParams.has('fragment')) { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(`<main class="wrap"><h1>${url.pathname}</h1><p>fragment</p></main>`); return; }
+      const page = (await readFile(resolve(DIST, 'index.html'), 'utf8')).replace(/<head>/i, `<head>\n<base href="${APP_PATH}">`);
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': csp(randomBytes(16).toString('base64')).replace("base-uri 'none'", "base-uri 'self'") });
+      res.end(page);
+      return;
+    }
+    // Audio from anywhere but the fake extension: remote mode must fetch none.
+    if (/\.(mp3|m4a|aac|mp4)$/.test(url.pathname) || url.pathname.includes('/audio')) { audioHits.push(url.pathname); res.writeHead(404); res.end(); return; }
     if (!url.pathname.startsWith(APP_PATH)) { res.writeHead(404); res.end('not found'); return; }
     let rel = url.pathname.slice(APP_PATH.length);
     if (rel === '' || rel.endsWith('/')) rel += 'index.html';
@@ -107,6 +119,8 @@ function fakeExtension(opts) {
     status: 'idle', station: null, track: null, position: 0, duration: 0, volume: 70, quality: 'high',
     queueLength: 0, error: '', history: [], changedAt: Date.now(), loggedIn: opts.loggedIn !== false,
     user: { username: 'moonlit', chosen: true, suggested: '', notice: '', prompt: false },
+    last: opts.last || null,
+    notice: '',
     stations: opts.loggedIn === false ? [] : [
       { token: 'QM', name: 'QuickMix', isQuickMix: true, allowDelete: false },
       { token: 'S1', name: 'Aurora Fields Radio', isQuickMix: false, allowDelete: true },
@@ -202,7 +216,13 @@ function fakeExtension(opts) {
     } else if (action === 'love') st.track.rating = 1;
     else if (action === 'volume') st.volume = d.value;
     else if (action === 'quality') st.quality = d.value;
-    else if (action === 'stations') st.stations = [...st.stations, { token: 'S3', name: 'New Station', isQuickMix: false, allowDelete: true }];
+    else if (action === 'resume') {
+      if (!st.last) { ok = false; error = 'nothing to resume'; } else {
+        st.track = { ...st.last, quality: st.quality, audioFormat: 'aacplus' };
+        delete st.track.position; delete st.track.savedAt; delete st.track.station;
+        st.station = st.last.station; st.position = st.last.position; st.duration = st.last.duration; st.status = 'playing';
+      }
+    } else if (action === 'stations') st.stations = [...st.stations, { token: 'S3', name: 'New Station', isQuickMix: false, allowDelete: true }];
     else { ok = false; error = `unknown action ${action}`; }
     post({ type: 'result', id, ok, error, state: JSON.parse(JSON.stringify(st)) });
     push();
@@ -523,6 +543,68 @@ test.describe.serial('sessions with the extension (docs/BRIDGE.md 4)', () => {
     await expect.poll(() => vaultRead(page), { timeout: 10_000 }).toBeNull();
     expect(await page.evaluate(() => window.__remote.offers.length)).toBe(0);
     await expect(page.locator('#remote-signin')).toBeVisible();
+    await finish(page, evidence, info);
+  });
+});
+
+
+// ---------------------------------------------------------------- the shell and Resume (0.11.0)
+test.describe.serial('remote mode in the app shell', () => {
+  test('every route at 1280 and 390 as a remote: the bar pinned to the bottom, driving the extension; the page fetches no audio and keeps no copy', async ({ page }, info) => {
+    const requests = [];
+    page.on('request', (r) => { if (r.resourceType() === 'media' || /\.(mp3|m4a|aac|mp4)(\?|$)/.test(r.url()) || r.url().includes('/audio')) requests.push(r.url()); });
+    const evidence = await open(page);
+    await expect(page.locator('#app')).toHaveAttribute('data-mode', 'remote', { timeout: 10_000 });
+    await page.locator('#station-list button.station', { hasText: 'Aurora Fields Radio' }).click();
+    await expect(page.locator('#mini-title')).toHaveText('Slow Light');
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: width > 760 ? 800 : 844 });
+      // No Map link: this listener is not a crew viewer.
+      await expect(page.locator('#site-nav a[data-k="map"]')).toBeHidden();
+      for (const k of ['home', 'listens', 'leaderboard', 'account', 'extension', 'app']) {
+        await page.click(`#site-nav a[data-k="${k}"]`);
+        await expect(page.locator('#app')).toHaveAttribute('data-route', k);
+        for (const where of ['top', 'middle', 'bottom']) {
+          await page.evaluate((w) => { const max = document.documentElement.scrollHeight - innerHeight; scrollTo(0, w === 'top' ? 0 : w === 'middle' ? Math.round(max / 2) : max); }, where);
+          const b = await page.evaluate(() => { const r = document.getElementById('bar').getBoundingClientRect(); return { bottom: r.bottom, vh: innerHeight }; });
+          expect(Math.abs(b.bottom - b.vh), `${k} ${width} ${where}`).toBeLessThanOrEqual(0.5);
+        }
+        await expect(page.locator('#bar')).toHaveAttribute('data-state', 'player');
+        await expect(page.locator('#mini-title')).not.toHaveText('');
+      }
+      await page.screenshot({ path: resolve(ARTIFACTS, `shell-remote-${width}.png`) });
+    }
+    // The bar drives the extension from any route.
+    await page.click('#site-nav a[data-k="leaderboard"]');
+    const n = (await page.evaluate(() => window.__remote.commands)).length;
+    await page.click('#btn-next');
+    await expect.poll(() => page.evaluate(() => window.__remote.commands.slice(-1)[0])).toBe('next');
+    expect((await page.evaluate(() => window.__remote.commands)).length).toBe(n + 1);
+    await expect(page.locator('#mini-title')).toHaveText('Second Song');
+    expect(requests, 'audio requests from the page').toEqual([]);
+    expect(audioHits, 'audio served to the page').toEqual([]);
+    expect(await page.evaluate(async () => (await caches.keys()).length), 'Cache API stores').toBe(0);
+    expect(apiHits, 'relay requests').toEqual([]);
+    await finish(page, evidence, info);
+  });
+
+  test("the extension's last song: shown paused with Resume; Resume sends resume and plays it at its position", async ({ page }, info) => {
+    const requests = [];
+    page.on('request', (r) => { if (r.resourceType() === 'media') requests.push(r.url()); });
+    const last = { title: 'Slow Light', artist: 'Aurora Fields', album: 'Northern', coverArt: '', trackToken: 'T1', station: { token: 'S1', name: 'Aurora Fields Radio' }, position: 83, duration: 200, savedAt: Date.now() - 60_000 };
+    const evidence = await open(page, { last });
+    await expect(page.locator('#app')).toHaveAttribute('data-mode', 'remote', { timeout: 10_000 });
+    await expect(page.locator('#mini-title')).toHaveText('Slow Light');
+    await expect(page.locator('#bar-resume')).toBeVisible();
+    await expect(page.locator('#bar-resume')).toHaveText('Resume at 1:23');
+    await expect(page.locator('#time-cur')).toHaveText('1:23');
+    await page.screenshot({ path: resolve(ARTIFACTS, 'resume-remote.png') });
+    await page.click('#bar-resume');
+    await expect.poll(() => page.evaluate(() => window.__remote.commands.slice(-1)[0])).toBe('resume');
+    await expect(page.locator('#bar-resume')).toBeHidden();
+    await expect(page.locator('#btn-play')).toHaveAttribute('data-state', 'playing');
+    expect(requests, 'media requests from the page').toEqual([]);
+    expect(await page.evaluate(async () => (await caches.keys()).length), 'Cache API stores').toBe(0);
     await finish(page, evidence, info);
   });
 });

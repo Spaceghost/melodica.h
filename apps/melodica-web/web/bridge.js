@@ -26,7 +26,7 @@
 //   page -> script   {type: 'session-logout', id, sid}           both answered with a result {outcome}
 //   page -> script   {type: 'account-signout', id}               spacegho.st sign-out (4.6), answered with a result
 //   script -> page   {type: 'account-signout'}                   the extension signed out of spacegho.st
-// The page talks only on https://spacegho.st/melodica/app/ (and on localhost for the
+// The page talks only on https://spacegho.st/melodica/ (and on localhost for the
 // tests): messages go to that exact origin, never '*', and only messages with
 // event.source === window and that exact event.origin are accepted. `ready` without `player: true` (extension before 0.3.0) is not a
 // remote; the page then ignores the extension and uses the relay.
@@ -39,7 +39,7 @@ export const SUBSCRIBE_EVERY_MS = 1_000;
 export const COMMAND_TIMEOUT_MS = 10_000;
 export const SESSION_TIMEOUT_MS = 20_000;
 export const BRIDGE_ORIGIN = 'https://spacegho.st';
-export const BRIDGE_PATH = '/melodica/app/';
+export const BRIDGE_PATH = '/melodica/'; // every route of the shell (0.11.0)
 
 // Whether this page may speak to the extension at all: the production origin and path
 // exactly, or a local test server.

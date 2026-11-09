@@ -10,7 +10,7 @@ import { resolve, dirname } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = resolve(process.env.MELODICA_DIST || resolve(here, '..', 'dist'));
-const { Scrobbles, ListenTracker, ScrobbleError, listenThreshold, trackMetadata, PAGE_SIZE } = await import(pathToFileURL(resolve(dist, 'scrobble.js')).href);
+const { Scrobbles, ListenTracker, ScrobbleError, listenThreshold, trackMetadata, PAGE_SIZE, genomeTraits, validGenome } = await import(pathToFileURL(resolve(dist, 'scrobble.js')).href);
 const log = (...a) => console.log('[scrobble-unit]', ...a);
 
 // Threshold.
@@ -57,7 +57,8 @@ log('tracker ok');
 {
   const m = trackMetadata({ title: 'Song', artist: 'Band', album: 'LP', coverArt: 'https://img/x.jpg', trackToken: 'TT', audioUrl: 'https://a' }, 200.4);
   assert.deepEqual(m, { artist_name: 'Band', track_name: 'Song', release_name: 'LP', additional_info: { submission_client: 'melodica-web', duration_ms: 200400, art_url: 'https://img/x.jpg' } });
-  assert.equal(trackMetadata({ title: 'S', artist: 'B', coverArt: 'http://img' }, 0).additional_info.art_url, undefined, 'https art only');
+  assert.equal(trackMetadata({ title: 'S', artist: 'B', coverArt: 'http://img/a.jpg' }, 0).additional_info.art_url, 'http://img/a.jpg', 'http art as Pandora gives it');
+  assert.equal(trackMetadata({ title: 'S', artist: 'B', coverArt: 'data:x' }, 0).additional_info.art_url, undefined, 'only http(s) URLs');
 }
 log('body ok');
 
@@ -92,4 +93,30 @@ log('body ok');
   assert.equal(calls.length, before, 'no request without a bearer');
 }
 log('api ok');
+// Conquest v2: genome traits from the explanation; the thumb body.
+{
+  const P = "We're playing this track because it features ";
+  assert.deepEqual(genomeTraits(P + 'a subtle use of vocal harmony, mild rhythmic syncopation and acoustic sonority.'),
+    ['a subtle use of vocal harmony', 'mild rhythmic syncopation', 'acoustic sonority']);
+  assert.deepEqual(genomeTraits(P + 'minor key tonality.'), ['minor key tonality']);
+  assert.deepEqual(genomeTraits(P + 'x and y.'), ['x', 'y']);
+  assert.equal(genomeTraits('Something else.'), null);
+  assert.equal(genomeTraits(P + '.'), null);
+  assert.equal(genomeTraits(null), null);
+  const many = Array.from({ length: 20 }, (_, i) => `trait ${i}`);
+  assert.equal(validGenome(many).length, 12);
+  assert.deepEqual(validGenome(['ok', 'x'.repeat(65), '', 7, 'ok', 'b\u0001']), ['ok']);
+  assert.equal(validGenome([]), null);
+  const m = trackMetadata({ artist: 'A', title: 'T', genome: ['g1', 'g2'] }, 200);
+  assert.deepEqual(m.additional_info.genome, ['g1', 'g2']);
+  assert.equal('genome' in trackMetadata({ artist: 'A', title: 'T', genome: ['x'.repeat(65)] }, 200).additional_info, false);
+  assert.equal('genome' in trackMetadata({ artist: 'A', title: 'T' }, 200).additional_info, false);
+  const calls = [];
+  const s = new Scrobbles({ origin: 'https://spacegho.st', token: () => 'tok', fetch: async (u, init) => { calls.push([u, init]); return new Response('{}', { status: 200 }); } });
+  await s.thumb('up', { artist: 'Aurora Fields', title: 'Slow Light' });
+  assert.equal(calls[0][0], 'https://spacegho.st/scrobble/api/game/thumb');
+  assert.equal(calls[0][1].method, 'POST');
+  assert.deepEqual(JSON.parse(calls[0][1].body), { direction: 'up', artist_name: 'Aurora Fields', track_name: 'Slow Light' });
+}
+log('conquest ok');
 log('ALL OK');
