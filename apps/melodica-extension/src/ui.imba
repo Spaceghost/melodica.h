@@ -102,6 +102,7 @@ export tag Login
 					<span> "Remember me on this device"
 				<button#login-button.primary type="submit" disabled=busy> (busy ? "Signing in…" : "Sign in")
 				<p#login-message.message .error=(kind === 'error') .info=(kind === 'info') role="status"> message
+				<button#login-github.quiet type="button" disabled=busy @click=emit('github')> "Sign in with GitHub"
 				<p.fine> "Sign-in and every Pandora call go from the extension straight to Pandora; no relay sees them."
 
 export tag StationList

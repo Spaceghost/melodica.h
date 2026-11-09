@@ -92,7 +92,7 @@ const tuner = {
 };
 const haveTuner = !!tuner.https || existsSync(join(TUNER_DIR, 'tuner', '__main__.py'));
 
-const report = { steps: [], summary: '', ok: false, access: null, account: null, spots: null, update: null, bridge: null, coldStart: null, audio: null, browser: '', engine: '', extension: {}, blocked: [], failedRequests: [], shields: null };
+const report = { steps: [], summary: '', ok: false, access: null, account: null, spots: null, update: null, bridge: null, coldStart: null, resume: null, audio: null, browser: '', engine: '', extension: {}, blocked: [], failedRequests: [], shields: null };
 let acct = null;
 // The fake store feeds (extensions-site's shapes) naming a version every build is older than.
 const FAKE_VERSION = '99.0.0';
@@ -113,7 +113,7 @@ async function startTuner() {
   const ready = join(tuner.dir, 'ready');
   const args = ['-m', 'tuner', '--bind', '127.0.0.1', '--https-port', '8443', '--http-port', '8080',
     '--tls-auto', join(tuner.dir, 'certs'), '--user', tuner.user, '--password', tuner.password,
-    '--ready-file', ready, '--log-level', 'info', '--ads', '1'];
+    '--ready-file', ready, '--log-level', 'info', '--ads', '1', '--audio-https'];
   const out = [];
   tuner.proc = spawn('python3', args, { cwd: TUNER_DIR, stdio: ['ignore', 'pipe', 'pipe'] });
   tuner.proc.stdout.on('data', (d) => out.push(String(d)));
@@ -252,6 +252,7 @@ test.afterAll(async () => {
     audio: report.audio,
     bridge: report.bridge,
     coldStart: report.coldStart,
+    resume: report.resume,
     blocked: report.blocked,
     failedRequests: report.failedRequests,
     shields: report.shields,
@@ -387,6 +388,7 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     console.log(`update: ${JSON.stringify(report.update)}`);
     step('update banner');
     await popup.screenshot({ path: shot('login') });
+    await expect(popup.locator('#login-github'), 'the login card offers Sign in with GitHub').toHaveText('Sign in with GitHub');
 
     // Access: an email that is not on the allow-list is not logged in (Pandora is not
     // asked); the access server records the request.
@@ -1177,7 +1179,10 @@ test('cold start: the web app finds the extension with no extension page opened'
     await page.addInitScript(capture);
     await page.goto(`https://${WEB_HOST}${APP_PATH}`);
     await page.waitForFunction(() => window.__ext.some((m) => m.type === 'present' || m.type === 'ready'), null, { timeout: 5_000 });
-    const detectedMs = await page.evaluate(() => Math.round(window.__ext.find((m) => m.type === 'present' || m.type === 'ready').at));
+    // From the document's arrival (responseStart): the page cannot hear the extension
+    // before it exists. The time from navigation start is kept as well.
+    const times = await page.evaluate(() => { const at = window.__ext.find((m) => m.type === 'present' || m.type === 'ready').at; const nav = performance.getEntriesByType('navigation')[0]; return { fromNav: Math.round(at), fromDocument: Math.round(at - (nav ? nav.responseStart : 0)) }; });
+    const detectedMs = times.fromDocument;
     await page.evaluate(() => window.postMessage({ melodica: 1, type: 'subscribe' }, location.origin));
     await page.waitForFunction(() => window.__ext.some((m) => m.type === 'state' && m.state && m.state.loggedIn && (m.state.stations || []).length > 0), null, { timeout: 20_000 });
     const signed = await page.evaluate(() => { const m = window.__ext.find((x) => x.type === 'state' && x.state && x.state.loggedIn && (x.state.stations || []).length > 0); return { at: Math.round(m.at), stations: m.state.stations.length, first: m.state.stations[0] }; });
@@ -1188,10 +1193,10 @@ test('cold start: the web app finds the extension with no extension page opened'
     await page.waitForFunction(() => window.__ext.some((m) => m.type === 'state' && m.state && m.state.status === 'playing'), null, { timeout: 30_000 });
     const pause = await command(page, `${label}-pause`, 'pause');
     expect(pause.ok, `${label}: pause over the bridge (${pause.error || ''})`).toBe(true);
-    const r = { detectedMs, signedInMs: signed.at, stations: signed.stations, extensionPages: extPages, offscreenBeforePlay: offscreenBefore, played: true, paused: true };
+    const r = { detectedMs, detectedFromNavMs: times.fromNav, signedInMs: signed.at, stations: signed.stations, extensionPages: extPages, offscreenBeforePlay: offscreenBefore, played: true, paused: true };
     console.log(`cold start ${label}: ${JSON.stringify(r)}`);
     expect(extPages, `${label}: no extension page open`).toEqual([]);
-    expect(detectedMs, `${label}: the page saw present/ready within 1 s of navigation`).toBeLessThan(1000);
+    expect(detectedMs, `${label}: the page saw present/ready within 1 s of its document arriving`).toBeLessThan(1000);
     await page.close();
     return r;
   };
@@ -1218,5 +1223,160 @@ test('cold start: the web app finds the extension with no extension page opened'
   step('cold start: service worker stopped, page alone');
 
   report.coldStart = { ok: true, restart, workerStopped: afterStop };
+  report.ok = firstOk;
+});
+
+// Resume the last song: the device whose engine played it keeps it (sealed record and
+// an audio copy) and plays it again from where it was after the offscreen document and
+// the worker went away, after a browser restart, and after its link stopped working.
+// The fixture's songs are about 10 s long, so "where it was" is a few seconds in, not 1:23.
+test('resume: the last song continues where it was', async () => {
+  test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+  const firstOk = report.ok;
+  report.ok = false;
+  report.resume = { ok: false };
+  const id = await extensionId();
+  const ext = (p) => `chrome-extension://${id}/${p}`;
+  const sw = async () => context.serviceWorkers()[0] || context.waitForEvent('serviceworker', { timeout: 15_000 });
+  const ctlPage = async () => { const p = await context.newPage(); await p.goto(ext('options.html')); return p; };
+  let ctl = await ctlPage();
+  const send = (m) => ctl.evaluate((x) => chrome.runtime.sendMessage(x), m);
+  const stateNow = async () => (await send({ type: 'player-get' })).state;
+  const stopWorker = async () => {
+    await (await sw()).evaluate(() => 1);
+    const internals = await context.newPage();
+    await internals.goto('chrome://serviceworker-internals/');
+    const item = internals.locator('.serviceworker-item', { hasText: `chrome-extension://${id}/` });
+    await expect(item).toContainText('Running Status: RUNNING', { timeout: 10_000 });
+    await item.getByRole('button', { name: 'Stop', exact: true }).click();
+    await expect(item).toContainText('Running Status: STOPPED', { timeout: 10_000 });
+    await internals.close();
+  };
+  // Play a station until the position is past `at` seconds; returns that state.
+  const playTo = async (at) => {
+    if (!(await stateNow()).loggedIn) {
+      acct.allow(tuner.user);
+      const li = await send({ type: 'login', email: tuner.user, password: tuner.password, remember: true });
+      expect(li && li.ok, `login (${li && li.error})`).toBe(true);
+    }
+    if (!((await stateNow()).stations || []).length) await send({ type: 'stations' });
+    await expect.poll(async () => ((await stateNow()).stations || []).length, { timeout: 20_000 }).toBeGreaterThan(0);
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const list = (await stateNow()).stations;
+      const st = list[attempt % list.length];
+      await send({ type: 'player', action: 'play', station: { token: st.token, name: st.name } });
+      const t0 = Date.now();
+      let s = null;
+      while (Date.now() - t0 < 20_000) {
+        s = await stateNow();
+        if (s.status === 'playing' && s.track && !s.track.ad && s.position >= at && (s.duration || s.track.duration || 0) - s.position > 3) return s;
+        if (s.track && s.track.ad) break;
+        await ctl.waitForTimeout(250);
+      }
+    }
+    throw new Error('no song played past the mark');
+  };
+  // Open a popup and press play: the saved song, from its position.
+  const resumeInPopup = async (label, want) => {
+    const pop = await context.newPage();
+    await pop.goto(ext('popup.html'));
+    await expect(pop.locator('#np-title')).toHaveText(want.title, { timeout: 20_000 });
+    await expect(pop.locator('#player-status')).toHaveText('Paused', { timeout: 10_000 });
+    const shown = await stateNowFrom(pop);
+    await pop.click('#play');
+    let s = null;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 20_000) {
+      s = await stateNowFrom(pop);
+      if (s.status === 'playing' && s.track && s.track.trackToken === want.trackToken && s.position > 0) break;
+      await pop.waitForTimeout(100);
+    }
+    // The audio really plays on from there: the position moves.
+    let moved = null;
+    const tM = Date.now();
+    while (Date.now() - tM < 6_000) {
+      moved = await stateNowFrom(pop);
+      if (moved.track && moved.track.trackToken === want.trackToken && moved.position > (s && s.position || 0) + 1) break;
+      if (moved.track && moved.track.trackToken !== want.trackToken) break;
+      await pop.waitForTimeout(200);
+    }
+    const r = { label, saved: want.position, shown: shown.position, resumedAt: s && s.position, advancedTo: moved && moved.track && moved.track.trackToken === want.trackToken ? moved.position : null, status: s && s.status, sameTrack: !!(s && s.track && s.track.trackToken === want.trackToken), last: shown.last && shown.last.trackToken === want.trackToken };
+    console.log(`resume ${label}: ${JSON.stringify(r)}`);
+    expect(r.sameTrack && r.status === 'playing', `${label}: the same song plays`).toBe(true);
+    expect(Math.abs(r.resumedAt - want.position), `${label}: resumed within 1 s of ${want.position.toFixed(1)} s`).toBeLessThan(1.5);
+    expect(r.last, `${label}: state.last names the song`).toBe(true);
+    expect(r.advancedTo != null && r.advancedTo > r.resumedAt + 1, `${label}: the position moves on after Resume (${r.advancedTo})`).toBe(true);
+    await pop.close();
+    return r;
+  };
+  const stateNowFrom = async (p) => (await p.evaluate(() => chrome.runtime.sendMessage({ type: 'player-get' }))).state;
+  const pauseAndSave = async () => {
+    await send({ type: 'player', action: 'pause' });
+    await ctl.waitForTimeout(800);
+    return stateNow();
+  };
+
+  // 1. The offscreen document and the worker torn down mid-song.
+  const a = await playTo(3);
+  await ctl.waitForTimeout(2500);
+  const beforeKill = await stateNow();
+  await (await sw()).evaluate(() => chrome.offscreen.closeDocument());
+  const killedAt = beforeKill.position + 0; // the record is at most 2 s old; the last report at most 1 s
+  await ctl.close();
+  await stopWorker();
+  ctl = await ctlPage();
+  const savedKill = (await stateNow());
+  const r1 = await resumeInPopup('offscreen and worker gone', { title: a.track.title, trackToken: a.track.trackToken, position: savedKill.position });
+  expect(Math.abs(savedKill.position - killedAt), 'the saved position is the one before the teardown').toBeLessThan(2.5);
+  step('resume: offscreen document and worker gone');
+
+  // 2. A browser restart (a fresh song, so a few seconds of it are left to hear).
+  await playTo(2);
+  const b = await pauseAndSave();
+  await context.close();
+  context = await launchBrowser();
+  ctl = await ctlPage();
+  const r2 = await resumeInPopup('browser restart', { title: b.track.title, trackToken: b.track.trackToken, position: b.position });
+  step('resume: browser restart');
+
+  // 3. The link stopped working: the audio copy plays from the position, then the station goes on.
+  await playTo(2);
+  await ctl.waitForTimeout(800); // the copy is fetched while the song plays
+  const c = await pauseAndSave();
+  const copies = await ctl.evaluate(async () => (await (await caches.open('melodica-audio')).keys()).length);
+  await send({ type: 'test-expire-last' });
+  await (await sw()).evaluate(() => chrome.offscreen.closeDocument().catch(() => null));
+  const r3 = await resumeInPopup('expired link, audio copy', { title: c.track.title, trackToken: c.track.trackToken, position: c.position });
+  const tNext = Date.now();
+  let after = null;
+  while (Date.now() - tNext < 30_000) {
+    after = await stateNow();
+    if (after.track && after.track.trackToken !== c.track.trackToken && after.status === 'playing') break;
+    await ctl.waitForTimeout(250);
+  }
+  expect(after.track.trackToken !== c.track.trackToken && after.status === 'playing', 'after the copy ends the station goes on').toBe(true);
+  step('resume: expired link plays the audio copy, then the station');
+
+  // 4. The link stopped working and there is no copy: the station goes on and says so.
+  const d = await playTo(2);
+  await pauseAndSave();
+  await send({ type: 'test-expire-last', dropCopy: true });
+  await (await sw()).evaluate(() => chrome.offscreen.closeDocument().catch(() => null));
+  await send({ type: 'player', action: 'resume' });
+  let e = null;
+  const tE = Date.now();
+  while (Date.now() - tE < 30_000) {
+    e = await stateNow();
+    if (e.track && e.track.trackToken !== d.track.trackToken && e.status === 'playing') break;
+    await ctl.waitForTimeout(250);
+  }
+  console.log(`resume no copy: ${JSON.stringify({ status: e.status, notice: e.notice, other: e.track && e.track.trackToken !== d.track.trackToken })}`);
+  expect(e.track.trackToken !== d.track.trackToken && e.status === 'playing', 'no copy: the station goes on').toBe(true);
+  expect(e.notice, 'no copy: the state says so').toMatch(/could not be played again/);
+  step('resume: expired link and no copy, the station goes on');
+  await send({ type: 'player', action: 'stop' });
+  await ctl.close();
+
+  report.resume = { ok: true, offscreenAndWorker: r1, restart: r2, expiredWithCopy: { ...r3, copiesBefore: copies, continued: true }, expiredNoCopy: { continued: true, notice: e.notice }, note: 'fixture songs are about 10 s, so positions are a few seconds in' };
   report.ok = firstOk;
 });

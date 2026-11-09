@@ -15,18 +15,43 @@
 
 const HISTORY_MAX = 20
 const REPORT_EVERY = 1000
+# The "last playing" record (host.remember) is written this often while playing,
+# and on pause, stop and teardown.
+const REMEMBER_EVERY = 2000
+# A restored playlist remainder older than this is dropped (its links expire).
+const QUEUE_FRESH_MS = 30 * 60 * 1000
+# The audio copy of the song this engine plays (Cache Storage, one entry per track).
+const AUDIO_CACHE = 'melodica-audio'
+const cacheKey = do(token) "https://melodica.invalid/audio/{encodeURIComponent(token)}"
+
+export def dropAudioCopies keep = null
+	return unless globalThis.caches
+	try
+		const c = await globalThis.caches.open(AUDIO_CACHE)
+		for req in await c.keys()
+			await c.delete(req) unless keep and req.url === cacheKey(keep)
+	catch e
+		null
 
 export class Engine
 	def constructor host
 		self.api = host.api
 		self.report = host.report or (do(s) null)
 		self.log = host.log or (do(s) null)
+		self.rememberHost = host.remember or (do(r) null)
+		self.lastRemember = 0
+		# The current track came from a saved record: {cacheTried, url}.
+		self.restored = null
+		self.copyUrl = null
+		self.restoring = null
+		# Said once on the song after a saved one could not be played again.
+		self.continueNotice = ''
 		# Paused by the user: a track that finishes loading afterwards stays paused.
 		self.held = no
 		self.doc = host.document or document
 		self.state = {
 			status: 'idle', station: null, track: null, position: 0, duration: 0,
-			volume: 80, quality: 'high', queueLength: 0, error: '', history: [], changedAt: 0
+			volume: 80, quality: 'high', queueLength: 0, error: '', notice: '', history: [], changedAt: 0
 		}
 		self.queue = []
 		self.generation = 0
@@ -44,6 +69,87 @@ export class Engine
 		self.audio.addEventListener('error', do onError())
 		self.audio.addEventListener('durationchange', do onTime(yes))
 		setupMediaSession()
+		# Teardown (Chrome closing the offscreen document, a closed tab or page): save where it was.
+		globalThis.addEventListener('pagehide', do saveLast()) if globalThis.addEventListener
+
+	# --- the "last playing" record -------------------------------------------
+
+	def lastRecord
+		const t = state.track
+		return null unless t and !t.ad and state.station and t.trackToken
+		{station: state.station, track: t, position: Number(audio.currentTime) or state.position or 0, duration: state.duration or t.duration or 0, quality: state.quality, queue: queue.filter(do(x) x and x.kind !== 'spot' and !x.ad).slice(0, 4), savedAt: Date.now()}
+
+	def saveLast urgent = yes
+		const r = lastRecord()
+		lastRemember = Date.now()
+		rememberHost(r, urgent) if r
+
+	# While this engine plays a song it keeps a copy of its audio bytes, so a resume
+	# can play it after its link expired. Only the song playing is kept; quota and
+	# network errors leave no copy.
+	def keepCopy song
+		return unless globalThis.caches and song and !song.ad and song.audioUrl and song.trackToken
+		try
+			await dropAudioCopies(song.trackToken)
+			const c = await globalThis.caches.open(AUDIO_CACHE)
+			return if await c.match(cacheKey(song.trackToken))
+			const res = await globalThis.fetch(song.audioUrl, {credentials: 'omit', cache: 'no-store'})
+			return log("audio copy: HTTP {res.status}") unless res.ok and res.status === 200
+			const blob = await res.blob()
+			return unless state.track and state.track.trackToken === song.trackToken
+			await c.put(cacheKey(song.trackToken), new Response(blob, {headers: {'content-type': blob.type or 'audio/mp4'}}))
+			log("audio copy kept ({Math.round(blob.size / 1024)} KiB)")
+		catch e
+			log("audio copy not kept: {e and e.name or e} {e and e.message or ''}")
+
+	def copyOf token
+		return null unless globalThis.caches and token
+		try
+			const c = await globalThis.caches.open(AUDIO_CACHE)
+			const res = await c.match(cacheKey(token))
+			return null unless res
+			URL.createObjectURL(await res.blob())
+		catch e
+			null
+
+	def releaseCopyUrl
+		URL.revokeObjectURL(copyUrl) if copyUrl
+		copyUrl = null
+
+	# Seek once the element knows the media (setting it earlier may not stick).
+	def seekWhenReady position
+		const pos = Math.max(0, Number(position) or 0)
+		const go = do
+			try
+				audio.currentTime = pos
+			catch e
+				null
+		if audio.readyState >= 1 then go() else audio.addEventListener('loadedmetadata', go, {once: yes})
+
+	# A saved record: the song paused at its position, the station and what was queued.
+	def restore r
+		return no unless r and r.track and r.track.trackToken and r.station
+		generation += 1
+		held = yes
+		releaseCopyUrl()
+		state.station = r.station
+		state.track = r.track
+		state.position = Number(r.position) or 0
+		state.duration = Number(r.duration) or r.track.duration or 0
+		state.quality = r.quality if r.quality
+		state.status = 'paused'
+		state.error = ''
+		queue = (Date.now() - (Number(r.savedAt) or 0) < QUEUE_FRESH_MS and Array.isArray(r.queue)) ? r.queue.slice() : []
+		restored = {cacheTried: no}
+		applyVolume()
+		# The copy is the exact bytes and never expires; the link is the fallback.
+		copyUrl = await copyOf(r.track.trackToken)
+		restored.cacheTried = !!copyUrl
+		audio.src = copyUrl or r.track.audioUrl
+		log("restored the last song at {Math.round(state.position)} s ({copyUrl ? 'from its audio copy' : 'from its link'})")
+		seekWhenReady(state.position)
+		emit()
+		yes
 
 	get snapshot
 		Object.assign({}, state, {history: state.history.slice()})
@@ -74,6 +180,7 @@ export class Engine
 		log("{what}: status {state.status}, track {state.track ? (state.track.ad ? 'spot' : 'song') : 'none'}, src {audio.src ? 'set' : 'none'}, paused {audio.paused}, ended {audio.ended}, ready {audio.readyState}, held {held}, fetching {fetching}")
 
 	def resume
+		await restoring if restoring
 		trace('resume')
 		held = no
 		if (audio.ended or fetching) and state.station
@@ -101,10 +208,12 @@ export class Engine
 		held = yes
 		audio.pause()
 		set({status: 'paused'}) if state.track and (state.status === 'playing' or state.status === 'loading')
+		saveLast()
 
 	# By the reported status, not the element: between two tracks the element has ended
 	# (paused) while the station is still playing and the next track is loading.
 	def toggle
+		await restoring if restoring
 		if state.status === 'playing' or state.status === 'loading'
 			pause()
 		else
@@ -147,9 +256,13 @@ export class Engine
 		unless song.ad
 			state.history.unshift(song)
 			state.history = state.history.slice(0, HISTORY_MAX)
-		set({track: song, position: 0, duration: song.duration or 0, status: 'loading', error: ''})
+		set({track: song, position: 0, duration: song.duration or 0, status: 'loading', error: '', notice: continueNotice})
+		continueNotice = ''
 		applyVolume()
+		restored = null
+		releaseCopyUrl()
 		audio.src = song.audioUrl
+		keepCopy(song)
 		if held
 			set({status: 'paused'})
 			updateMediaSession()
@@ -164,6 +277,7 @@ export class Engine
 		updateMediaSession()
 
 	def stop
+		saveLast()
 		generation += 1
 		audio.pause()
 		audio.removeAttribute('src')
@@ -181,6 +295,9 @@ export class Engine
 	# A track finished: a slot is registered with Pandora, then the next one plays.
 	def ended
 		const song = state.track
+		restored = null
+		releaseCopyUrl()
+		await dropAudioCopies()
 		if song and song.ad and api.registerSpot
 			try
 				await api.registerSpot(song)
@@ -223,6 +340,13 @@ export class Engine
 		state.volume = saved.volume if Number.isFinite(saved.volume)
 		state.quality = saved.quality if saved.quality
 		state.history = Array.isArray(saved.history) ? saved.history.slice(0, HISTORY_MAX) : []
+		const last = saved.last
+		if last and last.track and (!saved.track or saved.track.trackToken === last.track.trackToken) and saved.status !== 'stopped'
+			const pos = saved.track ? Math.max(Number(saved.position) or 0, Number(last.position) or 0) : last.position
+			restoring = restore(Object.assign({}, last, {position: pos}))
+			const done = await restoring
+			restoring = null
+			return if done
 		state.station = saved.station or null
 		if saved.track and saved.track.audioUrl and saved.status !== 'stopped' and saved.status !== 'idle'
 			state.track = saved.track
@@ -264,10 +388,30 @@ export class Engine
 		if force or now - lastReport >= REPORT_EVERY
 			lastReport = now
 			emit()
+		saveLast(no) if !audio.paused and now - lastRemember >= REMEMBER_EVERY
 
 	# A track that cannot be played is skipped; several in a row stop the station.
 	def onError
 		const song = state.track
+		if restored and song
+			# A saved song whose link expired or fails: its audio copy at the same position,
+			# else the station goes on.
+			const pos = state.position
+			unless restored.cacheTried
+				restored.cacheTried = yes
+				copyUrl = await copyOf(song.trackToken)
+				if copyUrl
+					log("the saved link failed; playing the audio copy")
+					audio.src = copyUrl
+					seekWhenReady(pos)
+					audio.play().catch(do(e) null) unless held
+					return
+			log("the saved link failed and there is no audio copy; continuing the station")
+			restored = null
+			queue = []
+			continueNotice = 'The saved song could not be played again; continuing the station.'
+			held = no
+			return await next()
 		failures += 1
 		log("audio error {audio.error and audio.error.code} {audio.error and audio.error.message or ''} ({song and song.ad ? 'spot' : 'song'} {song and song.audioFormat or ''}; {failures} in a row)")
 		if failures >= 3

@@ -340,6 +340,22 @@ pause, next) and metadata (title, artist, album, cover) where it runs, so the
 keyboard and the OS media controls work while no page is open. The manifest's
 `commands` add Alt+Shift+P (play/pause) and Alt+Shift+N (next).
 
+Resume (since 0.8.4): the engine saves the song it plays (station, track, link,
+position, the next few queued songs) every 2 s and on pause, stop and teardown,
+sealed with its own AES-GCM key into `storage.local` (`lastPlay`), and keeps a copy
+of that song's audio in Cache Storage (`melodica-audio`, the song playing only; a
+finished song's copy is deleted; quota and network errors just leave no copy). After
+a browser restart, a stopped worker or a closed offscreen document, the popup, the
+player tab and the bridge show that song paused at its position; Resume plays it from
+there: from its link, else from the copy, else the station goes on and says so.
+Signing out of Pandora deletes the record and the copy. Pages that are remotes never
+fetch or keep audio. Proven in Chromium and Brave against melodica-tuner (whose songs
+are about 10 s, so a few seconds in, not minutes): after the offscreen document and
+the worker went away, after a browser restart, and with the link made unusable
+(audio copy, then the station; and with no copy, the station). Not run in Firefox or
+Safari, and not against real Pandora audio hosts: a copy needs the audio host to be
+inside the extension's host permissions (`*.pandora.com`).
+
 ## Updates
 
 What updates by itself: **Firefox** reads `gecko.update_url`
@@ -686,6 +702,9 @@ request. The password never goes there. The optional spacegho.st account's
 tokens are kept in `storage.local` under `account` until you sign out (which
 revokes the refresh token) or the server refuses them; they are sent only to
 spacegho.st. Nothing is logged with tokens or codes in it.
+
+The last song (Resume, above) stays on this device: sealed in `storage.local`, its
+audio in Cache Storage; neither leaves the browser.
 
 Scrobbles (above, Options) go to `spacegho.st/scrobble/api/me/listens` with the
 melodica token; turning scrobbling off stops them and empties the queue.

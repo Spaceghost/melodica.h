@@ -16,11 +16,11 @@
 import { Core } from './core.imba'
 import { Pandora, PandoraError, QUALITIES } from './pandora.imba'
 import { browser, loadSettings, normalizeEndpoint, fromBase64, toBase64, SETTINGS_DEFAULTS } from './shared.imba'
-import { seal, unseal, wipe, vaultAvailable } from './vault.imba'
+import { seal, unseal, wipe, vaultAvailable, sealAs, unsealAs, wipeAs } from './vault.imba'
 import { SCROBBLE_NOTICE, LEADERBOARD_URL, MELODICA_PAGES, recentFrom, listenOf, prependListen, isSpot, trackMetadata, thresholdSeconds, playingNow, single, enqueue, outcome, genomeTraits } from './scrobble.imba'
 import { normalizeAccountBase, randomString, pkceChallenge, authorizeUrl, parseRedirect, tokenForm, storedTokens, accessFresh, policyFrom, spotsFlag, accountLabel, jwtClaims, CLIENT_ID, TAB_CLIENT_ID, TAB_REDIRECT, POLICY_DEFAULT } from './account.imba'
 import { feedUrl, latestVersion, bannerState, compareVersions, STORE_URL } from './update.imba'
-import { Engine } from './engine.imba'
+import { Engine, dropAudioCopies } from './engine.imba'
 
 const METHOD = /^[a-z]+\.[A-Za-z]+$/
 const PLAYER_URL = browser.runtime.getURL('player.html')
@@ -48,6 +48,10 @@ let logLines = []
 # Playback: the last state the engine reported (persisted in storage.session),
 # plus the engine itself when it runs in this document (Firefox).
 let player = Object.assign({}, PLAYER_IDLE)
+# The song this device's engine played last (sealed in storage.local `lastPlay`):
+# {station, track, position, duration, quality, queue, savedAt}.
+let lastPlay = null
+let lastSealedAt = 0
 let engine = null
 let offscreenReady = null
 # Tabs whose page subscribed over the bridge (docs/BRIDGE.md layer 2). Content
@@ -153,8 +157,21 @@ def boot
 		# A worker restart mid-song in Chromium keeps the offscreen document and its
 		# audio; it reports again on the next command. Anything else is at best paused.
 		player.status = 'paused' if player.status === 'playing' and !browser.offscreen and !TAB_ENGINE
+		# Chromium: "playing" with no offscreen document left means it was torn down.
+		if player.status === 'playing' and browser.offscreen and browser.runtime.getContexts
+			try
+				player.status = 'paused' unless (await browser.runtime.getContexts({contextTypes: ['OFFSCREEN_DOCUMENT']})).length
+			catch e
+				null
 	player.volume = Number(settings.volume) or player.volume
 	player.quality = settings.quality
+	# After a browser restart (or anything that emptied the session) the last song is
+	# shown paused at its position; Resume plays it from there.
+	lastPlay = await unsealAs('lastPlay')
+	lastPlay = null unless lastPlay and lastPlay.track and lastPlay.station
+	if lastPlay and !player.track
+		player = Object.assign({}, player, {status: 'paused', station: lastPlay.station, track: lastPlay.track, position: Number(lastPlay.position) or 0, duration: Number(lastPlay.duration) or 0, error: '', changedAt: Date.now()})
+		note("last song restored, paused at {Math.round(player.position)} s")
 	{core, client, settings, saved}
 
 # The User-Agent for the endpoint: the client's own when the extension holds a
@@ -985,6 +1002,7 @@ def forgetPandora why
 	sessionMeta = null
 	await setMelodica(MELODICA_IDLE)
 	await wipe()
+	await forgetLastPlay()
 	await browser.storage.local.set({remember: no})
 	state.settings.remember = no
 	await addRevoked(sid) if sid
@@ -1038,7 +1056,27 @@ def openPlayer
 
 # What every view gets: the engine's state plus the session bits a view needs.
 def playerView
-	Object.assign({}, player, {stations: state and state.saved.stations or [], loggedIn: !!(state and state.client.loggedIn), account: {signedIn: account.signedIn, label: account.label}, user: userView(), scrobbling: scrobbleView(), access: {allowed: !!access.allowed, message: access.allowed ? '' : String(access.message or '')}})
+	Object.assign({}, player, {last: lastView(), stations: state and state.saved.stations or [], loggedIn: !!(state and state.client.loggedIn), account: {signedIn: account.signedIn, label: account.label}, user: userView(), scrobbling: scrobbleView(), access: {allowed: !!access.allowed, message: access.allowed ? '' : String(access.message or '')}})
+
+# Save the engine's "last playing" record (at most every 2 s; pause, stop and
+# teardown come through at once).
+def saveLastPlay r, urgent = no
+	return unless r and r.track and r.station
+	lastPlay = r
+	return unless urgent or Date.now() - lastSealedAt >= 1500
+	lastSealedAt = Date.now()
+	sealAs('lastPlay', r).catch(do(e) note("last song not saved: {e and e.message or e}"))
+
+def forgetLastPlay
+	lastPlay = null
+	await wipeAs('lastPlay')
+	await dropAudioCopies()
+
+# `last` in the player state (the bridge and the views): what Resume would play.
+def lastView
+	return null unless lastPlay and lastPlay.track
+	const t = lastPlay.track
+	{title: t.title, artist: t.artist, album: t.album, coverArt: t.coverArt, trackToken: t.trackToken, station: lastPlay.station, position: Number(lastPlay.position) or 0, duration: Number(lastPlay.duration) or 0, savedAt: lastPlay.savedAt}
 
 def publicTrack song
 	return null unless song
@@ -1134,9 +1172,10 @@ def localEngine
 			registerSpot: do(s) state.client.registerSpot(s.stationId, s.trackingTokens or [])
 		}
 		report: do(s) playerChanged(s)
+		remember: do(r, urgent) saveLastPlay(r, urgent)
 		log: note
 	})
-	engine.hydrate(player)
+	engine.hydrate(Object.assign({}, player, {last: lastPlay}))
 	engine
 
 # Chromium: the offscreen document, created on demand. Chrome closes an idle
@@ -1281,7 +1320,7 @@ def handle msg, sender
 	const client = state.client
 	# Stale account and access answers are asked again; player traffic (the views,
 	# the bridge) is not held up by those round trips.
-	const quick = msg.type === 'player' or msg.type === 'player-get' or msg.type === 'player-subscribe' or msg.type === 'engine-state' or msg.type === 'engine-log' or msg.type === 'wake'
+	const quick = msg.type === 'engine-last' or msg.type === 'player' or msg.type === 'player-get' or msg.type === 'player-subscribe' or msg.type === 'engine-state' or msg.type === 'engine-log' or msg.type === 'wake'
 	if !accountChecking and account.checkedAt and Date.now() - account.checkedAt > ACCOUNT_MAX_AGE
 		quick ? checkAccount().catch(do(e) null) : await checkAccount()
 	if !accessChecking and access.checkedAt and Date.now() - access.checkedAt > ACCESS_MAX_AGE
@@ -1478,7 +1517,20 @@ def handle msg, sender
 			const waiting = engineWaiters
 			engineWaiters = []
 			setTimeout((do waiting.forEach(do(f) f())), 0)
-			{saved: player}
+			{saved: Object.assign({}, player, {last: lastPlay})}
+		when 'test-expire-last'
+			# Smoke tests only (extension pages): the saved song's link stops working.
+			throw new Error('extension pages only') unless extensionPage(sender)
+			const dead = 'http://127.0.0.1:9/expired.m4a'
+			lastPlay.track = Object.assign({}, lastPlay.track, {audioUrl: dead}) if lastPlay and lastPlay.track
+			player = Object.assign({}, player, {track: Object.assign({}, player.track, {audioUrl: dead})}) if player.track
+			await session.set({player})
+			if msg.dropCopy
+				await dropAudioCopies()
+			{}
+		when 'engine-last'
+			saveLastPlay(msg.record, !!msg.urgent) if msg.record and typeof msg.record === 'object'
+			{}
 		when 'engine-log'
 			note("engine: {String(msg.line or '').slice(0, 300)}")
 			{}

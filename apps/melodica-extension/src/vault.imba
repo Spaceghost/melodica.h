@@ -41,11 +41,11 @@ def withStore mode, fn
 	finally
 		db.close()
 
-def loadKey create
-	let key = await withStore('readonly', do(s) request(s.get(KEY_ID)))
+def loadKey create, id = KEY_ID
+	let key = await withStore('readonly', do(s) request(s.get(id)))
 	return key if key or !create
 	key = await crypto.subtle.generateKey({name: 'AES-GCM', length: 256}, no, ['encrypt', 'decrypt'])
-	await withStore('readwrite', do(s) request(s.put(key, KEY_ID)))
+	await withStore('readwrite', do(s) request(s.put(key, id)))
 	key
 
 def b64 bytes
@@ -89,5 +89,37 @@ export def wipe
 	return unless vaultAvailable()
 	try
 		await withStore('readwrite', do(s) request(s.delete(KEY_ID)))
+	catch e
+		null
+
+# The same sealing for other records, each under its own key and storage.local name
+# (the "last playing" record: `lastPlay`, key "last").
+export def sealAs name, record
+	return no unless vaultAvailable()
+	const key = await loadKey(yes, name)
+	const iv = crypto.getRandomValues(new Uint8Array(12))
+	const ct = await crypto.subtle.encrypt({name: 'AES-GCM', iv}, key, new TextEncoder().encode(JSON.stringify(record)))
+	const patch = {}
+	patch[name] = {v: 1, iv: b64(iv), ct: b64(ct)}
+	await browser.storage.local.set(patch)
+	yes
+
+export def unsealAs name
+	return null unless vaultAvailable()
+	const got = (await browser.storage.local.get(name))[name]
+	return null unless got and got.v === 1 and typeof got.iv === 'string' and typeof got.ct === 'string'
+	try
+		const key = await loadKey(no, name)
+		return null unless key
+		const plain = await crypto.subtle.decrypt({name: 'AES-GCM', iv: unb64(got.iv)}, key, unb64(got.ct))
+		JSON.parse(new TextDecoder().decode(plain))
+	catch e
+		null
+
+export def wipeAs name
+	await browser.storage.local.remove(name)
+	return unless vaultAvailable()
+	try
+		await withStore('readwrite', do(s) request(s.delete(name)))
 	catch e
 		null

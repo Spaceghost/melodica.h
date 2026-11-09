@@ -16,7 +16,8 @@ const eq = (a, b, what) => {
 
 const song = { title: 'Slow Light', artist: 'Aurora Fields', album: 'Night Bus', coverArt: 'https://img.example/a.jpg', duration: 200, trackToken: 'T1', audioUrl: 'https://audio.example/x', station: 'QuickMix' };
 eq(trackMetadata(song), { artist_name: 'Aurora Fields', track_name: 'Slow Light', additional_info: { submission_client: 'melodica-extension', duration_ms: 200000, art_url: 'https://img.example/a.jpg' }, release_name: 'Night Bus' }, 'metadata: only artist, title, album, duration, art');
-eq(trackMetadata({ ...song, coverArt: 'http://img.example/a.jpg', album: '' }).additional_info.art_url, undefined, 'plain-http art dropped');
+eq(trackMetadata({ ...song, coverArt: 'http://img.example/a.jpg', album: '' }).additional_info.art_url, 'http://img.example/a.jpg', 'http art sent as Pandora gives it');
+eq(trackMetadata({ ...song, coverArt: 'javascript:alert(1)' }).additional_info.art_url, undefined, 'non-web art dropped');
 eq(trackMetadata({ ...song, duration: 0 }, 180).additional_info.duration_ms, 180000, 'duration from the player');
 eq(genomeTraits([' minor key tonality ', 'electric guitar riffs', 'minor key tonality', 7, '', 'x'.repeat(65)]), ['minor key tonality', 'electric guitar riffs'], 'genome: trimmed strings of at most 64, no repeats');
 eq(genomeTraits(Array.from({ length: 20 }, (_, i) => `trait ${i}`)).length, 12, 'genome: at most 12');

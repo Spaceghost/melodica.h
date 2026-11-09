@@ -212,7 +212,7 @@ tag Popup
 							<h2> "melodica could not start"
 							<p.message.error#status role="alert"> message
 					elif view === 'login'
-						<Login busy=busy message=message kind=kind @login=login>
+						<Login busy=busy message=message kind=kind @login=login @github=accountAction('account-signin')>
 					else
 						<div.ext-account>
 							<span#signed-in> (user.username or "Signed in")

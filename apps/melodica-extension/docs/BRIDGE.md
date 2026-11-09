@@ -35,7 +35,7 @@ becomes a view of that playback and a remote for it, instead of running its own 
 | page → ext | `{melodica:1, type:'subscribe'}`: start receiving state; answered at once with a `state` |
 | page → ext | `{melodica:1, type:'unsubscribe'}` |
 | ext → page | `{melodica:1, type:'state', state}` on subscribe and on every change (about once a second while playing) |
-| page → ext | `{melodica:1, type:'command', id, action, …}`: `play` (`station: {token, name}` to start a station, none to resume), `pause`, `toggle`, `next`, `love`, `ban`, `tired`, `stop`, `volume` (`value` 0–100), `quality` (`value` high/medium/low), `stations` (reload the list), `openLogin` or `open-login` (opens the extension's sign-in: the toolbar popup where the browser allows it, else the popup page in a tab) |
+| page → ext | `{melodica:1, type:'command', id, action, …}`: `play` (`station: {token, name}` to start a station, none to resume), `resume` (since 0.8.4: the song in `last` from its saved position), `pause`, `toggle`, `next`, `love`, `ban`, `tired`, `stop`, `volume` (`value` 0–100), `quality` (`value` high/medium/low), `stations` (reload the list), `openLogin` or `open-login` (opens the extension's sign-in: the toolbar popup where the browser allows it, else the popup page in a tab) |
 | ext → page | `{melodica:1, type:'result', id, ok, error, state}` |
 
 `state` is the background's `playerState`:
@@ -54,6 +54,16 @@ becomes a view of that playback and a remote for it, instead of running its own 
   "scrobbling": {"on": true}
 }
 ```
+
+`last` (since 0.8.4) is the song this device's extension played last, or `null`:
+`{title, artist, album, coverArt, trackToken, station: {token, name}, position, duration,
+savedAt}`. It stays set while something plays (it is then the song playing, updated every 2 s) and after `stop`; it is cleared only by signing out. The extension saves it (sealed, in its own storage) every 2 s while playing and
+on pause, stop and teardown, and keeps a copy of that song's audio while its own engine
+plays it. After a browser restart, a stopped worker or a closed offscreen document, the
+state shows that song paused at `position`; `resume` (or `play` with no station, or
+`toggle`) plays it from there: from its link, else from the audio copy, else the station
+goes on and `notice` says so. Only the device whose engine played a song keeps it; a page
+acting as a remote never fetches or caches audio.
 
 `scrobbling.on` (since 0.7.0) says whether the extension scrobbles to Spaceghost
 Scrobbles. The side whose audio plays submits listens: while the page is a remote of

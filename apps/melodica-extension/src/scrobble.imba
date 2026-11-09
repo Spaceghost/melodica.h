@@ -27,6 +27,15 @@ def httpsUrl v
 	catch e
 		return ''
 
+# Pandora's album art address as it comes (http or https; Scrobbles caches it).
+def artUrl v
+	const s = String(v or '')
+	try
+		const p = new URL(s).protocol
+		return p === 'https:' or p === 'http:' ? s : ''
+	catch e
+		return ''
+
 # Pandora's explainTrack focus traits as the Scrobbles contract takes them: strings,
 # trimmed, at most 64 characters each, at most 12; null when none are left.
 export def genomeTraits list
@@ -45,7 +54,7 @@ export def trackMetadata song, duration = 0, genome = null
 	const info = {submission_client: SUBMISSION_CLIENT}
 	const secs = Math.max(Number(song.duration) or 0, Number(duration) or 0)
 	info.duration_ms = Math.round(secs * 1000) if secs > 0
-	const art = httpsUrl(song.coverArt)
+	const art = artUrl(song.coverArt)
 	info.art_url = art if art
 	const traits = genomeTraits(genome)
 	info.genome = traits if traits
@@ -84,6 +93,8 @@ export def listenFrom x
 	l.duration_ms = Math.floor(Number(x.duration_ms)) if Number(x.duration_ms) > 0
 	const art = httpsUrl(x.art)
 	l.art = art if art
+	const cached = httpsUrl(x.art_cached)
+	l.artCached = cached if cached
 	l
 
 export def recentFrom body
