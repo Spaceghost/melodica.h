@@ -22,10 +22,16 @@ import { SCROBBLE_NOTICE, LEADERBOARD_URL, MELODICA_PAGES, recentFrom, listenOf,
 import { normalizeAccountBase, randomString, pkceChallenge, authorizeUrl, parseRedirect, tokenForm, storedTokens, accessFresh, policyFrom, spotsFlag, accountLabel, jwtClaims, CLIENT_ID, TAB_CLIENT_ID, TAB_REDIRECT, POLICY_DEFAULT } from './account.imba'
 import { feedUrl, latestVersion, bannerState, compareVersions, STORE_URL } from './update.imba'
 import { Engine, dropAudioCopies } from './engine.imba'
+import { validatePlayback } from './playback-transfer.js'
+import { PlaybackCopy } from './playback-copy.js'
 
 const METHOD = /^[a-z]+\.[A-Za-z]+$/
 const PLAYER_URL = browser.runtime.getURL('player.html')
 const session = browser.storage.session or browser.storage.local
+const playbackCopy = new PlaybackCopy(do(token)
+	return null unless globalThis.caches
+	const cache = await globalThis.caches.open('melodica-audio')
+	await cache.match("https://melodica.invalid/audio/{encodeURIComponent(token)}"))
 # Safari (iPhone, iPad): no offscreen API, and a background page Safari unloads when
 # idle (dist/safari's manifest says `persistent: false`, scripts/safari.mjs), so the
 # engine lives in the player tab instead: dist/safari's player.html also loads
@@ -514,7 +520,14 @@ def sessionOffer msg
 	client.credentials = cred
 	let stations = null
 	try
-		stations = await client.stations()
+		# A live same-device engine already has this session and its playlist. The
+		# normal offer still verifies sessions; this transfer avoids a duplicate
+		# Pandora station-list request after the access service allowed the account.
+		const playback = validatePlayback(msg.playback, s.sid, state.settings.endpoint)
+		if playback and Array.isArray(msg.stations)
+			stations = msg.stations.filter(do(x) x and typeof (x.id or x.token) === 'string').slice(0, 500).map(do(x) {token: x.token or x.id, name: String(x.name or ''), isQuickMix: !!x.isQuickMix, allowDelete: !!x.allowDelete})
+		else
+			stations = await client.stations()
 	catch e
 		note("session offer: refused ({e and e.message or e})")
 		client.logout()
@@ -1176,6 +1189,7 @@ def saveLastPlay r, urgent = no
 	sealAs('lastPlay', r).catch(do(e) note("last song not saved: {e and e.message or e}"))
 
 def forgetLastPlay
+	playbackCopy.clear()
 	lastPlay = null
 	await wipeAs('lastPlay')
 	await dropAudioCopies()
@@ -1329,6 +1343,9 @@ def engineCall op, args = []
 	if typeof document !== 'undefined' and !browser.offscreen and !TAB_ENGINE
 		const e = localEngine()
 		switch op
+			when 'export-playback' then return e.exportPlayback()
+			when 'import-playback' then await e.importPlayback(args[0])
+			when 'expire-link' then e.expireAudioLink(args[0])
 			when 'play' then await e.play(args[0])
 			when 'resume' then await e.resume()
 			when 'pause' then e.pause()
@@ -1348,7 +1365,35 @@ def engineCall op, args = []
 	throw new PandoraError('The playback document did not answer.', null, 0, 'player') unless r
 	throw new PandoraError(r.error or 'playback error', null, 0, 'player') unless r.ok
 	playerChanged(r.state) if r.state
-	r.state
+	op === 'export-playback' ? r.playback : r.state
+
+def exportPlayback
+	let p = null
+	if player.track
+		p = await engineCall('export-playback')
+	elif lastPlay and lastPlay.track and lastPlay.station
+		p = {v: 1, at: Date.now(), station: {id: lastPlay.station.token, name: lastPlay.station.name}, song: lastPlay.track, queue: lastPlay.queue or [], position: lastPlay.position, duration: lastPlay.duration, quality: lastPlay.quality, volume: player.volume, status: 'paused', played: yes}
+	return null unless p and sessionMeta and state.client.loggedIn
+	Object.assign({}, p, {sid: sessionMeta.sid})
+
+def importPlayback p
+	throw new PandoraError('Not signed in.', null, 0, 'auth') unless state.client.loggedIn and sessionMeta
+	const valid = validatePlayback(p, sessionMeta.sid, state.settings.endpoint)
+	throw new PandoraError('Invalid or stale playback transfer.', null, 0, 'client') unless valid
+	# The established engine wins; another page cannot replace its song.
+	return {kept: yes, state: playerView()} if player.track and (player.status === 'playing' or player.status === 'loading')
+	await engineCall('import-playback', [valid])
+	{kept: no, state: playerView()}
+
+def exportPlaybackCopy msg
+	throw new PandoraError('Not signed in.', null, 0, 'auth') unless state.client.loggedIn and sessionMeta
+	const sid = sessionMeta.sid
+	const token = String(msg.trackToken or '')
+	const current = do token and ((player.track and player.track.trackToken === token) or (lastPlay and lastPlay.track and lastPlay.track.trackToken === token))
+	throw new PandoraError('Only the current or resumable song can be copied.', null, 0, 'client') unless current()
+	const copy = await playbackCopy.chunk(token, msg.offset === undefined ? 0 : msg.offset, msg.limit)
+	throw new PandoraError('The playback session changed.', null, 0, 'auth') unless sessionMeta and sessionMeta.sid === sid and current()
+	{copy: copy ? Object.assign({sid}, copy) : null}
 
 # A command from a view (popup, player tab, options, the web page, a keyboard shortcut).
 def playerCommand msg
@@ -1364,7 +1409,12 @@ def playerCommand msg
 				await engineCall('resume')
 		when 'resume' then await engineCall('resume')
 		when 'pause' then await engineCall('pause')
-		when 'toggle' then await engineCall('toggle')
+		when 'toggle'
+			# An idle offscreen document can disappear between displaying Playing
+			# and this click. A recreated engine hydrates Paused; preserve the
+			# click's intent instead of toggling that newly hydrated state to Play.
+			const wasPlaying = player.status === 'playing' or player.status === 'loading'
+			await engineCall(wasPlaying ? 'pause' : 'resume')
 		when 'next' then await engineCall('next')
 		when 'love'
 			const t = player.track
@@ -1428,7 +1478,7 @@ def handle msg, sender
 	const client = state.client
 	# Stale account and access answers are asked again; player traffic (the views,
 	# the bridge) is not held up by those round trips.
-	const quick = msg.type === 'engine-last' or msg.type === 'player' or msg.type === 'player-get' or msg.type === 'player-subscribe' or msg.type === 'engine-state' or msg.type === 'engine-log' or msg.type === 'wake'
+	const quick = msg.type === 'engine-last' or msg.type === 'player' or msg.type === 'player-get' or msg.type === 'player-subscribe' or msg.type === 'engine-state' or msg.type === 'engine-log' or msg.type === 'wake' or msg.type === 'playback-export' or msg.type === 'playback-import' or msg.type === 'playback-copy'
 	if !accountChecking and account.checkedAt and Date.now() - account.checkedAt > ACCOUNT_MAX_AGE
 		quick ? checkAccount().catch(do(e) null) : await checkAccount()
 	if !accessChecking and access.checkedAt and Date.now() - access.checkedAt > ACCESS_MAX_AGE
@@ -1619,6 +1669,15 @@ def handle msg, sender
 			{state: playerView(), settings: state.settings, account: accountView(), update: updateState()}
 		when 'player'
 			await playerCommand(msg)
+		when 'playback-export'
+			throw new PandoraError('not allowed', null, 0, 'bridge') unless melodicaPageSender(sender) or extensionPage(sender)
+			{playback: await exportPlayback(), state: playerView()}
+		when 'playback-import'
+			throw new PandoraError('not allowed', null, 0, 'bridge') unless melodicaPageSender(sender) or extensionPage(sender)
+			await importPlayback(msg.playback)
+		when 'playback-copy'
+			throw new PandoraError('not allowed', null, 0, 'bridge') unless melodicaPageSender(sender) or extensionPage(sender)
+			await exportPlaybackCopy(msg)
 		when 'listen-open'
 			const u = sender and sender.url and new URL(sender.url)
 			throw new PandoraError('not allowed', null, 0, 'bridge') unless sender and sender.id === browser.runtime.id and sender.frameId === 0 and sender.tab and u and u.origin === BRIDGE_ORIGIN and u.pathname.startsWith('/listen/')
@@ -1637,8 +1696,9 @@ def handle msg, sender
 			# Smoke tests only (extension pages): the saved song's link stops working.
 			throw new Error('extension pages only') unless extensionPage(sender)
 			const dead = 'http://127.0.0.1:9/expired.m4a'
-			lastPlay.track = Object.assign({}, lastPlay.track, {audioUrl: dead}) if lastPlay and lastPlay.track
-			player = Object.assign({}, player, {track: Object.assign({}, player.track, {audioUrl: dead})}) if player.track
+			await engineCall('expire-link', [dead]) if player.track
+			lastPlay.track = Object.assign({}, lastPlay.track, {audioUrl: dead, fetchedAt: Date.now() - 24 * 60 * 60 * 1000}) if lastPlay and lastPlay.track
+			player = Object.assign({}, player, {track: Object.assign({}, player.track, {audioUrl: dead, fetchedAt: Date.now() - 24 * 60 * 60 * 1000})}) if player.track
 			await session.set({player})
 			if msg.dropCopy
 				await dropAudioCopies()

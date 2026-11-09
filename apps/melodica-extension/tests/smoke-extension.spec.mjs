@@ -131,7 +131,7 @@ const liveGet = async (path) => { const r = await fetch(`https://spacegho.st${pa
 async function startTuner() {
   tuner.dir = await mkdtemp(join(tmpdir(), 'melodica-tuner-'));
   const ready = join(tuner.dir, 'ready');
-  const args = ['-m', 'tuner', '--bind', '127.0.0.1', '--https-port', '8443', '--http-port', '8080',
+  const args = ['-m', 'tuner', '--bind', '127.0.0.1', '--https-port', process.env.MELODICA_TEST_HTTPS_PORT || '8443', '--http-port', process.env.MELODICA_TEST_HTTP_PORT || '8080',
     '--tls-auto', join(tuner.dir, 'certs'), '--user', tuner.user, '--password', tuner.password,
     '--ready-file', ready, '--log-level', 'info', '--ads', LIVE ? '0' : '1', '--audio-https',
     ...(process.env.TUNER_FIXTURE ? ['--fixture', process.env.TUNER_FIXTURE] : []),
@@ -202,6 +202,7 @@ test.beforeAll(async () => {
       return;
     }
     if (!url.pathname.startsWith(APP_PATH)) { res.writeHead(404); res.end('not found'); return; }
+    if (url.pathname === APP_PATH + 'handoff-test.html') { res.writeHead(200, { 'content-type': 'text/html' }); res.end('<!doctype html><title>Engine handoff bridge</title><p>Bridge test</p>'); return; }
     let rel = url.pathname.slice(APP_PATH.length);
     if (rel === '' || rel.endsWith('/')) rel += 'index.html';
     if (rel.split('/').some((p) => !p || p === '.' || p === '..')) { res.writeHead(404); res.end(); return; }
@@ -230,7 +231,8 @@ test.beforeAll(async () => {
 // The browser on the persistent profile (relaunched for the cold-start test).
 function launchBrowser() {
   return chromium.launchPersistentContext(userDataDir, {
-    headless: false,
+    headless: process.env.MELODICA_HEADLESS === '1',
+    channel: process.env.MELODICA_HEADLESS === '1' && !B.executablePath ? 'chromium' : undefined,
     executablePath: B.executablePath,
     // Playwright passes --disable-component-update by default; in Brave that leaves
     // Shields without its filter lists (brave://components: "No components are
@@ -337,6 +339,24 @@ async function extensionId() {
   let sw = context.serviceWorkers()[0];
   if (!sw) sw = await context.waitForEvent('serviceworker', { timeout: 30_000 });
   return new URL(sw.url()).host;
+}
+
+// Each case may run in a fresh worker/profile after another case fails. Always
+// point it at the local tuner before a login, including targeted test runs.
+async function useTuner(page) {
+  const endpoint = `${tuner.https}/services/json/`;
+  await page.evaluate((value) => chrome.storage.local.set({ endpoint: value }), endpoint);
+  await expect.poll(() => page.evaluate(() => chrome.runtime.sendMessage({ type: 'state' }).then((r) => r.settings.endpoint))).toBe(endpoint);
+}
+
+function bridgeAsk(page, message) {
+  return page.evaluate((m) => new Promise((resolve, reject) => {
+    const id = crypto.randomUUID();
+    const timer = setTimeout(() => { removeEventListener('message', listener); reject(new Error('bridge command timed out')); }, 15000);
+    const listener = (ev) => { if (ev.source === window && ev.data?.melodica === 1 && ev.data.id === id && ['result', 'session'].includes(ev.data.type)) { clearTimeout(timer); removeEventListener('message', listener); resolve(ev.data); } };
+    addEventListener('message', listener);
+    window.postMessage({ melodica: 1, ...m, id }, location.origin);
+  }), message);
 }
 
 test('signs in through the popup, plays a station with no tab, bridges the web app', async ({}, info) => {
@@ -1229,6 +1249,7 @@ test('cold start: the web app finds the extension with no extension page opened'
   // is closed before the restart).
   const login = await context.newPage();
   await login.goto(`chrome-extension://${id}/options.html`);
+  await useTuner(login);
   await login.evaluate(() => chrome.runtime.sendMessage({ type: 'logout' }));
   const signedIn = await login.evaluate(({ email, password }) => chrome.runtime.sendMessage({ type: 'login', email, password, remember: true }), { email: tuner.user, password: tuner.password });
   expect(signedIn && signedIn.ok, `login with remember (${signedIn && signedIn.error})`).toBe(true);
@@ -1323,6 +1344,7 @@ test('resume: the last song continues where it was', async () => {
   const sw = async () => context.serviceWorkers()[0] || context.waitForEvent('serviceworker', { timeout: 15_000 });
   const ctlPage = async () => { const p = await context.newPage(); await p.goto(ext('options.html')); return p; };
   let ctl = await ctlPage();
+  await useTuner(ctl);
   const send = (m) => ctl.evaluate((x) => chrome.runtime.sendMessage(x), m);
   const stateNow = async () => (await send({ type: 'player-get' })).state;
   const stopWorker = async () => {
@@ -1463,6 +1485,173 @@ test('resume: the last song continues where it was', async () => {
   report.resume = { ok: true, offscreenAndWorker: r1, restart: r2, expiredWithCopy: { ...r3, copiesBefore: copies, continued: true }, expiredNoCopy: { continued: true, notice: e.notice }, note: 'fixture songs are about 10 s, so positions are a few seconds in' };
   report.ok = firstOk;
 });
+
+test('handoff: bridge exports and imports the live song without refetching Pandora', async () => {
+  test.skip(LIVE || !haveTuner, 'requires the local tuner');
+  const id = await extensionId();
+  const ctl = await context.newPage();
+  await ctl.goto(`chrome-extension://${id}/options.html`);
+  const send = (message) => ctl.evaluate((m) => chrome.runtime.sendMessage(m), message);
+  await ctl.locator('#endpoint').fill(`${tuner.https}/services/json/`);
+  await ctl.locator('#save').click();
+  await expect(ctl.locator('#options-message')).toContainText('Saved');
+  await expect.poll(async () => (await send({ type: 'state' })).settings.endpoint).toBe(`${tuner.https}/services/json/`);
+  acct.allow(tuner.user);
+  const login = await send({ type: 'login', email: tuner.user, password: tuner.password, remember: true });
+  expect(login.ok, login.error).toBe(true);
+  const list = (await send({ type: 'stations' })).stations;
+  expect(list.length).toBeGreaterThan(0);
+  await send({ type: 'player', action: 'play', station: list[0] });
+  await expect.poll(async () => (await send({ type: 'player-get' })).state.status).toBe('playing');
+  const page = await context.newPage();
+  await page.goto(`https://${WEB_HOST}${APP_PATH}handoff-test.html`);
+  const ask = (message) => bridgeAsk(page, message);
+  const exported = await ask({ type: 'command', action: 'playback-export' });
+  expect(exported.ok, exported.error).toBe(true);
+  expect(exported.playback.song.audioUrl).toContain('/audio/');
+  expect(exported.playback.sid).toBeTruthy();
+  expect(exported.state.track.audioUrl).toBeUndefined();
+  expect(exported.state.queue.every((s) => !s.audioUrl)).toBe(true);
+  await send({ type: 'player', action: 'stop' });
+  const before = (await getJson(`${tuner.http}/__tuner/log`)).filter((r) => r.protocol === 'json' && r.method).length;
+  const imported = await ask({ type: 'command', action: 'playback-import', playback: exported.playback });
+  expect(imported.ok, imported.error).toBe(true);
+  await expect.poll(async () => (await send({ type: 'player-get' })).state.status).toBe('playing');
+  const current = (await send({ type: 'player-get' })).state;
+  expect(current.track.trackToken).toBe(exported.playback.song.trackToken);
+  expect(current.position).toBeGreaterThanOrEqual(exported.playback.position - 0.1);
+  expect((await getJson(`${tuner.http}/__tuner/log`)).filter((r) => r.protocol === 'json' && r.method).length).toBe(before);
+  // Chrome can close an AUDIO_PLAYBACK document while a view still shows its
+  // last Playing state. That view's next toggle means Pause, including when
+  // the replacement engine initially hydrates the saved song as Paused.
+  await ctl.evaluate(() => chrome.offscreen.closeDocument());
+  const toggled = await send({ type: 'player', action: 'toggle' });
+  expect(toggled.ok, toggled.error).toBe(true);
+  expect(toggled.state.status).toBe('paused');
+  const wrong = await ask({ type: 'command', action: 'playback-import', playback: { ...exported.playback, sid: 'different-session' } });
+  expect(wrong.ok).toBe(false);
+  const shared = await ask({ type: 'session-get' });
+  expect(shared.session.sid).toBe(exported.playback.sid);
+  await send({ type: 'player', action: 'stop' });
+  await send({ type: 'logout' });
+  // Simulate a web engine offering its current authenticated session to a newly
+  // installed/signed-out extension. Authorization still checks the access service;
+  // the handed-over station list and playlist need no Pandora verification call.
+  const newSid = 'web-engine-session-for-handoff';
+  const transfer = { ...exported.playback, sid: newSid, at: Date.now(), status: 'paused' };
+  const beforeOffer = (await getJson(`${tuner.http}/__tuner/log`)).filter((r) => r.protocol === 'json' && r.method);
+  const offer = await ask({ type: 'session-offer', session: { ...shared.session, sid: newSid }, credential: shared.credential, playback: transfer, stations: list });
+  expect(offer.ok, offer.error).toBe(true);
+  expect(offer.outcome).toBe('signed-in');
+  const paused = await ask({ type: 'command', action: 'playback-import', playback: transfer });
+  expect(paused.ok, paused.error).toBe(true);
+  expect(paused.state.status).toBe('paused');
+  expect(paused.state.track.trackToken).toBe(transfer.song.trackToken);
+  expect((await getJson(`${tuner.http}/__tuner/log`)).filter((r) => r.protocol === 'json' && r.method).slice(beforeOffer.length).map((r) => r.method)).toEqual([]);
+  await send({ type: 'logout' });
+  await writeFile(resolve(ARTIFACTS, 'handoff.json'), JSON.stringify({ ok: true, checks: {
+    privateExport: true, publicStateHidesAudioUrls: true, exactSongResumed: true,
+    positionPreserved: true, wrongSessionRejected: true, pausedImportStaysPaused: true,
+    togglePreservesPauseAfterEngineRecreation: true,
+    noPandoraMethodsDuringImport: true, noPandoraMethodsDuringSessionOffer: true,
+  } }, null, 2) + '\n');
+  await page.close(); await ctl.close();
+});
+
+test('copy: the bridge transfers exact private cached bytes after the song URL expires', async () => {
+  test.skip(LIVE || !haveTuner, 'requires the local tuner');
+  const id = await extensionId();
+  const ctl = await context.newPage();
+  await ctl.goto(`chrome-extension://${id}/options.html`);
+  await useTuner(ctl);
+  const send = (message) => ctl.evaluate((m) => chrome.runtime.sendMessage(m), message);
+  acct.allow(tuner.user);
+  expect((await send({ type: 'login', email: tuner.user, password: tuner.password, remember: true })).ok).toBe(true);
+  const stations = (await send({ type: 'stations' })).stations;
+  await send({ type: 'player', action: 'play', station: stations[0] });
+  await expect.poll(async () => (await send({ type: 'player-get' })).state.status).toBe('playing');
+  const page = await context.newPage();
+  await page.goto(`https://${WEB_HOST}${APP_PATH}handoff-test.html`);
+  const ask = (message) => bridgeAsk(page, message);
+  const original = (await ask({ type: 'command', action: 'playback-export' })).playback;
+  const token = original.song.trackToken;
+  await expect.poll(async () => !!(await ask({ type: 'command', action: 'playback-copy', trackToken: token, offset: 0, limit: 16384 })).copy).toBe(true);
+  const hash = await ctl.evaluate(async (token) => {
+    const cache = await caches.open('melodica-audio');
+    const response = await cache.match(`https://melodica.invalid/audio/${encodeURIComponent(token)}`);
+    const digest = await crypto.subtle.digest('SHA-256', await response.arrayBuffer());
+    return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+  }, token);
+  await send({ type: 'player', action: 'pause' });
+  await send({ type: 'test-expire-last', dropCopy: false });
+  await ctl.evaluate(() => chrome.offscreen.closeDocument());
+  await send({ type: 'player', action: 'resume' });
+  await expect.poll(async () => (await send({ type: 'player-get' })).state.position).toBeGreaterThan(original.position + 0.1);
+  const expired = (await ask({ type: 'command', action: 'playback-export' })).playback;
+  expect(expired.song.trackToken).toBe(token);
+  expect(expired.song.audioUrl).toContain('/expired.m4a');
+  expect(expired.song.fetchedAt).toBeLessThan(Date.now() - 60 * 60_000);
+  const before = (await getJson(`${tuner.http}/__tuner/log`)).filter((r) => r.protocol === 'json').length;
+  let offset = 0, done = false;
+  const parts = [];
+  while (!done) {
+    const result = await ask({ type: 'command', action: 'playback-copy', trackToken: token, offset, limit: 16384 });
+    expect(result.ok, result.error).toBe(true);
+    expect(result.copy.sid).toBe(expired.sid);
+    expect(result.copy.offset).toBe(offset);
+    const bytes = Buffer.from(result.copy.bytes, 'base64');
+    expect(bytes.length).toBeLessThanOrEqual(16384);
+    parts.push(bytes); offset += bytes.length; done = result.copy.done;
+    if (done) expect(offset).toBe(result.copy.total);
+  }
+  const { createHash } = await import('node:crypto');
+  expect(createHash('sha256').update(Buffer.concat(parts)).digest('hex')).toBe(hash);
+  expect(parts.length).toBeGreaterThan(1);
+  expect((await getJson(`${tuner.http}/__tuner/log`)).filter((r) => r.protocol === 'json').length).toBe(before);
+  expect((await ask({ type: 'command', action: 'playback-copy', trackToken: 'another-song', offset: 0 })).ok).toBe(false);
+  await writeFile(resolve(ARTIFACTS, 'playback-copy.json'), JSON.stringify({ ok: true, expiredUrl: true, exactHash: true, chunks: parts.length, bytes: offset, noPandoraApiCalls: true }, null, 2) + '\n');
+  await send({ type: 'player', action: 'stop' });
+  await page.close(); await ctl.close();
+});
+
+test('disable: invalidated runtime signals gone only after the extension audio target closes', async () => {
+  test.skip(LIVE || !haveTuner, 'requires the local tuner');
+  const id = await extensionId();
+  const ctl = await context.newPage();
+  await ctl.goto(`chrome-extension://${id}/options.html`);
+  await useTuner(ctl);
+  const send = (message) => ctl.evaluate((m) => chrome.runtime.sendMessage(m), message);
+  acct.allow(tuner.user);
+  expect((await send({ type: 'login', email: tuner.user, password: tuner.password, remember: true })).ok).toBe(true);
+  const stations = (await send({ type: 'stations' })).stations;
+  await send({ type: 'player', action: 'play', station: stations[0] });
+  await expect.poll(async () => (await send({ type: 'player-get' })).state.status).toBe('playing');
+  const page = await context.newPage();
+  await page.goto(`https://${WEB_HOST}${APP_PATH}handoff-test.html`);
+  await page.evaluate(() => { window.__gone = []; addEventListener('message', (ev) => { if (ev.source === window && ev.data?.melodica === 1 && ev.data.type === 'gone') window.__gone.push(ev.data); }); });
+  await page.waitForTimeout(1100);
+  expect(await page.evaluate(() => window.__gone)).toEqual([]);
+  const internals = await context.newPage();
+  await internals.goto('chrome://serviceworker-internals/');
+  const worker = internals.locator('.serviceworker-item', { hasText: `chrome-extension://${id}/` });
+  await worker.getByRole('button', { name: 'Stop', exact: true }).click();
+  await page.waitForTimeout(1100);
+  expect(await page.evaluate(() => window.__gone), 'stopping only the background does not mean audio stopped').toEqual([]);
+  await internals.close();
+  const manager = await context.newPage();
+  await manager.goto(`chrome://extensions/?id=${id}`);
+  const cdp = await context.newCDPSession(manager);
+  const offscreen = `chrome-extension://${id}/offscreen.html`;
+  expect((await cdp.send('Target.getTargets')).targetInfos.some((t) => t.url === offscreen)).toBe(true);
+  await manager.locator('extensions-detail-view #enableToggle').click();
+  await expect.poll(() => page.evaluate(() => window.__gone.map((d) => d.reason))).toEqual(['runtime-invalidated']);
+  await expect.poll(async () => (await cdp.send('Target.getTargets')).targetInfos.some((t) => t.url === offscreen)).toBe(false);
+  expect(context.serviceWorkers().some((w) => w.url().startsWith(`chrome-extension://${id}/`))).toBe(false);
+  await writeFile(resolve(ARTIFACTS, 'runtime-invalidated.json'), JSON.stringify({ ok: true, sleepingWorkerDoesNotSignalGone: true, browserDisable: true, goneSignal: 'runtime-invalidated', offscreenTargetClosed: true, backgroundWorkerClosed: true }, null, 2) + '\n');
+  await manager.locator('extensions-detail-view #enableToggle').click();
+  await cdp.detach(); await manager.close(); await page.close(); await ctl.close();
+});
+
 
 // Live: the extension's scrobbles against the real spacegho.st (throwaway account), with
 // melodica-tuner for Pandora. tests/live-e2e.sh runs it; nothing else in CI does.

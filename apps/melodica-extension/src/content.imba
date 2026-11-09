@@ -35,8 +35,30 @@ if location.pathname.startsWith('/listen/')
 	browser.runtime.sendMessage({type: 'listen-open', uri: location.href.split('#')[0]}).catch(do(e) null)
 
 let subscribed = no
+let invalidated = no
+let runtimeWatch = null
+
+# An unanswered request can be a sleeping background; it says nothing about
+# whether audio still plays. Only the browser invalidating this extension
+# context permits the page to reclaim its playback engine.
+def runtimeGone error = null
+	return yes if invalidated
+	let gone = /extension context invalidated/i.test(String(error and error.message or error or ''))
+	try
+		gone = yes unless browser.runtime.id
+	catch e
+		gone = yes if /extension context invalidated/i.test(String(e and e.message or e))
+	return no unless gone
+	invalidated = yes
+	subscribed = no
+	clearInterval(runtimeWatch) if runtimeWatch
+	window.postMessage({melodica: 1, type: 'gone', reason: 'runtime-invalidated', name: NAME, version: VERSION}, ORIGIN)
+	yes
+
+runtimeWatch = setInterval((do runtimeGone()), 500)
 
 def announce
+	return if runtimeGone()
 	window.postMessage({melodica: 1, type: 'ready', name: NAME, version: VERSION, player: yes, session: 1}, ORIGIN)
 
 # The page never sees audio URLs (the track's or the play log's).
@@ -86,7 +108,11 @@ def handleCommand data
 	try
 		const action = String(data.action or '')
 		let r
-		if action === 'openLogin' or action === 'open-login'
+		if action === 'playback-export' or action === 'playback-import' or action === 'playback-copy'
+			r = await browser.runtime.sendMessage({type: action, playback: data.playback, trackToken: data.trackToken, offset: data.offset, limit: data.limit})
+			return reply({ok: no, error: r and r.error or 'the extension did not answer'}) unless r and r.ok
+			return reply({ok: yes, playback: r.playback, copy: r.copy, state: publicState(r.state)})
+		elif action === 'openLogin' or action === 'open-login'
 			const o = await browser.runtime.sendMessage({type: 'open-login'})
 			return reply({ok: no, error: o and o.error or 'the extension did not answer'}) unless o and o.ok
 			r = await browser.runtime.sendMessage({type: 'player-get'})
@@ -118,6 +144,7 @@ def handleCommand data
 			# The same state as a push, at once (the page need not wait for a broadcast).
 			pushState(r.state) if subscribed and r.state
 	catch e
+		runtimeGone(e)
 		reply({ok: no, error: String(e and e.message or e)})
 
 # State pushes from the background reach a subscribed page; session pushes reach a
@@ -155,7 +182,7 @@ def sessionMessage data
 			window.postMessage({melodica: 1, type: 'account-signout'}, ORIGIN) if r.accountSignout
 		elif data.type === 'session-offer'
 			sessionAsked = yes
-			const r = await browser.runtime.sendMessage({type: 'bridge-session-offer', session: data.session or null, credential: data.credential or null, account: data.account or null})
+			const r = await browser.runtime.sendMessage({type: 'bridge-session-offer', session: data.session or null, credential: data.credential or null, account: data.account or null, playback: data.playback or null, stations: data.stations})
 			return result({ok: no, error: r and r.error or 'the extension did not answer'}) unless r and r.ok
 			result({ok: yes, outcome: r.outcome})
 		elif data.type === 'account-signout'
@@ -167,6 +194,7 @@ def sessionMessage data
 			return result({ok: no, error: r and r.error or 'the extension did not answer'}) unless r and r.ok
 			result({ok: yes})
 	catch e
+		runtimeGone(e)
 		result({ok: no, error: String(e and e.message or e)})
 
 def methodOf search
@@ -196,10 +224,12 @@ def handleRequest data
 		return failed(r.error or 'extension error') unless r.ok
 		reply({ok: !!r.fetchOk, status: Number(r.status) or 0, body: fromBase64(r.body), error: undefined})
 	catch e
+		runtimeGone(e)
 		failed(String(e and e.message or e))
 
 window.addEventListener 'message', do(event)
 	return unless event.source === window and event.origin === ORIGIN and location.pathname.startsWith(PATH)
+	return if runtimeGone()
 	const data = event.data
 	return unless data and typeof data === 'object' and data.melodica === 1
 	if data.type === 'hello'

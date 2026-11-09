@@ -26,13 +26,17 @@ const engine = new Engine({
 # Commands from the background: {type: 'engine', op, args}.
 browser.runtime.onMessage.addListener do(msg, sender, sendResponse)
 	return no unless msg and msg.type === 'engine' and typeof msg.op === 'string'
-	const done = do sendResponse({ok: yes, state: engine.snapshot})
+	const done = do(result) sendResponse({ok: yes, state: engine.snapshot, playback: msg.op === 'export-playback' ? result : undefined})
 	const failed = do(e) sendResponse({ok: no, error: String(e and e.message or e), state: engine.snapshot})
 	run(msg.op, msg.args or []).then(done, failed)
 	yes
 
 def run op, args
+	await bootReady
 	switch op
+		when 'export-playback' then return engine.exportPlayback()
+		when 'import-playback' then await engine.importPlayback(args[0])
+		when 'expire-link' then engine.expireAudioLink(args[0])
 		when 'play' then await engine.play(args[0])
 		when 'resume' then await engine.resume()
 		when 'pause' then engine.pause()
@@ -49,4 +53,4 @@ def run op, args
 
 # Tell the background this document is up and take back what the last one knew
 # (station, volume, quality, the log, a paused track).
-send({type: 'engine-hello'}).then((do(r) engine.hydrate(r.saved) if r and r.saved), (do(e) null))
+const bootReady = send({type: 'engine-hello'}).then((do(r) engine.hydrate(r.saved) if r and r.saved), (do(e) null))

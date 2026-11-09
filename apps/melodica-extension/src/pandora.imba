@@ -139,6 +139,7 @@ export def normalizeSong item, quality
 		album: item.albumName or ''
 		coverArt: item.albumArtUrl or ''
 		audioUrl: audio.audioUrl
+		fetchedAt: Date.now()
 		audioFormat: "{audio.encoding or ''} {audio.bitrate or ''}".trim()
 		quality: audio.quality
 		duration: Number(item.trackLength) or 0

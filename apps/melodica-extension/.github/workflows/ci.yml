@@ -16,7 +16,7 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 30
     env:
       # secrets are not allowed in a step's if:, so the check lives here.
@@ -59,18 +59,14 @@ jobs:
         run: node tests/update.test.mjs
       - name: Scrobbles unit test (listen metadata, 50% / 4 min)
         run: node tests/scrobble.test.mjs
+      - name: Playback transfer and byte-copy validation
+        run: npm run test:transfer
       - name: listen:// parser test (melodica-scrobble's reference test, unchanged)
         run: node --test tests/listen-uri.test.mjs
       - name: Shared Scrobbles UI pin at most one release behind live (melodica-scrobble check-ui-pin)
-        # spacegho.st answers 403 to GitHub's runners for latest.json (the content-hash
-        # files themselves load). Then the check cannot run here and says so; a pin that
-        # is known to be stale (exit 1) fails the job. The release flow runs it on bak too.
         run: |
-          if curl -fsS -A "melodica-ci" https://spacegho.st/scrobble/assets/ui/latest.json -o latest.json; then
-            node scripts/check-ui-pin.mjs vendor/scrobble-ui/scrobble-ui.js latest.json
-          else
-            echo "::warning::latest.json not reachable from this runner; the UI pin staleness check did not run"
-          fi
+          curl -fsS -A "melodica-ci" https://spacegho.st/scrobble/assets/ui/latest.json -o latest.json
+          node scripts/check-ui-pin.mjs vendor/scrobble-ui/scrobble-ui.js latest.json
       - name: Design lint (no colored single side on any element)
         run: node scripts/lint-edges.mjs public/*.css
       - name: Firefox manifest lint (web-ext)
@@ -124,7 +120,7 @@ jobs:
           {
             echo "melodica-extension $v: a Pandora WebExtension for Chrome, Brave and Firefox (Manifest V3)."
             echo
-            echo "**Access:** melodica requires a GitHub sign-in (used for identity only; nothing is stored) and is available only to an allowlist of GitHub accounts; otherwise it says \"melodica is not available for your GitHub account (<login>).\" This is why it is distributed only from spacegho.st/extensions and not from any store (docs/STORES.md)."
+            echo "**Access:** sign in with your Pandora account; access follows spacegho.st's allowlist. Optional spacegho.st sign-in links your listening and crew views. Installs and update feeds are served from spacegho.st/extensions (docs/STORES.md)."
             echo
             echo "UI and extension scripts are written in [Imba](https://imba.io) and bundled to plain ES modules; the protocol core (Blowfish with Pandora's public partner keys, hex, syncTime, the JSON v5 request envelope) is freestanding [Nelua](https://github.com/Spaceghost/nelua-lang) compiled to WebAssembly with no imports. The extension talks to \`tuner.pandora.com\` directly through its host permission, so no relay sees the login, and it bridges the web client at https://spacegho.st/melodica/app/ so that page can skip its relay too."
             echo
@@ -168,7 +164,7 @@ jobs:
   # playback in the player tab, and the bridge for the melodica-web page.
   smoke:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -183,7 +179,7 @@ jobs:
         timeout-minutes: 15
         run: |
           npm install --no-audit --no-fund
-          npx playwright install chromium
+          npx playwright install ${{ runner.environment == 'self-hosted' && '--with-deps' || '' }} chromium
           for i in 1 2 3 4 5; do sudo apt-get update -qq && sudo apt-get install -y -qq xvfb && break; sleep 20; done
       - uses: Spaceghost/melodica-tuner@v1
         id: tuner
@@ -224,7 +220,7 @@ jobs:
   # lists every request Brave blocked; the job fails if one of them was ours.
   smoke-brave:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -289,7 +285,7 @@ jobs:
   # extension's popup. This is the only job that talks to Pandora itself.
   smoke-firefox:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -360,8 +356,11 @@ jobs:
   release:
     needs: [build, smoke, smoke-brave, smoke-firefox]
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '"ubuntu-latest"') }}
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - uses: actions/download-artifact@v4
         with:
           name: melodica-extension-${{ needs.build.outputs.version }}

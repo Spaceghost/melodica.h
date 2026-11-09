@@ -74,7 +74,7 @@ acting as a remote never fetches or caches audio.
 Scrobbles. The side whose audio plays submits listens: while the page is a remote of
 the extension, the extension is the only submitter and the page sends none.
 
-`track.audioUrl` is never sent to the page. While `track.ad` is true,
+`track.audioUrl` is omitted from all public state messages. While `track.ad` is true,
 `next`, `love`, `ban` and `tired` do nothing. `subscribe` is answered whatever the extension is doing, including idle, signed out and right after browser start (the content script asks the background again for about 20 s before answering with an error), and a `state` is pushed on every change from any source (popup, player tab, keyboard shortcut, media keys, sign-in and sign-out). While no Pandora session exists, commands
 fail with `ok: false` and the reason; `state.loggedIn` says so, and `state.access` carries
 the access answer's message when access was not allowed (README "Access"). Relayed
@@ -82,6 +82,54 @@ Pandora calls (layer 1) other than `auth.partnerLogin` and `test.checkLicensing`
 refused after this browser's access answer said no. The web player's side of this is implemented in melodica-web by
 its own maintainer; the extension's half is proven by the Chromium and Brave smokes
 (`tests/smoke-extension.spec.mjs`, step "bridge remote").
+
+### Same-device engine handoff
+
+`command` additionally accepts `playback-export` and `playback-import`. Export
+answers `{ok, playback, state}`. Its private `playback` is
+`{v:1, sid, at, station:{id,name}, song, queue, position, duration, status,
+quality, volume}`. The `song` and ordered `queue` include signed `audioUrl`s;
+ordinary state/queue broadcasts continue to omit them. A web client keeps this
+record in memory or its encrypted device vault, never localStorage.
+
+Import sends `{action:'playback-import', playback}` after session exchange.
+The extension checks the session id, freshness, bounded fields and media hosts,
+then loads the supplied song and queue directly, without fetching a playlist.
+The existing extension engine wins if it is already playing. A paused or
+autoplay-blocked import does not overwrite the sealed last-play record until
+this engine's audio actually plays.
+
+Export additionally includes `played`: true only for a song this engine actually
+heard, including a heard song currently paused or restored from its saved record.
+Imported values cannot mark a song heard. An unheard paused import retains false
+through engine recreation and never replaces the sealed last-play record.
+
+A `session-offer` may include `playback` and `stations`. When the playback validates
+against the offered session, the extension reuses those stations instead of
+making a duplicate Pandora station-list request. A new session still requires
+the normal access-service authorization. Offers without playback keep their
+existing verification behavior. The browser handoff smoke tests both import and
+session-offer against the tuner and checks that neither makes a Pandora call.
+
+`playback-copy` mirrors the existing private audio copy to the same device's web
+client before the extension is removed. Send `trackToken`, `offset` (default 0)
+and `limit` (at most 262144 raw bytes). The direct result is
+`{ok:true, copy:{sid,trackToken,offset,total,mime,bytes,done}}`, where `bytes` is
+base64, or `copy:null` while the copy is unavailable. Only this session's current
+or resumable song is eligible. The extension reads Cache Storage and never fetches
+the media URL for this command. It reuses one Blob across chunks and releases it
+at EOF, logout or after inactivity. The web client mirrors each track once,
+validates contiguous chunks, and writes the resulting Blob into its own audio
+cache. Heartbeats carry metadata and never repeatedly transfer the audio body.
+
+The content script emits `{melodica:1,type:'gone',reason:'runtime-invalidated',
+name,version}` when the browser invalidates the extension context (its runtime id
+disappears, or a runtime API explicitly reports an invalidated context). Missing
+replies and background suspension do not emit this signal. The web player must
+keep its remote role during an uncertain timeout and reclaim audio only after
+runtime invalidation. The Chromium lifecycle smoke disables the real extension
+in the browser's extensions UI and verifies both the signal and closed offscreen
+and background targets; stopping only the background emits no `gone`.
 
 ## 3. Session sharing (since 0.6.0)
 

@@ -40,6 +40,7 @@ export class Engine
 		self.log = host.log or (do(s) null)
 		self.rememberHost = host.remember or (do(r) null)
 		self.lastRemember = 0
+		self.transferredPending = no
 		# The current track came from a saved record: {cacheTried, url}.
 		self.restored = null
 		self.copyUrl = null
@@ -51,7 +52,7 @@ export class Engine
 		self.doc = host.document or document
 		self.state = {
 			status: 'idle', station: null, track: null, position: 0, duration: 0,
-			volume: 80, quality: 'high', queueLength: 0, queue: [], error: '', notice: '', history: [], changedAt: 0
+			volume: 80, quality: 'high', queueLength: 0, queue: [], error: '', notice: '', history: [], changedAt: 0, played: no
 		}
 		self.queue = []
 		self.generation = 0
@@ -80,6 +81,7 @@ export class Engine
 		{station: state.station, track: t, position: Number(audio.currentTime) or state.position or 0, duration: state.duration or t.duration or 0, quality: state.quality, queue: queue.filter(do(x) x and x.kind !== 'spot' and !x.ad).slice(0, 4), savedAt: Date.now()}
 
 	def saveLast urgent = yes
+		return if transferredPending or !state.played
 		const r = lastRecord()
 		lastRemember = Date.now()
 		rememberHost(r, urgent) if r
@@ -131,6 +133,8 @@ export class Engine
 		return no unless r and r.track and r.track.trackToken and r.station
 		generation += 1
 		held = yes
+		transferredPending = no
+		state.played = yes
 		releaseCopyUrl()
 		state.station = r.station
 		state.track = r.track
@@ -154,8 +158,48 @@ export class Engine
 	get snapshot
 		Object.assign({}, state, {history: state.history.slice()})
 
+	# Direct command result only: ordinary snapshots never carry this private queue.
+	def exportPlayback
+		const r = lastRecord()
+		return null unless r
+		{v: 1, at: Date.now(), station: {id: r.station.token, name: r.station.name}, song: r.track, queue: queue.filter(do(x) x and x.kind !== 'spot' and !x.ad).slice(0, 20), position: r.position, duration: r.duration, quality: state.quality, volume: state.volume, status: audio.paused ? 'paused' : 'playing', played: state.played === yes}
+
+	# A validated live engine transfer loads exactly the handed-over media/queue;
+	# it never asks for a playlist and never saves an unheard paused transfer.
+	def importPlayback p
+		generation += 1
+		held = yes
+		audio.pause()
+		releaseCopyUrl()
+		transferredPending = yes
+		restored = {cacheTried: no}
+		state.station = {token: p.station.id, name: p.station.name}
+		state.track = p.song
+		state.played = no
+		state.position = p.position
+		state.duration = p.duration
+		state.quality = p.quality
+		state.volume = p.volume
+		state.status = 'paused'
+		state.error = ''
+		queue = p.queue.slice()
+		applyVolume()
+		audio.src = p.song.audioUrl
+		seekWhenReady(p.position)
+		emit()
+		await resume() if p.status === 'playing'
+
+	# Internal smoke helper: expire metadata without downloading another song.
+	def expireAudioLink url
+		return unless state.track and !state.track.ad
+		state.track = Object.assign({}, state.track, {audioUrl: url, fetchedAt: Date.now() - 24 * 60 * 60 * 1000})
+		saveLast()
+		emit()
+
 	def emit force = no
-		state.changedAt = Date.now()
+		# Command replies and reports may cross within the same millisecond. Give
+		# every state a distinct order so an earlier Playing cannot replace Paused.
+		state.changedAt = Math.max(Date.now(), (Number(state.changedAt) or 0) + 1)
 		state.queueLength = queue.length
 		# Up next (docs/BRIDGE.md `queue`): songs only, in order, never an audio URL.
 		state.queue = queue.filter(do(x) x and x.kind !== 'spot' and !x.ad and x.title).map(do(x) {title: x.title, artist: x.artist or '', album: x.album or '', coverArt: x.coverArt or '', art: x.coverArt or '', duration: Number(x.duration) or 0, trackToken: x.trackToken or ''})
@@ -172,6 +216,7 @@ export class Engine
 		return resume() if !station and state.station
 		return unless station
 		held = no
+		transferredPending = no
 		generation += 1
 		queue = []
 		set({station: {token: station.token, name: station.name or ''}, track: null, position: 0, duration: 0, status: 'loading', error: ''})
@@ -258,7 +303,7 @@ export class Engine
 		unless song.ad
 			state.history.unshift(song)
 			state.history = state.history.slice(0, HISTORY_MAX)
-		set({track: song, position: 0, duration: song.duration or 0, status: 'loading', error: '', notice: continueNotice})
+		set({track: song, played: no, position: 0, duration: song.duration or 0, status: 'loading', error: '', notice: continueNotice})
 		continueNotice = ''
 		applyVolume()
 		restored = null
@@ -352,6 +397,8 @@ export class Engine
 		state.station = saved.station or null
 		if saved.track and saved.track.audioUrl and saved.status !== 'stopped' and saved.status !== 'idle'
 			state.track = saved.track
+			state.played = saved.played === yes or saved.status === 'playing'
+			transferredPending = !state.played
 			state.position = saved.position or 0
 			state.duration = saved.duration or saved.track.duration or 0
 			state.status = 'paused'
@@ -370,6 +417,17 @@ export class Engine
 		audio.volume = Math.max(0, Math.min(1, (state.volume / 100) * Math.min(1, gain)))
 
 	def onPlay
+		# A play request made before Pause can dispatch its event afterwards.
+		# The explicit user pause remains authoritative until Resume clears held.
+		if held or audio.paused
+			audio.pause() unless audio.paused
+			set({status: 'paused'}) if state.track
+			return
+		state.played = yes
+		if transferredPending
+			transferredPending = no
+			saveLast()
+			keepCopy(state.track)
 		trace('play event') if state.status !== 'playing'
 		set({status: 'playing', error: ''})
 		updateMediaSession()
