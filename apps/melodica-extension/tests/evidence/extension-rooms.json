@@ -8,16 +8,18 @@
   "roomReceipt": {
     "viewer": "listener-ci",
     "play_id": "room-play-1",
-    "listened_ms": 1082
+    "listened_ms": 1001
   },
   "optOutBlockedSecondReceipt": true,
   "pageUnmountPreservedRoom": true,
-  "workerRestartPreservedRoom": false,
-  "duplicateJoinOnWarmRestart": null,
+  "workerRestartPreservedRoom": true,
+  "duplicateJoinOnWarmRestart": false,
   "recentAndSearch": true,
   "signOutLeftRoom": true,
   "offscreenTarget": "chrome-extension://ggfhfcapkiohbihjahbehlhjajphigcn/offscreen.html",
   "noPandoraRPC": true,
   "noPandoraMedia": true,
-  "playwright": "focused local tuner and synthetic OAuth/room API, isolated ports 20443/20080, handle 16251"
+  "workerLifecycle": "CDP stopped and running states observed; offscreen target retained",
+  "extensionVersion": "0.9.7",
+  "playwright": "focused local tuner and synthetic OAuth/room API, isolated ports 25443/25080"
 }

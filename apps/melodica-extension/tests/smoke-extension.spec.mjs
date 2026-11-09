@@ -2083,9 +2083,6 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
     let workerRestartPreservedRoom = false;
     if (process.env.MELODICA_NATIVE_RESTART_PROOF === '1') {
       const joinCallsBeforeRestart = roomProbe.joinCalls;
-      const bootCount = async () => (await ctl.evaluate(async () => (await chrome.storage.session.get('log')).log || []))
-        .filter((line) => line.includes('boot melodica-extension')).length;
-      const bootsBeforeRestart = await bootCount();
       roomProbe.holdEvents = true;
       await expect.poll(() => roomProbe.heldEvents, { timeout: 10_000 }).toBeGreaterThan(0);
       const worker = context.serviceWorkers().find((candidate) => candidate.url().startsWith(`chrome-extension://${id}/`));
@@ -2093,14 +2090,29 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
       await worker.evaluate(() => 1);
       const internals = await context.newPage();
       await internals.goto('chrome://serviceworker-internals/');
-      const workerRow = internals.locator('.serviceworker-item', { hasText: `chrome-extension://${id}/` });
-      await expect(workerRow).toContainText('Running Status: RUNNING', { timeout: 10_000 });
-      await workerRow.getByRole('button', { name: 'Stop', exact: true }).click();
-      await internals.close();
+      const lifecycle = await context.newCDPSession(internals);
+      const versions = new Map();
+      const stoppedVersions = new Set();
+      lifecycle.on('ServiceWorker.workerVersionUpdated', ({ versions: updates }) => {
+        for (const version of updates) {
+          versions.set(version.versionId, version);
+          if (version.runningStatus === 'stopped') stoppedVersions.add(version.versionId);
+        }
+      });
+      await lifecycle.send('ServiceWorker.enable');
+      const activeVersion = () => [...versions.values()].find(version =>
+        version.scriptURL.startsWith(`chrome-extension://${id}/`) && version.runningStatus === 'running');
+      await expect.poll(activeVersion, { timeout: 10_000 }).toBeTruthy();
+      const versionId = activeVersion().versionId;
+      await lifecycle.send('ServiceWorker.stopWorker', { versionId });
+      await expect.poll(() => stoppedVersions.has(versionId), { timeout: 10_000 }).toBe(true);
       roomProbe.holdEvents = false;
       const afterRestart = await send({ type: 'room-get' });
       expect(afterRestart.ok, afterRestart.error).toBe(true);
-      await expect.poll(bootCount, { timeout: 15_000 }).toBeGreaterThan(bootsBeforeRestart);
+      await expect.poll(() => versions.get(versionId)?.runningStatus, { timeout: 15_000 }).toBe('running');
+      await lifecycle.detach();
+      await internals.close();
+      expect((await offscreenTarget()).targetId, 'the same offscreen audio document survives the worker restart').toBe(liveOffscreen.targetId);
       expect(afterRestart.room.id, 'active offscreen membership is recovered after service worker restart').toBe(roomId);
       expect(afterRestart.room.audio.state, 'room audio remains live across service worker restart').toBe('listening');
       expect(roomProbe.joinCalls, 'a warm offscreen room session does not POST a duplicate join').toBe(joinCallsBeforeRestart);
@@ -2119,7 +2131,15 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
     const leavesBeforeSignout = roomProbe.leaveCalls;
     const signedOut = await send({ type: 'account-signout' });
     expect(signedOut.ok, signedOut.error).toBe(true);
-    await expect.poll(() => roomProbe.leaveCalls).toBeGreaterThan(leavesBeforeSignout);
+    try { await expect.poll(() => roomProbe.leaveCalls).toBeGreaterThan(leavesBeforeSignout); }
+    catch (error) {
+      console.log('native room signout diagnostics', JSON.stringify({
+        after: await send({ type: 'room-get' }),
+        commands: roomProbe.commands,
+        roomLogs: await ctl.evaluate(async () => ((await chrome.storage.session.get('log')).log || []).filter(line => /room|offscreen/.test(line)).slice(-30)),
+      }));
+      throw error;
+    }
     expect((await send({ type: 'room-get' })).room?.id).toBe(null);
     expect((await send({ type: 'room-recent' })).recentRoomIds).toEqual([]);
     const evidence = { date: new Date().toISOString().slice(0, 10), browser: 'Chromium native extension',
@@ -2129,7 +2149,9 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
       pageUnmountPreservedRoom: true, workerRestartPreservedRoom, duplicateJoinOnWarmRestart: workerRestartPreservedRoom ? false : null,
       recentAndSearch: true, signOutLeftRoom: roomProbe.leaveCalls > 0, offscreenTarget: liveOffscreen.url,
       noPandoraRPC: true, noPandoraMedia: true,
-      playwright: 'focused local tuner and synthetic OAuth/room API, isolated ports 20443/20080, handle 16251' };
+      workerLifecycle: workerRestartPreservedRoom ? 'CDP stopped and running states observed; offscreen target retained' : null,
+      extensionVersion: await ctl.evaluate(() => chrome.runtime.getManifest().version),
+      playwright: `focused local tuner and synthetic OAuth/room API, isolated ports ${new URL(tuner.https).port}/${new URL(tuner.http).port}` };
     await writeFile(resolve(here, 'evidence/extension-rooms.json'), JSON.stringify(evidence, null, 2) + '\n');
     console.log('native extension room proof', JSON.stringify(evidence));
   } finally {

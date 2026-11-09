@@ -12,11 +12,11 @@
 <!-- extension-publication:start -->
 ## Extension catalog publication
 
-- v0.9.4 is published at https://spacegho.st/extensions/#melodica-extension and https://spacegho.st/melodica/extension/.
+- v0.9.7 is published at https://spacegho.st/extensions/#melodica-extension and https://spacegho.st/melodica/extension/.
 - Mozilla unlisted signing is preserved. Both browser update feeds and eight public installable downloads passed checksum verification.
 - Both catalogs passed browser checks at 390 and 1280 pixels; the Melodica catalog contains only its browser extension and keeps the player bar pinned.
 - The Worker release manifests were updated in R2; all other Melodica projects were preserved. No player or Worker code was deployed by this publication.
-- Evidence: https://github.com/Spaceghost/melodica-extension/actions/runs/42625955613.
+- Evidence: https://github.com/Spaceghost/melodica-extension/actions/runs/42631500171.
 <!-- extension-publication:end -->
 
 Updated 2026-11-09. Self-hosted 0.9.2 published and verified; full tag browser suites remain in progress.
@@ -150,3 +150,10 @@ When finished, tell the scrobble agent so it erases u_e2eext00001. Do not erase 
 - Kill tuners before a smoke: `ssh bak "incus exec melodica-ext -- sh -c 'pkill -f [m]elodica-tuner; true'"`.
 - Run one smoke at a time.
 - GitHub Actions is the proof. Report only what was observed.
+
+## Native restart and authenticated departure correction
+
+- Candidate 0.9.7 uses shared media pin 92145388e550904a (b11769ed86e906236a6f8dab445a9513916232c1). The shared connection/session now return the pending Leave attempt, so native sign-out retains its authorization until departure completes, while local audio stops immediately. Two deferred-request regression checks are included in the backend's 18 passing connection/session checks.
+- Focused native smoke passed twice with `MELODICA_NATIVE_RESTART_PROOF=1`, observing actual CDP stopped/running lifecycle events, the same retained offscreen target, no duplicate join, resumed live audio, opt-out, recent/search, and sign-out departure. Evidence `tests/evidence/extension-rooms.json` records the real version and tuner ports. The prior boot-log counter was replaced with direct lifecycle evidence.
+- Extension 0.9.6 full Chrome/Brave/Firefox tag CI 42627039152 passed. The focused 0.9.7 run is not a full browser report; its global smoke JSON is intentionally not publication evidence.
+- Actual Cloudflare SFU provider check in the backend passed using the shipped adapter/gateway/SQLite authority and a disposable SFU app: three audible receivers, median source lags 113/132/127 ms and 19 ms between receiver medians. Temporary app and private credentials were deleted. Physical devices were not measured.
