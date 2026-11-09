@@ -106,6 +106,7 @@ namespace Elpis
         private Exception _lastException = null;
 
         private PandoraSharpScrobbler _scrobbler;
+        private Elpis.Scrobbling.ListenBrainzScrobbler _listenBrainz;
 
         private bool _isActiveWindow;
 
@@ -313,6 +314,7 @@ namespace Elpis
         private void CloseSettings()
         {
             _scrobbler.IsEnabled = _config.Fields.LastFM_Scrobble;
+            ConfigureListenBrainz();
             RestorePrevPage();
         }
 
@@ -848,6 +850,7 @@ namespace Elpis
             }
 
             LoadLastFM();
+            LoadListenBrainz();
 
             _player.AudioFormat = _config.Fields.Pandora_AudioFormat;
             _player.SetStationSortOrder(_config.Fields.Pandora_StationSortOrder);
@@ -1023,6 +1026,31 @@ namespace Elpis
         {
             return _player.CurrentSong;
         }
+        private void LoadListenBrainz()
+        {
+            _listenBrainz = new Elpis.Scrobbling.ListenBrainzScrobbler(GetCurrentSong,
+                new Elpis.Scrobbling.ListenQueue(Path.Combine(Config.ElpisAppData, "listenbrainz-queue.txt")));
+            try { _listenBrainz.ClientVersion = Assembly.GetEntryAssembly().GetName().Version.ToString(); }
+            catch (Exception) { }
+            ConfigureListenBrainz();
+            _player.RegisterPlayerControlQuery(_listenBrainz);
+        }
+
+        private void ConfigureListenBrainz()
+        {
+            if (_listenBrainz == null) return;
+            System.Net.IWebProxy proxy = null;
+            if (!string.IsNullOrEmpty(_config.Fields.Proxy_Address))
+            {
+                var p = new System.Net.WebProxy(_config.Fields.Proxy_Address, _config.Fields.Proxy_Port);
+                if (!string.IsNullOrEmpty(_config.Fields.Proxy_User))
+                    p.Credentials = new System.Net.NetworkCredential(_config.Fields.Proxy_User, _config.Fields.Proxy_Password);
+                proxy = p;
+            }
+            _listenBrainz.Configure(_config.Fields.ListenBrainz_Scrobble, _config.Fields.ListenBrainz_Server,
+                _config.Fields.ListenBrainz_Token, proxy);
+        }
+
         private void LoadLastFM()
         {
             string apiKey = string.Empty;

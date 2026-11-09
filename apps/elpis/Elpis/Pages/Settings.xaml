@@ -347,6 +347,42 @@
                                 Click="btnLastFMDisable_Click"/>
                     </Grid>
                 </Expander>
+                <Expander Header="ListenBrainz Scrobbler (spacegho.st)" IsExpanded="False" Margin="5">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition />
+                            <RowDefinition />
+                            <RowDefinition />
+                            <RowDefinition />
+                            <RowDefinition />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <CheckBox Name="chkEnableListenBrainz" Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2"
+                                  Content="Scrobble to a ListenBrainz-compatible server" Margin="5"
+                                  ToolTip="Send now playing and listens to spacegho.st, listenbrainz.org or your own server"/>
+                        <Label Grid.Row="1" Grid.Column="0" Margin="5" Content="Server" FontSize="16" />
+                        <ComboBox Grid.Row="1" Grid.Column="1" Margin="5" Name="cmbListenBrainzPreset"
+                                  SelectionChanged="cmbListenBrainzPreset_SelectionChanged">
+                            <ComboBoxItem Content="spacegho.st" />
+                            <ComboBoxItem Content="listenbrainz.org" />
+                            <ComboBoxItem Content="Custom" />
+                        </ComboBox>
+                        <Label Grid.Row="2" Grid.Column="0" Margin="5" Content="URL" FontSize="16" />
+                        <TextBox Grid.Row="2" Grid.Column="1" Margin="5" FontSize="16" Name="txtListenBrainzServer"
+                                 ToolTip="The server's base URL; its API is under /1/"/>
+                        <Label Grid.Row="3" Grid.Column="0" Margin="5" Content="Token" FontSize="16" />
+                        <PasswordBox Grid.Row="3" Grid.Column="1" Margin="5" FontSize="16" Name="txtListenBrainzToken"
+                                     ToolTip="spacegho.st tokens come from spacegho.st/melodica/account"/>
+                        <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal">
+                            <Button Name="btnListenBrainzGetToken" Content="Get a token" Margin="5" Click="btnListenBrainzGetToken_Click"/>
+                            <Button Name="btnListenBrainzCheck" Content="Check token" Margin="5" Click="btnListenBrainzCheck_Click"/>
+                            <TextBlock Name="lblListenBrainzStatus" Margin="5" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Grid>
+                </Expander>
 
             </StackPanel>
         </ScrollViewer>

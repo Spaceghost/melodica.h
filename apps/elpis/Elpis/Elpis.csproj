@@ -188,6 +188,8 @@
       <DependentUpon>StationList.xaml</DependentUpon>
     </Compile>
     <Compile Include="Config.cs" />
+    <Compile Include="ListenBrainz.cs" />
+    <Compile Include="ListenBrainzScrobbler.cs" />
     <Compile Include="Pages\UpdatePage.xaml.cs">
       <DependentUpon>UpdatePage.xaml</DependentUpon>
     </Compile>

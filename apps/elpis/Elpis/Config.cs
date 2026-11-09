@@ -122,6 +122,10 @@ namespace Elpis
         public static MapConfigEntry LastFM_Scrobble = new MapConfigEntry("LastFM_Scrobble", false);
         public static MapConfigEntry LastFM_SessionKey = new MapConfigEntry("LastFM_SessionKey", "");
 
+        public static MapConfigEntry ListenBrainz_Scrobble = new MapConfigEntry("ListenBrainz_Scrobble", false);
+        public static MapConfigEntry ListenBrainz_Server = new MapConfigEntry("ListenBrainz_Server", Elpis.Scrobbling.ListenBrainzServers.SpaceGhost);
+        public static MapConfigEntry ListenBrainz_Token = new MapConfigEntry("ListenBrainz_Token", "");
+
         public static MapConfigEntry HotKeysList = new MapConfigEntry("HotKeysList",new Dictionary<int,string>());
 
         //public static MapConfigEntry Misc_ForceSSL = new MapConfigEntry("Misc_ForceSSL", false);
@@ -172,6 +176,10 @@ namespace Elpis
 
         public bool LastFM_Scrobble { get; set; }
         public string LastFM_SessionKey { get; set; }
+
+        public bool ListenBrainz_Scrobble { get; set; }
+        public string ListenBrainz_Server { get; set; }
+        public string ListenBrainz_Token { get; set; }
 
         //public bool Misc_ForceSSL { get; set; }
 
@@ -272,6 +280,11 @@ namespace Elpis
             Fields.LastFM_Scrobble = (bool) _c.GetValue(ConfigItems.LastFM_Scrobble);
             Fields.LastFM_SessionKey = _c.GetEncryptedString(ConfigItems.LastFM_SessionKey);
 
+            Fields.ListenBrainz_Scrobble = (bool) _c.GetValue(ConfigItems.ListenBrainz_Scrobble);
+            Fields.ListenBrainz_Server = Elpis.Scrobbling.ListenBrainzServers.Normalize((string) _c.GetValue(ConfigItems.ListenBrainz_Server))
+                                         ?? Elpis.Scrobbling.ListenBrainzServers.SpaceGhost;
+            Fields.ListenBrainz_Token = _c.GetEncryptedString(ConfigItems.ListenBrainz_Token);
+
             var location = (string) _c.GetValue(ConfigItems.Elpis_StartupLocation);
             try
             {
@@ -354,6 +367,10 @@ namespace Elpis
 
                 _c.SetValue(ConfigItems.LastFM_Scrobble, Fields.LastFM_Scrobble);
                 _c.SetEncryptedString(ConfigItems.LastFM_SessionKey, Fields.LastFM_SessionKey);
+
+                _c.SetValue(ConfigItems.ListenBrainz_Scrobble, Fields.ListenBrainz_Scrobble);
+                _c.SetValue(ConfigItems.ListenBrainz_Server, Fields.ListenBrainz_Server ?? Elpis.Scrobbling.ListenBrainzServers.SpaceGhost);
+                _c.SetEncryptedString(ConfigItems.ListenBrainz_Token, (Fields.ListenBrainz_Token ?? "").Trim());
 
 
                 _c.SetValue(ConfigItems.Elpis_StartupLocation, Fields.Elpis_StartupLocation.ToString());

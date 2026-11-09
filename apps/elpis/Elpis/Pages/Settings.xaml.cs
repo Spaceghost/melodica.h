@@ -108,6 +108,12 @@ namespace Elpis
 
             chkEnableScrobbler.IsChecked = _config.Fields.LastFM_Scrobble;
 
+            chkEnableListenBrainz.IsChecked = _config.Fields.ListenBrainz_Scrobble;
+            txtListenBrainzServer.Text = _config.Fields.ListenBrainz_Server;
+            txtListenBrainzToken.Password = _config.Fields.ListenBrainz_Token;
+            SelectListenBrainzPreset(_config.Fields.ListenBrainz_Server);
+            lblListenBrainzStatus.Text = "";
+
             txtIPAddress.ItemsSource = getLocalIPAddresses();
 
             // Build list of all output devices
@@ -190,6 +196,10 @@ namespace Elpis
             _config.Fields.Proxy_Password = txtProxyPassword.Password;
 
             _config.Fields.LastFM_Scrobble = (bool)chkEnableScrobbler.IsChecked;
+            _config.Fields.ListenBrainz_Scrobble = (bool)chkEnableListenBrainz.IsChecked;
+            _config.Fields.ListenBrainz_Server = Elpis.Scrobbling.ListenBrainzServers.Normalize(txtListenBrainzServer.Text)
+                                                 ?? _config.Fields.ListenBrainz_Server;
+            _config.Fields.ListenBrainz_Token = txtListenBrainzToken.Password.Trim();
             Dictionary<int, HotkeyConfig> keys = new Dictionary<int, HotkeyConfig>();
             foreach (KeyValuePair<int,HotKey> pair in _keyHost.HotKeys)
             {
@@ -301,6 +311,43 @@ namespace Elpis
 
             ShowLastFMAuthButton(_config.Fields.LastFM_SessionKey == string.Empty);
             btnLastFMAuth.IsEnabled = state || _config.Fields.LastFM_SessionKey != string.Empty;
+        }
+
+        private bool _settingListenBrainzPreset;
+
+        private void SelectListenBrainzPreset(string server)
+        {
+            _settingListenBrainzPreset = true;
+            cmbListenBrainzPreset.SelectedIndex = server == Elpis.Scrobbling.ListenBrainzServers.SpaceGhost ? 0
+                : server == Elpis.Scrobbling.ListenBrainzServers.ListenBrainzOrg ? 1 : 2;
+            txtListenBrainzServer.IsEnabled = cmbListenBrainzPreset.SelectedIndex == 2;
+            _settingListenBrainzPreset = false;
+        }
+
+        private void cmbListenBrainzPreset_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_settingListenBrainzPreset || txtListenBrainzServer == null) return;
+            if (cmbListenBrainzPreset.SelectedIndex == 0) txtListenBrainzServer.Text = Elpis.Scrobbling.ListenBrainzServers.SpaceGhost;
+            if (cmbListenBrainzPreset.SelectedIndex == 1) txtListenBrainzServer.Text = Elpis.Scrobbling.ListenBrainzServers.ListenBrainzOrg;
+            txtListenBrainzServer.IsEnabled = cmbListenBrainzPreset.SelectedIndex == 2;
+        }
+
+        private void btnListenBrainzGetToken_Click(object sender, RoutedEventArgs e)
+        {
+            try { System.Diagnostics.Process.Start(Elpis.Scrobbling.ListenBrainzServers.SpaceGhostTokens); }
+            catch (Exception) { lblListenBrainzStatus.Text = Elpis.Scrobbling.ListenBrainzServers.SpaceGhostTokens; }
+        }
+
+        private void btnListenBrainzCheck_Click(object sender, RoutedEventArgs e)
+        {
+            var server = Elpis.Scrobbling.ListenBrainzServers.Normalize(txtListenBrainzServer.Text);
+            if (server == null) { lblListenBrainzStatus.Text = "The server must be an http(s) URL."; return; }
+            var token = txtListenBrainzToken.Password.Trim();
+            if (token.Length == 0) { lblListenBrainzStatus.Text = "Enter a token first."; return; }
+            lblListenBrainzStatus.Text = "Checking...";
+            Elpis.Scrobbling.ListenBrainzScrobbler.Check(server, token, null, (valid, user, error) =>
+                Dispatcher.BeginInvoke(new Action(() =>
+                    lblListenBrainzStatus.Text = error ?? (valid ? "Token valid" + (string.IsNullOrEmpty(user) ? "." : " for " + user + ".") : "The server does not know this token."))));
         }
 
         private void chkEnableScrobbler_Click(object sender, RoutedEventArgs e)

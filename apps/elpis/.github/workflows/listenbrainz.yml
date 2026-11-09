@@ -1,0 +1,71 @@
+# The ListenBrainz scrobbler core (Elpis/ListenBrainz.cs, plain C#) on Linux, and the
+# Windows build of the whole app, on every push to master.
+name: listenbrainz
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Fake ListenBrainz server
+        run: |
+          cat > /tmp/fake_lb.py <<'PY'
+          import json, sys
+          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+          fail = [2]
+          class H(BaseHTTPRequestHandler):
+              def log_message(self, *a): pass
+              def reply(self, code, body):
+                  d = json.dumps(body).encode(); self.send_response(code)
+                  self.send_header('content-type', 'application/json'); self.send_header('content-length', str(len(d)))
+                  self.end_headers(); self.wfile.write(d)
+              def ok(self): return self.headers.get('Authorization') == 'Token sgs_ci_fake_token'
+              def do_GET(self): self.reply(200, {'valid': self.ok(), 'user_name': 'ci'})
+              def do_POST(self):
+                  body = json.loads(self.rfile.read(int(self.headers['content-length'])))
+                  if not self.ok(): return self.reply(401, {})
+                  if fail[0]: fail[0] -= 1; return self.reply(503, {})
+                  print(body['listen_type'], json.dumps(body['payload']), flush=True)
+                  self.reply(200, {'status': 'ok'})
+          ThreadingHTTPServer(('127.0.0.1', 8765), H).serve_forever()
+          PY
+          python3 /tmp/fake_lb.py > /tmp/fake.log 2>&1 &
+          printf sgs_ci_fake_token > /tmp/token
+      - name: Host checks and end-to-end against the fake
+        env:
+          LB_SERVER: http://127.0.0.1:8765/scrobble
+          LB_TOKEN_FILE: /tmp/token
+        run: |
+          dotnet run --project tests/ListenBrainz.HostTest
+          cat /tmp/fake.log
+          ! grep -q sgs_ci_fake_token /tmp/fake.log
+
+  windows-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: microsoft/setup-msbuild@v2
+      - name: NuGet restore
+        run: nuget restore Elpis.sln
+      - name: Install .NET Framework 4.0/4.6 reference assemblies
+        shell: pwsh
+        run: |
+          nuget install Microsoft.NETFramework.ReferenceAssemblies.net40 -Version 1.0.3 -ExcludeVersion -OutputDirectory refpacks
+          nuget install Microsoft.NETFramework.ReferenceAssemblies.net46 -Version 1.0.3 -ExcludeVersion -OutputDirectory refpacks
+          $roots = @('net40','net46') | ForEach-Object { (Resolve-Path "refpacks\Microsoft.NETFramework.ReferenceAssemblies.$_\build").Path }
+          "TFM_FALLBACK=$($roots -join '%3B')" >> $env:GITHUB_ENV
+      - name: Build Elpis (Release|x86)
+        run: msbuild Elpis.sln /t:Elpis /m /restore:false /p:Configuration=Release /p:Platform=x86 "/p:TargetFrameworkFallbackSearchPaths=$env:TFM_FALLBACK" /v:minimal
