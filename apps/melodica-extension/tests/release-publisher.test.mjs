@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { digest, parseSums, safeName, verifyRelease, makeEntry, mergeManifest, uploadPlan, makeFeeds, compareTags } from '../scripts/release/model.mjs';
 import { publishObjects } from '../scripts/release/pipeline.mjs';
 import { publicationEvent } from '../scripts/release/event.mjs';
-import { updateRecord, assertPublicSnapshot } from '../scripts/release/records.mjs';
+import { updateRecord, assertPublicSnapshot, shouldDeferRecord } from '../scripts/release/records.mjs';
 
 function fixture() {
   const config = { id: 'melodica-extension', gecko_id: 'melodica-extension@spacegho.st', chrome_id: 'obbahflgghfemmpmjppeibnemibgblbd' };
@@ -33,6 +33,32 @@ const entry = (f, kind = 'extensions') => makeEntry({ ...f, kind });
 
 test('complete signed packages and passing browser proofs satisfy publication preflight', () => {
   const f = fixture(); assert.equal(verifyRelease(f.release, f.files, f.config).size, 8);
+});
+test('signed installables may publish while absent full-browser reports are explicitly pending', () => {
+  const f = fixture();
+  const pending = ['smoke-extension.json', 'smoke-brave.json', 'smoke-firefox.json'];
+  f.release.assets = f.release.assets.filter(asset => !pending.includes(asset.name));
+  for (const name of pending) f.files.delete(name);
+  const sumsText = [...f.files].filter(([name]) => name !== 'SHA256SUMS')
+    .map(([name, file]) => `${digest(file.body)}  ${name}`).join('\n') + '\n';
+  f.files.set('SHA256SUMS', { body: Buffer.from(sumsText), path: '/fixture/SHA256SUMS' });
+  f.release.assets.find(asset => asset.name === 'SHA256SUMS').size = Buffer.byteLength(sumsText);
+  f.sums = parseSums(sumsText);
+  verifyRelease(f.release, f.files, f.config);
+  const published = entry(f);
+  assert.deepEqual(published.browserProofs, { status: 'pending', chromium: 'pending', brave: 'pending', firefox: 'pending' });
+  assert.equal(published.assets.some(asset => asset.platform.id === 'smoke'), false);
+});
+test('a supplied failing browser report remains a publication blocker', () => {
+  const f = fixture();
+  const report = f.files.get('smoke-brave.json');
+  report.body = Buffer.from('{"ok":false}');
+  f.release.assets.find(asset => asset.name === 'smoke-brave.json').size = report.body.length;
+  const sumsText = [...f.files].filter(([name]) => name !== 'SHA256SUMS')
+    .map(([name, file]) => `${digest(file.body)}  ${name}`).join('\n') + '\n';
+  f.files.set('SHA256SUMS', { body: Buffer.from(sumsText) });
+  f.release.assets.find(asset => asset.name === 'SHA256SUMS').size = Buffer.byteLength(sumsText);
+  assert.throws(() => verifyRelease(f.release, f.files, f.config), /browser proof must pass/);
 });
 test('a changed download fails its checksum before publication', () => {
   const f = fixture(); f.files.get('melodica-extension-1.2.3.crx').body[0] ^= 1;
@@ -134,6 +160,11 @@ test('record updates are idempotent and retain unrelated handoff content', () =>
   const once = updateRecord(previous, '## Publication\n\nDone.');
   assert.equal(updateRecord(once, '## Publication\n\nDone.'), once);
   assert.ok(once.includes('Keep these feature notes.'));
+});
+test('recent independent repository commits defer release metadata without blocking publication', () => {
+  const now = 1_800_000_000_000;
+  assert.equal(shouldDeferRecord(now - 60_000, now), true);
+  assert.equal(shouldDeferRecord(now - 16 * 60_000, now), false);
 });
 test('public snapshots reject the private shared UI and reference parser', () => {
   assert.doesNotThrow(() => assertPublicSnapshot(['apps/melodica-extension/src/player.imba']));

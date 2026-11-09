@@ -256,23 +256,24 @@ tag Options
 									if accountBase !== ACCOUNT_BASE
 										<p.fine#options-accountbase> "Account server overridden (storage key accountBase): {accountBase}. Default: {ACCOUNT_BASE}"
 									<AccountLine account=account busy=accountBusy @signin=accountAction('account-signin') @signout=accountAction('account-signout')>
-					if account and account.signedIn
-						<div.ext-actions>
-							<button#open-rooms type="button" @click=openRooms> "Open listening rooms"
-									if user and user.username
+								if user and user.username
+									<section.panel.ext-form#options-username-panel>
 										<p.fine#options-username> "Your melodica username: {user.username}"
 										<UsernameChange user=user>
-								<section.panel.ext-form#options-scrobbling>
-									<h3> "Scrobbling"
-									<p.fine> "While you are signed in to Pandora, melodica scrobbles what you play to spacegho.st: a song counts after half its length or 4 minutes. Listens wait here while you are offline."
-									<label.check>
-										<input#scrobble-enabled type="checkbox" checked=(!scrobbling or scrobbling.on) disabled=(scrobbleBusy or !scrobbleKnown) @change=scrobbleSet>
-										<span> "Scrobble my listens"
-									<p.message#scrobble-message role="status"> scrobbleMessage
-									<p.fine>
-										<a#scrobble-history href="https://spacegho.st/melodica/listens/" target="_blank" rel="noopener"> "Your listens"
-										" · "
-										<a#scrobble-leaderboard href="https://spacegho.st/melodica/leaderboard/" target="_blank" rel="noopener"> "Leaderboard"
+								if account and account.signedIn
+									<div.ext-actions>
+										<button#open-rooms type="button" @click=openRooms> "Open listening rooms"
+									<section.panel.ext-form#options-scrobbling>
+										<h3> "Scrobbling"
+										<p.fine> "While you are signed in to Pandora, melodica scrobbles what you play to spacegho.st: a song counts after half its length or 4 minutes. Listens wait here while you are offline."
+										<label.check>
+											<input#scrobble-enabled type="checkbox" checked=(!scrobbling or scrobbling.on) disabled=(scrobbleBusy or !scrobbleKnown) @change=scrobbleSet>
+											<span> "Scrobble my listens"
+										<p.message#scrobble-message role="status"> scrobbleMessage
+										<p.fine>
+											<a#scrobble-history href="https://spacegho.st/melodica/listens/" target="_blank" rel="noopener"> "Your listens"
+											" · "
+											<a#scrobble-leaderboard href="https://spacegho.st/melodica/leaderboard/" target="_blank" rel="noopener"> "Leaderboard"
 								<section.panel.ext-form>
 									<h3> "Updates"
 									<p.fine#options-update> "Firefox and .crx or policy installs update themselves from the feeds on spacegho.st/extensions; an unpacked zip only gets the banner. Running {update and update.current or version}; the store serves {update and update.latest or 'unknown'}{update and update.checkedAt ? ', checked ' + new Date(update.checkedAt).toLocaleString() : ''}."

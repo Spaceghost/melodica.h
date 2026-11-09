@@ -25,7 +25,7 @@ import { Engine, dropAudioCopies } from './engine.imba'
 import { validatePlayback } from './playback-transfer.js'
 import { PlaybackCopy } from './playback-copy.js'
 import { RoomEngine, validRoomCommand } from './room-engine.js'
-import { publicRoomMember } from './room-state.js'
+import { publicRoomMember, publicRoomSummary } from './room-state.js'
 
 const METHOD = /^[a-z]+\.[A-Za-z]+$/
 const PLAYER_URL = browser.runtime.getURL('player.html')
@@ -43,7 +43,7 @@ const TAB_ENGINE = !browser.offscreen and (browser.runtime.getManifest().backgro
 # back to the web app page, where a content script hands over the redirect address.
 const SIGNIN_PENDING_FOR = 10 * 60 * 1000
 let engineWaiters = []
-const SESSION_KEYS = {session: null, stations: [], player: null, log: [], melodica: null, meta: null}
+const SESSION_KEYS = {session: null, stations: [], player: null, log: [], melodica: null, meta: null, room: null}
 const PLAYER_IDLE = {status: 'idle', station: null, track: null, position: 0, duration: 0, volume: 80, quality: 'high', queueLength: 0, queue: [], error: '', history: [], changedAt: 0}
 const PLAYER_ACTIONS = new Set(['play', 'resume', 'pause', 'toggle', 'next', 'love', 'ban', 'tired', 'sleep', 'stop', 'volume', 'quality'])
 const LOG_MAX = 200
@@ -58,6 +58,8 @@ let logLines = []
 # plus the engine itself when it runs in this document (Firefox).
 let player = Object.assign({}, PLAYER_IDLE)
 let room = {id: null, state: null, audio: {state: 'idle'}, changed: 0}
+let roomEngineReady = no
+let roomRestore = null
 # The song this device's engine played last (sealed in storage.local `lastPlay`):
 # {station, track, position, duration, quality, queue, savedAt}.
 let lastPlay = null
@@ -65,6 +67,7 @@ let lastSealedAt = 0
 let engine = null
 let localRoomEngine = null
 let offscreenReady = null
+let offscreenClosing = null
 # Tabs whose page subscribed over the bridge (docs/BRIDGE.md layer 2). Content
 # scripts do not receive runtime.sendMessage broadcasts, so state goes to each
 # by tabs.sendMessage; the set is kept in storage.session so a restarted service
@@ -127,6 +130,8 @@ def boot
 	throw new Error('melodica core: key setup failed') unless core.init()
 	const client = new Pandora(core, {endpoint: settings.endpoint, log: note, userAgent: await clientUserAgent(settings.endpoint)})
 	const saved = await session.get(SESSION_KEYS)
+	if saved.room and typeof saved.room === 'object' and /^[A-Za-z0-9_-]{16,64}$/.test(String(saved.room.id or ''))
+		room = {id: String(saved.room.id), state: publicRoom(saved.room.state), audio: publicRoomAudio(saved.room.audio), changed: Number.isSafeInteger(saved.room.changed) ? saved.room.changed : 0}
 	logLines = Array.isArray(saved.log) ? saved.log : []
 	const manifest = browser.runtime.getManifest()
 	note("boot melodica-extension {manifest.version_name or manifest.version} core {core.version} ({bytes.byteLength} bytes) endpoint {settings.endpoint} session-storage={browser.storage.session ? 'yes' : 'no (storage.local)'}")
@@ -589,6 +594,12 @@ def accountSilent
 def accountSignout fromPage = no
 	const was = !!account.signedIn
 	const tokens = await storedAccount()
+	if room.id
+		try
+			await restoreRoomSession() unless roomEngineReady
+			await leaveRoom()
+		catch e
+			note("room leave during account signout failed: {e and e.message or e}")
 	await browser.storage.local.remove('account')
 	if tokens and tokens.refresh
 		try
@@ -597,6 +608,7 @@ def accountSignout fromPage = no
 			note("account: revoke failed: {e and e.message or e}")
 	note('account: signed out')
 	const out = setAccount({signedIn: no, label: '', email: '', sub: '', spots: POLICY_DEFAULT.spots, error: ''})
+	await browser.storage.local.remove('recentRooms')
 	# Signing out of spacegho.st here signs the web app out too (BRIDGE.md 4.4).
 	if was and !fromPage
 		# No page has asked yet: tell the next one, right after its first session-get.
@@ -949,6 +961,7 @@ def createTerrainStation st
 # Pandora's best match of that kind becomes a new station; then it plays.
 def playSeed kind, name
 	throw new PandoraError('kind must be artist or genre.', null, 0, 'client') unless SEED_KINDS.includes(kind)
+	throw new PandoraError('Leave the room before starting a private Pandora station.', null, 0, 'room') if room.id
 	const text = String(name or '').trim().slice(0, 128)
 	throw new PandoraError('name is required.', null, 0, 'client') unless text
 	throw new PandoraError('Not signed in.', null, 0, 'auth') unless state.client.loggedIn
@@ -1157,22 +1170,38 @@ def roomApi msg, sender, trustedLocalEngine = no
 	const senderTabEngine = TAB_ENGINE and sender and sender.id === browser.runtime.id and sender.url === PLAYER_URL
 	const senderLocalEngine = trustedLocalEngine === yes and !browser.offscreen and !TAB_ENGINE and typeof document !== 'undefined'
 	const senderPage = extensionPage(sender)
+	const senderWebPage = melodicaPageSender(sender)
 	const route = roomApiRoute(msg.path, msg.roomId)
-	throw new PandoraError('not allowed', null, 0, 'room') unless route and (senderOffscreen or senderTabEngine or senderLocalEngine or senderPage)
+	throw new PandoraError('not allowed', null, 0, 'room') unless route and (senderOffscreen or senderTabEngine or senderLocalEngine or senderPage or senderWebPage)
 	const routeId = route.path.startsWith('rooms/') ? route.path.split('/')[1] : ''
 	const suffix = route.path.split('/').slice(2).join('/')
-	throw new PandoraError('not allowed', null, 0, 'room') if suffix and !senderOffscreen and !senderTabEngine and !senderLocalEngine and !(suffix === 'invite-link' and senderPage)
+	throw new PandoraError('not allowed', null, 0, 'room') if suffix and !senderOffscreen and !senderTabEngine and !senderLocalEngine and !(suffix === 'invite-link' and (senderPage or senderWebPage))
 	const hasBody = msg.body !== undefined
 	throw new PandoraError('not allowed', null, 0, 'room') if routeId and (room.id !== msg.roomId or room.id !== routeId)
 	throw new PandoraError('not allowed', null, 0, 'room') unless validRoomApiBody(route, msg.body)
-	throw new PandoraError('not allowed', null, 0, 'room') if routeId and hasBody and suffix === '' and !senderOffscreen and !senderTabEngine and !senderLocalEngine
 	let method = hasBody ? 'POST' : 'GET'
+	if senderWebPage
+		const webRead = method === 'GET' and (route.path === 'rooms' or (routeId and !suffix))
+		const webCreate = method === 'POST' and route.path === 'rooms' and !route.search
+		const webInvite = method === 'POST' and suffix === 'invite-link'
+		throw new PandoraError('not allowed', null, 0, 'room') unless webRead or webCreate or webInvite
+	throw new PandoraError('not allowed', null, 0, 'room') if routeId and hasBody and suffix === '' and !senderOffscreen and !senderTabEngine and !senderLocalEngine
 	let path = '/scrobble/api/' + route.path + route.search
 	if route.search
 		const query = new URLSearchParams(route.search)
 		const keys = Array.from(query.keys())
-		const allowed = suffix === 'audio' ? ['play_id', 'after', 'since', 'wait'] : suffix === 'events' ? ['since', 'wait'] : []
+		const allowed = route.path === 'rooms' ? ['q', 'cursor', 'recent'] : (suffix === 'audio' ? ['play_id', 'after', 'since', 'wait'] : suffix === 'events' ? ['since', 'wait'] : [])
+		const engineClient = senderOffscreen or senderTabEngine or senderLocalEngine
+		allowed.push('clientId') if routeId and engineClient
 		throw new PandoraError('not allowed', null, 0, 'room') unless allowed.length and keys.every(do(k) allowed.includes(k)) and new Set(keys).size === keys.length
+		if query.has('clientId')
+			throw new PandoraError('not allowed', null, 0, 'room') unless engineClient and /^[A-Za-z0-9_-]{16,64}$/.test(query.get('clientId')) and query.get('clientId') === await roomClientIdentity()
+		if route.path === 'rooms'
+			throw new PandoraError('not allowed', null, 0, 'room') if query.has('q') and query.get('q').length > 80
+			throw new PandoraError('not allowed', null, 0, 'room') if query.has('cursor') and (query.get('cursor').length > 512 or /[\u0000-\u001f\u007f]/.test(query.get('cursor')))
+			if query.has('recent')
+				const ids = query.get('recent').split(',')
+				throw new PandoraError('not allowed', null, 0, 'room') unless ids.length <= 12 and ids.every(do(id) /^[A-Za-z0-9_-]{16,64}$/.test(id))
 		for key of ['after', 'since'] when query.has(key)
 			const value = Number(query.get(key))
 			throw new PandoraError('not allowed', null, 0, 'room') unless Number.isSafeInteger(value) and value >= -1
@@ -1236,6 +1265,12 @@ def sessionStarted
 # goes on the revoked list (docs/BRIDGE.md 4.4).
 def forgetPandora why
 	const sid = sessionMeta and sessionMeta.sid
+	if room.id
+		try
+			await restoreRoomSession() unless roomEngineReady
+			await leaveRoom()
+		catch e
+			note("room leave during Pandora signout failed: {e and e.message or e}")
 	await stopPlayback(why)
 	state.client.logout()
 	state.client.credentials = null
@@ -1349,6 +1384,7 @@ def publicRoom snapshot
 		out[key] = Math.max(0, Math.min(1000000, snapshot[key]))
 	out.skip_fraction = Number(snapshot.skip_fraction) if Number.isFinite(Number(snapshot.skip_fraction)) and Number(snapshot.skip_fraction) >= 0 and Number(snapshot.skip_fraction) <= 1
 	out.scrobble = snapshot.scrobble === yes if typeof snapshot.scrobble === 'boolean'
+	out.you_broadcasting = snapshot.you_broadcasting if typeof snapshot.you_broadcasting === 'boolean'
 	out.members = (Array.isArray(snapshot.members) ? snapshot.members : []).slice(0, 100).map(publicRoomMember)
 	out.djs = (Array.isArray(snapshot.djs) ? snapshot.djs : []).filter(do(v) typeof v === 'string').slice(0, 20)
 	out.waiting = (Array.isArray(snapshot.waiting) ? snapshot.waiting : []).filter(do(v) typeof v === 'string').slice(0, 100)
@@ -1362,9 +1398,9 @@ def publicRoom snapshot
 		const play = {}
 		for key of ['id', 'dj', 'reaction'] when typeof snapshot.play[key] === 'string'
 			play[key] = snapshot.play[key].slice(0, 512)
-		for key of ['paused_at', 'started_at', 'ended_at'] when typeof snapshot.play[key] === 'string' or Number.isFinite(snapshot.play[key])
+		for key of ['paused_at', 'started_at', 'ended_at', 'server_time'] when typeof snapshot.play[key] === 'string' or Number.isFinite(snapshot.play[key])
 			play[key] = snapshot.play[key]
-		for key of ['likes', 'dislikes', 'skip_threshold', 'duration_ms', 'paused_ms'] when Number.isSafeInteger(snapshot.play[key])
+		for key of ['likes', 'dislikes', 'skip_threshold', 'duration_ms', 'paused_ms', 'position_ms'] when Number.isSafeInteger(snapshot.play[key])
 			play[key] = Math.max(0, Math.min(86400000, snapshot.play[key]))
 		play.track_metadata = roomTrackMetadata(snapshot.play.track_metadata)
 		out.play = play
@@ -1379,15 +1415,110 @@ def publicRoomAudio value
 	const out = {}
 	for key of ['state', 'message', 'play_id', 'transport'] when typeof value[key] === 'string'
 		out[key] = value[key].slice(0, 256)
-	for key of ['listened_ms', 'paused'] when typeof value[key] === 'number' or typeof value[key] === 'boolean'
+	for key of ['listened_ms', 'paused', 'volume'] when typeof value[key] === 'number' or typeof value[key] === 'boolean'
 		out[key] = value[key]
 	out
 
+def roomIsDj
+	const mine = room.state and room.state.you
+	!!(room.id and mine and (room.state.play ? room.state.play.dj === mine and room.state.you_broadcasting !== no : room.state.current_dj === mine and room.state.you_broadcasting !== no))
+
+def roomBroadcastActive
+	const mine = room.state and room.state.you
+	!!(room.id and mine and room.state.play and room.state.play.dj === mine and room.state.you_broadcasting !== no)
+
 def roomView
-	{id: room.id, state: room.state, audio: room.audio}
+	{id: room.id, state: room.state, audio: room.audio, role: room.id ? (roomIsDj() ? 'dj' : 'listener') : null, locked: roomBroadcastActive()}
+
+def applyRoomClock msg
+	const positionMs = msg and msg.positionMs
+	const serverTime = msg and msg.serverTime
+	const playId = String(msg and msg.playId or '')
+	return {applied: no} unless room.id and msg.roomId === room.id and room.state and room.state.play and room.state.play.id === playId
+	return {applied: no} unless Number.isSafeInteger(positionMs) and positionMs >= 0 and positionMs <= 3600000 and Number.isSafeInteger(serverTime) and serverTime > 0
+	return {applied: no} if Number.isSafeInteger(room.state.play.server_time) and serverTime <= room.state.play.server_time
+	room.state.play.position_ms = positionMs
+	room.state.play.server_time = serverTime
+	persistRoom()
+	const update = {type: 'room-clock', room: roomView(), state: playerView()}
+	broadcast(update)
+	pushRoomClock(update)
+	{applied: yes}
+
+def pushRoomClock message
+	const set = await subscriberSet()
+	for tabId in Array.from(set)
+		browser.tabs.sendMessage(tabId, message).catch(do(e) null)
+
+def persistRoom
+	const saved = room.id ? {id: room.id, state: room.state, audio: room.audio, changed: room.changed} : null
+	session.set({room: saved}).catch(do(e) null)
+
+def rememberRoom snapshot
+	return unless snapshot and typeof snapshot.id === 'string' and /^[A-Za-z0-9_-]{16,64}$/.test(snapshot.id) and account.sub
+	const saved = await browser.storage.local.get({recentRooms: null})
+	const previous = saved.recentRooms and saved.recentRooms.sub === account.sub and Array.isArray(saved.recentRooms.ids) ? saved.recentRooms.ids : []
+	const ids = [snapshot.id].concat(previous.filter(do(id) id !== snapshot.id and /^[A-Za-z0-9_-]{16,64}$/.test(String(id or '')))).slice(0, 12)
+	await browser.storage.local.set({recentRooms: {sub: account.sub, ids}})
+
+def recentRoomsView
+	return [] unless account.sub
+	const saved = (await browser.storage.local.get({recentRooms: null})).recentRooms
+	saved and saved.sub === account.sub and Array.isArray(saved.ids) ? saved.ids.filter(do(id) /^[A-Za-z0-9_-]{16,64}$/.test(String(id or ''))).slice(0, 12) : []
+
+let roomClientReady = null
+def roomClientIdentity
+	if !roomClientReady
+		const open = do()
+			const saved = (await browser.storage.local.get({roomDeviceId: null})).roomDeviceId
+			return saved if typeof saved === 'string' and /^[A-Za-z0-9_-]{16,64}$/.test(saved)
+			const generated = newSid()
+			await browser.storage.local.set({roomDeviceId: generated})
+			generated
+		roomClientReady = open()
+	await roomClientReady
+
+def restoreRoomSession
+	return roomView() unless room.id
+	return roomView() if roomEngineReady
+	return await roomRestore if roomRestore
+	const restore = do()
+		const roomId = room.id
+		await checkAccount(yes)
+		unless account.signedIn
+			note('room restore skipped: spacegho.st account is signed out')
+			roomEngineReady = no
+			return roomView()
+		const before = room.changed
+		const result = await engineCall('room-join', [{id: roomId, clientId: await roomClientIdentity(), sequence: room.changed, base: await accountBase(), scrobbling: scrobble.on !== no, sfuConfigured: yes, paused: !!(room.audio and room.audio.paused)}])
+		if room.id === roomId
+			roomEngineReady = yes
+			if room.changed === before
+				room.state = publicRoom(result and result.state)
+				room.audio = publicRoomAudio(result and result.audio)
+				persistRoom()
+		playerChanged(player)
+		roomView()
+	roomRestore = restore()
+	try
+		return await roomRestore
+	finally
+		roomRestore = null
 
 def playerView
-	Object.assign({}, player, {last: lastView(), stations: state and state.saved.stations or [], loggedIn: !!(state and state.client.loggedIn), account: {signedIn: account.signedIn, label: account.label}, user: userView(), scrobbling: scrobbleView(), access: {allowed: !!access.allowed, message: access.allowed ? '' : String(access.message or '')}, room: roomView()})
+	const view = Object.assign({}, player, {last: lastView(), stations: state and state.saved.stations or [], loggedIn: !!(state and state.client.loggedIn), account: {signedIn: account.signedIn, label: account.label}, user: userView(), scrobbling: scrobbleView(), access: {allowed: !!access.allowed, message: access.allowed ? '' : String(access.message or '')}, room: roomView()})
+	if room.id and room.state and room.state.play
+		const play = room.state and room.state.play
+		const meta = play and play.track_metadata
+		const durationMs = Number(meta and meta.additional_info and meta.additional_info.duration_ms) or Number(play and play.duration_ms) or 0
+		let position = (Number(play and play.position_ms) or 0) / 1000
+		if play and Number(play.server_time) > 0 and !play.paused_at
+			position += Math.max(0, (Date.now() - Number(play.server_time)) / 1000)
+		const paused = !!(play and play.paused_at) or !!(room.audio and room.audio.paused)
+		const audible = ['listening', 'broadcasting'].includes(String(room.audio and room.audio.state or '')) and !paused
+		const track = meta ? {title: meta.track_name or '', artist: meta.artist_name or '', album: meta.release_name or '', coverArt: meta.additional_info and meta.additional_info.art_url or '', duration: durationMs / 1000, kind: 'room'} : null
+		Object.assign(view, {status: audible ? 'playing' : (paused ? 'paused' : (room.audio and room.audio.state === 'connecting' ? 'loading' : 'idle')), station: {name: "Room · {room.state and room.state.name or 'Listening room'}", token: ''}, track, position: Math.max(0, Math.min(durationMs / 1000, position)), duration: durationMs / 1000, volume: Number(room.audio and room.audio.volume) or player.volume, queueLength: 0, queue: [], error: room.audio and room.audio.message or '', last: null, stations: []})
+	view
 
 # Save the engine's "last playing" record (at most every 2 s; pause, stop and
 # teardown come through at once).
@@ -1487,11 +1618,34 @@ def badge
 	catch e
 		null
 
+def engineRoomControl action
+	return no unless room.id
+	try
+		await restoreRoomSession() unless roomEngineReady
+		if action === 'ended'
+			await engineCall('room-end') if roomIsDj()
+			return yes
+		const mapped = action === 'play' ? 'resume' : (action === 'next' ? 'skip' : (action === 'toggle' ? (room.audio and room.audio.paused ? 'resume' : 'pause') : action))
+		return yes unless ['pause', 'resume', 'skip'].includes(mapped)
+		const result = await engineCall('room-audio', [room.id, mapped])
+		if result and result.state
+			room.state = publicRoom(result.state)
+			room.audio = publicRoomAudio(result.audio)
+			persistRoom()
+			playerChanged(player)
+		yes
+	catch e
+		note("room control {action} failed: {e and e.message or e}")
+		# An error must never fall through to the private Pandora engine while a
+		# room owns playback.
+		yes
+
 # The engine in this document (Firefox: the background page has a DOM).
 def localEngine
 	return engine if engine
 	engine = new Engine({
 		document: document
+		roomControl: do(action) engineRoomControl(action)
 		api: {
 			playlist: do(station, quality)
 				await ensure()
@@ -1531,8 +1685,12 @@ def localRoomSend msg
 				room.changed = msg.changed
 				room.state = publicRoom(msg.room)
 				room.audio = publicRoomAudio(msg.audio)
+				roomEngineReady = yes
+				persistRoom()
 				playerChanged(player)
 			return {ok: yes}
+		when 'room-clock'
+			return applyRoomClock(msg)
 		else
 			throw new PandoraError('not allowed', null, 0, 'room')
 
@@ -1540,12 +1698,26 @@ def localRoomSend msg
 # AUDIO_PLAYBACK document after a while; the next command recreates it and
 # `engine-hello` brings it the saved state.
 def ensureOffscreen
+	await offscreenClosing if offscreenClosing
 	return await offscreenReady if offscreenReady
 	offscreenReady = TAB_ENGINE ? ensurePlayerEngine() : createOffscreen()
 	try
 		await offscreenReady
 	finally
 		offscreenReady = null
+
+# WEB_RTC keeps an offscreen document alive while its room transport is idle
+# between audio packets. Close it explicitly when neither a room nor private
+# playback needs the engine; the next playback/room operation recreates it.
+def closeIdleOffscreen
+	return if TAB_ENGINE or !browser.offscreen or room.id or ['playing', 'loading'].includes(String(player.status or ''))
+	await offscreenReady if offscreenReady
+	return await offscreenClosing if offscreenClosing
+	offscreenClosing = browser.offscreen.closeDocument().catch(do(e) null)
+	try
+		await offscreenClosing
+	finally
+		offscreenClosing = null
 
 # Safari: the player tab is the engine; open it (in the background) when it is not
 # there and wait for its `engine-hello`.
@@ -1569,7 +1741,7 @@ def createOffscreen
 	return if exists
 	note('creating the offscreen playback document')
 	try
-		await browser.offscreen.createDocument({url: 'offscreen.html', reasons: ['AUDIO_PLAYBACK'], justification: 'Pandora playback without a visible tab'})
+		await browser.offscreen.createDocument({url: 'offscreen.html', reasons: ['AUDIO_PLAYBACK', 'WEB_RTC'], justification: 'Pandora playback and room WebRTC audio without a visible tab'})
 	catch e
 		# "Only a single offscreen document may be created": a race with another creator.
 		throw e unless /single offscreen/i.test(String(e and e.message or e))
@@ -1597,6 +1769,7 @@ def engineCall op, args = []
 			when 'room-leave' then await localRoomEngine.leave(args[0] or {})
 			when 'room-command' then return await localRoomEngine.command(args[1])
 			when 'room-audio' then return await localRoomEngine.audioCommand(args[1], args[2])
+			when 'room-end' then return await localRoomEngine.endTurn()
 			when 'room-scrobbling' then localRoomEngine.setScrobbling(args[0] !== no)
 			when 'state' then null
 			else throw new Error("unknown engine op {op}")
@@ -1645,10 +1818,44 @@ def exportPlaybackCopy msg
 	throw new PandoraError('The playback session changed.', null, 0, 'auth') unless sessionMeta and sessionMeta.sid === sid and current()
 	{copy: copy ? Object.assign({sid}, copy) : null}
 
+# A live room owns the shared transport. In particular, the DJ's Pandora engine is
+# the room microphone, so generic private-player actions cannot interrupt it.
+def roomPlayerCommand msg, sender
+	throw new PandoraError('not allowed', null, 0, 'room') unless roomCaller(sender)
+	const action = String(msg.action or '')
+	const roomId = room.id
+	const playId = room.state and room.state.play and room.state.play.id
+	let out = null
+	switch action
+		when 'pause' then out = await roomAudioCommand({roomId, action: 'pause'}, sender)
+		when 'resume' then out = await roomAudioCommand({roomId, action: 'resume'}, sender)
+		when 'toggle' then out = await roomAudioCommand({roomId, action: room.audio and room.audio.paused ? 'resume' : 'pause'}, sender)
+		when 'next', 'tired', 'sleep' then out = await roomAudioCommand({roomId, action: 'skip'}, sender)
+		when 'volume' then out = await roomAudioCommand({roomId, action: 'volume', value: msg.value}, sender)
+		when 'love', 'ban'
+			throw new PandoraError('There is no active room track to react to.', null, 0, 'room') unless playId
+			out = await roomCommand({roomId, command: {action: 'react', play_id: playId, reaction: action === 'love' ? 'like' : 'dislike'}}, sender)
+		when 'play'
+			throw new PandoraError('Leave the room before choosing a private Pandora station.', null, 0, 'room') if msg.station or msg.stationToken
+			out = await roomAudioCommand({roomId, action: 'resume'}, sender)
+		when 'stop'
+			throw new PandoraError('Leave the room to stop playback.', null, 0, 'room')
+		when 'quality'
+			throw new PandoraError('Leave the room before changing Pandora audio quality.', null, 0, 'room')
+		else
+			throw new PandoraError('This player action is unavailable while a room is active.', null, 0, 'room')
+	{state: playerView(), room: out and out.room or roomView()}
+
 # A command from a view (popup, player tab, options, the web page, a keyboard shortcut).
-def playerCommand msg
+def playerCommand msg, sender
 	const action = String(msg.action or '')
 	throw new PandoraError("Unknown player action {action}.", null, 0, 'client') unless PLAYER_ACTIONS.has(action)
+	if room.id
+		await restoreRoomSession() unless roomEngineReady
+		if roomBroadcastActive()
+			return await roomPlayerCommand(msg, sender)
+		elif !roomIsDj()
+			return await roomPlayerCommand(msg, sender)
 	switch action
 		when 'play'
 			if msg.station or msg.stationToken
@@ -1711,38 +1918,53 @@ def joinRoom roomId, paused = no
 	room = {id: roomId, state: current.id === roomId ? current.state : null, audio: current.id === roomId ? current.audio : {state: 'idle'}, changed: current.id === roomId ? current.changed : 0}
 	const changedBeforeJoin = room.changed
 	playerChanged(player)
-	const result = await engineCall('room-join', [{id: roomId, paused: paused === yes, sequence: room.changed, base: await accountBase(), scrobbling: scrobble.on !== no, sfuConfigured: yes}])
+	const result = await engineCall('room-join', [{id: roomId, clientId: await roomClientIdentity(), paused: paused === yes, sequence: room.changed, base: await accountBase(), scrobbling: scrobble.on !== no, sfuConfigured: yes}])
+	roomEngineReady = yes
 	# RoomSession may publish a fresher audio snapshot while the join promise still
 	# waits for its first state. Never replace that ordered update with the reply.
 	if room.changed === changedBeforeJoin
 		room.state = publicRoom(result and result.state)
 		room.audio = publicRoomAudio(result and result.audio)
+		persistRoom()
+	rememberRoom(room.state).catch(do(e) null) if room.state
+	if !roomIsDj() and (player.status === 'playing' or player.status === 'loading')
+		await engineCall('pause')
 	playerChanged(player)
 	room
 
 def leaveRoom
 	const roomId = room.id
 	return room unless roomId
-	await engineCall('room-leave', [{leave: yes}])
-	room = {id: null, state: null, audio: {state: 'idle'}, changed: 0}
+	try
+		await engineCall('room-leave', [{leave: yes}])
+	finally
+		room = {id: null, state: null, audio: {state: 'idle'}, changed: room.changed + 1}
+		roomEngineReady = no
+		persistRoom()
 	playerChanged(player)
+	await closeIdleOffscreen()
 	room
 
 def roomCommand msg, sender
 	throw new PandoraError('not allowed', null, 0, 'room') unless roomCaller(sender)
 	throw new PandoraError('Join that room before sending commands.', null, 0, 'room') unless msg.roomId and room.id === msg.roomId
+	await restoreRoomSession() unless roomEngineReady
 	const command = validRoomCommand(msg.command)
-	throw new PandoraError('not allowed', null, 0, 'room') if ['play', 'heard'].includes(command.action)
+	throw new PandoraError('not allowed', null, 0, 'room') if ['play', 'heard', 'clock'].includes(command.action)
 	const result = await engineCall('room-command', [room.id, command])
 	if command.action === 'leave' or command.action === 'close'
-		room = {id: null, state: null, audio: {state: 'idle'}, changed: 0}
+		room = {id: null, state: null, audio: {state: 'idle'}, changed: room.changed + 1}
+		roomEngineReady = no
+		persistRoom()
 	else
 		room.state = publicRoom(result)
+		persistRoom()
 	playerChanged(player)
 	{room: roomView(), state: room.state}
 
 def roomAudioCommand msg, sender
 	throw new PandoraError('not allowed', null, 0, 'room') unless roomCaller(sender) and room.id and room.id === msg.roomId
+	await restoreRoomSession() unless roomEngineReady
 	const action = String(msg.action or '')
 	throw new PandoraError('Unknown room audio action.', null, 0, 'room') unless ['listen', 'pause', 'resume', 'skip', 'volume'].includes(action)
 	const value = Number(msg.value)
@@ -1750,6 +1972,7 @@ def roomAudioCommand msg, sender
 	const result = await engineCall('room-audio', [room.id, action, value])
 	room.state = publicRoom(result and result.state) if result and result.state
 	room.audio = publicRoomAudio(result and result.audio)
+	persistRoom()
 	playerChanged(player)
 	{room: roomView(), state: playerView()}
 
@@ -1977,7 +2200,7 @@ def handle msg, sender
 		when 'player-get'
 			{state: playerView(), settings: state.settings, account: accountView(), update: updateState()}
 		when 'player'
-			await playerCommand(msg)
+			await playerCommand(msg, sender)
 		when 'playback-export'
 			throw new PandoraError('not allowed', null, 0, 'bridge') unless melodicaPageSender(sender) or extensionPage(sender)
 			{playback: await exportPlayback(), state: playerView()}
@@ -1989,10 +2212,36 @@ def handle msg, sender
 			await exportPlaybackCopy(msg)
 		when 'open-rooms'
 			throw new PandoraError('not allowed', null, 0, 'room') unless extensionPage(sender)
-			const created = await browser.tabs.create({url: browser.runtime.getURL('rooms.html')})
+			const roomId = String(msg.roomId or '')
+			throw new PandoraError('Choose a valid room.', null, 0, 'room') if roomId and !/^[A-Za-z0-9_-]{16,64}$/.test(roomId)
+			const target = browser.runtime.getURL('rooms.html') + (roomId ? '?room=' + encodeURIComponent(roomId) : '')
+			const created = await browser.tabs.create({url: target})
 			{tabId: created.id}
+		when 'room-recent'
+			throw new PandoraError('not allowed', null, 0, 'room') unless roomCaller(sender)
+			await checkAccount()
+			{recentRoomIds: await recentRoomsView()}
+		when 'room-search'
+			throw new PandoraError('not allowed', null, 0, 'room') unless roomCaller(sender)
+			await checkAccount()
+			throw new PandoraError('Sign in to spacegho.st before searching rooms.', null, 0, 'auth') unless account.signedIn
+			const query = String(msg.query or '').trim().slice(0, 80)
+			throw new PandoraError('Search query is too long.', null, 0, 'room') if String(msg.query or '').length > 80
+			const cursor = String(msg.cursor or '')
+			throw new PandoraError('Invalid room cursor.', null, 0, 'room') if cursor.length > 512 or /[\u0000-\u001f\u007f]/.test(cursor)
+			const recentIds = Array.isArray(msg.recentIds) ? msg.recentIds.filter(do(id) /^[A-Za-z0-9_-]{16,64}$/.test(String(id or ''))).slice(0, 12) : await recentRoomsView()
+			const params = new URLSearchParams()
+			params.set('q', query) if query
+			params.set('cursor', cursor) if cursor
+			params.set('recent', recentIds.join(',')) if recentIds.length
+			const reply = await roomApi({path: 'rooms?' + params.toString()}, sender)
+			const body = reply.result or {}
+			const rooms = (Array.isArray(body.rooms) ? body.rooms : []).map(publicRoomSummary).filter(Boolean)
+			const recent = (Array.isArray(body.recent) ? body.recent : []).map(publicRoomSummary).filter(Boolean)
+			{rooms, recent, recentRoomIds: recent.map(do(r) r.id), next_cursor: typeof body.next_cursor === 'string' ? body.next_cursor.slice(0, 512) : null}
 		when 'room-get'
 			throw new PandoraError('not allowed', null, 0, 'room') unless roomCaller(sender)
+			await restoreRoomSession() if room.id and !roomEngineReady
 			{room: roomView()}
 		when 'room-join'
 			throw new PandoraError('not allowed', null, 0, 'room') unless roomCaller(sender)
@@ -2003,6 +2252,7 @@ def handle msg, sender
 			{room: roomView()}
 		when 'room-leave'
 			throw new PandoraError('not allowed', null, 0, 'room') unless roomCaller(sender) and room.id and room.id === msg.roomId
+			await restoreRoomSession() unless roomEngineReady
 			await leaveRoom()
 			{room: roomView()}
 		when 'room-command'
@@ -2026,8 +2276,13 @@ def handle msg, sender
 				room.changed = msg.changed
 				room.state = publicRoom(msg.room)
 				room.audio = publicRoomAudio(msg.audio)
+				roomEngineReady = yes
+				persistRoom()
 				playerChanged(player)
 			{}
+		when 'room-clock'
+			throw new PandoraError('not allowed', null, 0, 'room') unless roomOffscreen(sender) and room.id and msg.roomId === room.id
+			applyRoomClock(msg)
 		when 'listen-open'
 			const u = sender and sender.url and new URL(sender.url)
 			throw new PandoraError('not allowed', null, 0, 'bridge') unless sender and sender.id === browser.runtime.id and sender.frameId === 0 and sender.tab and u and u.origin === BRIDGE_ORIGIN and u.pathname.startsWith('/listen/')
@@ -2038,10 +2293,14 @@ def handle msg, sender
 		when 'engine-hello'
 			# The offscreen document (re)started: give it what the last one knew.
 			note(TAB_ENGINE ? 'player tab engine up; hydrating' : 'offscreen document up; hydrating')
+			roomEngineReady = no if room.id
 			const waiting = engineWaiters
 			engineWaiters = []
 			setTimeout((do waiting.forEach(do(f) f())), 0)
 			{saved: Object.assign({}, player, {last: lastPlay})}
+		when 'engine-room-control'
+			throw new PandoraError('not allowed', null, 0, 'room') unless roomOffscreen(sender) and ['ended', 'play', 'resume', 'pause', 'next'].includes(String(msg.action or ''))
+			{handled: await engineRoomControl(String(msg.action))}
 		when 'test-expire-last'
 			# Smoke tests only (extension pages): the saved song's link stops working.
 			throw new Error('extension pages only') unless extensionPage(sender)
@@ -2062,6 +2321,7 @@ def handle msg, sender
 		when 'engine-state'
 			playerChanged(msg.state) if msg.state and typeof msg.state === 'object'
 			maybeReload('playback stopped') if !player.track
+			await closeIdleOffscreen()
 			{}
 		when 'bridge'
 			await bridge(msg)
@@ -2139,7 +2399,10 @@ if browser.commands and browser.commands.onCommand
 	browser.commands.onCommand.addListener do(command)
 		try
 			await ensure()
-			await playerCommand({action: command === 'next-song' ? 'next' : 'toggle'})
+			if room.id
+				await engineRoomControl(command === 'next-song' ? 'next' : 'toggle')
+			else
+				await playerCommand({action: command === 'next-song' ? 'next' : 'toggle'})
 		catch e
 			note("shortcut {command} failed: {e and e.message or e}")
 

@@ -10,6 +10,12 @@ import { MELODICA_PAGES } from './scrobble.imba'
 # The shared Scrobbles UI (melodica-scrobble ui/, docs/CLIENTS.md), vendored into the
 # extension at a pinned commit (scrobble-ui.pin) and loaded from the package.
 let sui = null
+let roomSnapshot = null
+let roomConnection = null
+let roomAudio = null
+let roomView = null
+let roomClient = null
+let roomUiId = null
 def scrobbleUi
 	return sui if sui
 	const sheet = document.createElement('link')
@@ -72,6 +78,7 @@ tag Player
 				await reload()
 			loadCrew() if loggedIn
 			mountToast() if loggedIn
+			show('room') if currentRoom()
 		catch e
 			if e.kind === 'auth'
 				loggedIn = no
@@ -108,11 +115,22 @@ tag Player
 
 	# Listens, Leaderboard and Map: each is mounted the first time it is shown.
 	def show name
+		return unless name !== 'room' or currentRoom()
 		panel = name
 		panelError = ''
 		imba.commit()
 		return if name === 'player'
 		self.views ||= {}
+		if name === 'room'
+			return if self.views.room and roomUiId === currentRoom().id
+			self.views.room.unmount() if self.views.room and self.views.room.unmount
+			delete self.views.room if self.views.room
+			try
+				await mountRoomPanel()
+			catch e
+				panelError = String(e and e.message or e)
+			imba.commit()
+			return
 		return if self.views[name]
 		try
 			const ui = await scrobbleUi()
@@ -141,23 +159,137 @@ tag Player
 		browser.runtime.onMessage.removeListener(self.listener)
 		for own k, v of (self.views or {})
 			v.unmount()
+		roomView.unmount() if roomView and roomView.unmount and (!self.views or !self.views.room)
 		self.toastView.unmount() if self.toastView
+		roomUiId = null
 		sui.live.close() if sui
 		clearInterval(self.pollTimer) if self.pollTimer
 
 	def apply state
 		return unless state
+		const priorRoomId = player and player.room and player.room.id or null
 		player = state
 		stations = state.stations if Array.isArray(state.stations) and (state.stations.length or stations.length === 0)
 		loggedIn = !!state.loggedIn
+		const nextRoomId = currentRoom() and currentRoom().id or null
+		if nextRoomId
+			panel = 'room'
+			if roomUiId and roomUiId !== nextRoomId
+				roomView.unmount() if roomView and roomView.unmount
+				roomView = null
+				delete self.views.room if self.views and self.views.room
+				roomUiId = null
+		elif priorRoomId
+			roomView.unmount() if roomView and roomView.unmount
+			roomView = null
+			delete self.views.room if self.views and self.views.room
+			roomUiId = null
+			panel = 'player' if panel === 'room'
 		document.title = state.track ? "{state.track.title} – {state.track.artist} · melodica" : 'melodica'
+		lockPrivateControls()
+
+	def currentRoom
+		player and player.room and player.room.id ? player.room : null
+
+	def acceptRoom value
+		const info = value and value.room and value.room.id ? value.room : (value and value.state and value.state.room and value.state.room.id ? value.state.room : null)
+		return unless info
+		return unless currentRoom() and info.id === currentRoom().id
+		return if roomUiId and info.id !== roomUiId
+		roomSnapshot = info
+		if player
+			player.room = info
+		roomConnection.dispatchEvent(new CustomEvent('state', {detail: info.state})) if info.state and roomConnection
+		roomAudio.dispatchEvent(new CustomEvent('state', {detail: info.audio or {state: 'idle'}})) if roomAudio
+		imba.commit()
+
+	def mountRoomPanel
+		const info = currentRoom()
+		return unless info
+		const ui = await scrobbleUi()
+		throw new Error('Rooms are not available in this extension build.') unless ui.mod.mountRoom
+		const host = self.querySelector('#panel-room-content')
+		throw new Error('The room panel is not ready.') unless host
+		const id = info.id
+		roomSnapshot = info
+		roomConnection = new EventTarget()
+		roomConnection.getState = do roomSnapshot and roomSnapshot.state or null
+		roomConnection.open = do
+			const result = await send({type: 'room-get'})
+			acceptRoom(result)
+		roomConnection.refresh = roomConnection.open
+		roomConnection.command = do(command)
+			const result = await send({type: 'room-command', roomId: id, command})
+			acceptRoom(result)
+			result.state or result.room and result.room.state
+		roomConnection.close = do(options = {})
+			if options.leave
+				const result = await send({type: 'room-leave', roomId: id})
+				acceptRoom(result)
+		roomConnection.setAudio = do(value) null
+		roomAudio = new EventTarget()
+		roomAudio.getState = do roomSnapshot and roomSnapshot.audio or {state: 'idle'}
+		roomAudio.listen = do changeRoomAudio('listen', id)
+		roomAudio.pause = do changeRoomAudio('pause', id)
+		roomAudio.resume = do changeRoomAudio('resume', id)
+		roomAudio.skip = do changeRoomAudio('skip', id)
+		roomAudio.setVolume = do(value) changeRoomAudio('volume', id, value)
+		roomAudio.unmount = do null
+		roomAudio.stop = do null
+		roomClient = {api: do(path, options = {})
+			if options.body and options.body.action === 'invite'
+				const result = await send({type: 'room-command', roomId: id, command: options.body})
+				acceptRoom(result)
+				return result.state or result.room and result.room.state
+			const result = await send({type: 'room-api', roomId: id, path, body: options.body})
+			result.result
+		}
+		roomView = ui.mod.mountRoom(host, {id, client: roomClient, connection: roomConnection, audio: roomAudio, ownsAudio: no, recordListens: no, hidePlaybackActions: yes, onLeave: roomLeft, lobbyHref: browser.runtime.getURL('rooms.html'), roomBase: browser.runtime.getURL('rooms.html?room=')})
+		roomUiId = id
+		self.views.room = roomView
+
+	def changeRoomAudio action, id, value = null
+		const result = await send({type: 'room-audio-command', roomId: id, action, value})
+		acceptRoom(result)
+		result.room
+
+	def roomLeft
+		panel = 'player'
+		imba.commit()
+
+	def lockPrivateControls
+		const room = currentRoom()
+		const blocked = !!(room and (room.locked or room.role !== 'dj'))
+		window.requestAnimationFrame(do
+			for control of self.querySelectorAll('#station-list button.station, #station-list button.delete, #quality')
+				control.disabled = blocked
+			for control of self.querySelectorAll('#tired')
+				control.disabled = !!room
+		)
 
 	# Pushes from the background.
 	def onMessage msg, sender, sendResponse
 		return no unless msg and typeof msg === 'object'
 		if msg.type === 'player-state'
+			const priorRoomId = currentRoom() and currentRoom().id or null
 			apply(msg.state)
 			imba.commit()
+			if currentRoom()
+				acceptRoom({room: currentRoom()})
+				show('room') unless self.views and self.views.room and roomUiId === currentRoom().id
+			elif priorRoomId and self.views and self.views.room
+				self.views.room.unmount() if self.views.room.unmount
+				delete self.views.room
+		elif msg.type === 'room-clock'
+			const activeRoom = currentRoom()
+			const info = msg.room and typeof msg.room === 'object' ? msg.room : null
+			const nextPlay = info and info.state and info.state.play
+			const currentPlay = activeRoom and activeRoom.state and activeRoom.state.play
+			if activeRoom and info and info.id === activeRoom.id and currentPlay and nextPlay and nextPlay.id === currentPlay.id
+				if Number.isSafeInteger(nextPlay.position_ms) and nextPlay.position_ms >= 0 and Number.isSafeInteger(nextPlay.server_time) and nextPlay.server_time > (currentPlay.server_time or 0)
+					roomSnapshot = Object.assign({}, activeRoom, {state: Object.assign({}, activeRoom.state, {play: Object.assign({}, currentPlay, {position_ms: nextPlay.position_ms, server_time: nextPlay.server_time})})})
+					player.room = roomSnapshot
+					roomConnection.dispatchEvent(new CustomEvent('clock', {detail: {play_id: nextPlay.id, position_ms: nextPlay.position_ms, server_time: nextPlay.server_time}})) if roomConnection
 		elif msg.type === 'account'
 			account = msg.account
 			imba.commit()
@@ -218,10 +350,15 @@ tag Player
 		imba.commit()
 
 	def select e
+		const room = currentRoom()
+		return toast('Room listeners cannot start private playback. Leave the room first.', 'error') if room and room.role !== 'dj'
+		return toast('Your room DJ broadcast is active. Leave the room before changing stations.', 'error') if room and room.locked
 		traits = null
 		command({action: 'play', stationToken: e.detail.token})
 
 	def control action
+		return toast('Room reactions replace this playback action.', 'error') if currentRoom() and action === 'tired'
+		return toast('Leave the room before stopping Pandora playback.', 'error') if currentRoom() and action === 'stop'
 		switch action
 			when 'toggle' then command({action: 'toggle'})
 			when 'next', 'skip' then command({action: 'next'})
@@ -243,6 +380,9 @@ tag Player
 		command({action: 'volume', value: Number(v)})
 
 	def setQuality q
+		const room = currentRoom()
+		return toast('Room listeners cannot change private playback quality.', 'error') if room and room.role !== 'dj'
+		return toast('Your room DJ broadcast is active. Leave the room before changing quality.', 'error') if room and room.locked
 		command({action: 'quality', value: q})
 
 	def remove e
@@ -280,6 +420,12 @@ tag Player
 		player and player.user or {}
 
 	get now
+		const activeRoom = currentRoom()
+		if activeRoom and activeRoom.state and activeRoom.state.play and activeRoom.state.play.track_metadata
+			const p = activeRoom.state.play
+			const track = p.track_metadata
+			const extra = track.additional_info or {}
+			return {song: {title: track.track_name, artist: track.artist_name, album: track.release_name, coverArt: extra.art_url or '', duration: Number(extra.duration_ms or 0) / 1000, rating: p.reaction === 'like' ? 1 : (p.reaction === 'dislike' ? 2 : 0)}, station: {name: activeRoom.state.name or 'Room'}, paused: !['broadcasting', 'listening'].includes(activeRoom.audio and activeRoom.audio.state), position: Number(p.position_ms or 0) / 1000, duration: Number(extra.duration_ms or 0) / 1000}
 		return null unless player and player.track
 		{song: player.track, station: player.station, paused: player.status !== 'playing', position: player.position, duration: player.duration}
 
@@ -315,6 +461,8 @@ tag Player
 					else
 						<nav.ext-panels aria-label="melodica">
 							<button#tab-player type="button" aria-pressed=(panel === 'player') @click=show('player')> "Player"
+							if currentRoom()
+								<button#tab-room type="button" aria-pressed=(panel === 'room') @click=show('room')> "Room"
 							<button#tab-listens type="button" aria-pressed=(panel === 'listens') @click=show('listens')> "Listens"
 							<button#tab-leaderboard type="button" aria-pressed=(panel === 'leaderboard') @click=show('leaderboard')> "Leaderboard"
 							if crew
@@ -326,6 +474,17 @@ tag Player
 						<section#panel-listens.ext-panel.card hidden=(panel !== 'listens')>
 						<section#panel-leaderboard.ext-panel.card hidden=(panel !== 'leaderboard')>
 						<section#panel-map.ext-panel.card hidden=(panel !== 'map')>
+						<section#panel-room.ext-panel.card hidden=(panel !== 'room')>
+							if now and now.song
+								<div.card.now>
+									<p.eyebrow> "ROOM PLAYBACK"
+									<p#room-now-title> "{now.song.title} · {now.song.artist}"
+									<Transport now=now @control=control(e.detail)>
+									<label.deck-item for="room-volume">
+										<span.sr> "Room volume"
+										<input#room-volume type="range" min="0" max="100" value=(player and player.volume or 80) aria-label="Room volume" @change=setVolume(e.target.value)>
+							<p.fine> (currentRoom() and currentRoom().locked ? 'Your DJ broadcast is active. Leave the room to change private stations or quality.' : (currentRoom() and currentRoom().role === 'dj' ? 'Your DJ turn is ready. Choose a Pandora station from the Player tab to start broadcasting.' : 'You are listening to the room. Leave before starting private playback.'))
+							<div#panel-room-content>
 						<div.ext-desk hidden=(panel !== 'player')>
 							<aside.ext-side>
 								<StationList stations=stations active=(player and player.station and player.station.token) @select=select @refresh=reload @delete=remove>

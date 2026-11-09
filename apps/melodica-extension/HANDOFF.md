@@ -3,11 +3,11 @@
 <!-- extension-publication:start -->
 ## Extension catalog publication
 
-- v0.8.8 is published at https://spacegho.st/extensions/#melodica-extension and https://spacegho.st/melodica/extension/.
+- v0.9.2 is published at https://spacegho.st/extensions/#melodica-extension and https://spacegho.st/melodica/extension/.
 - Mozilla unlisted signing is preserved. Both browser update feeds and eight public installable downloads passed checksum verification.
 - Both catalogs passed browser checks at 390 and 1280 pixels; the Melodica catalog contains only its browser extension and keeps the player bar pinned.
 - The Worker release manifests were updated in R2; all other Melodica projects were preserved. No player or Worker code was deployed by this publication.
-- Evidence: https://github.com/Spaceghost/melodica-extension/actions/runs/42613509249.
+- Evidence: https://github.com/Spaceghost/melodica-extension/actions/runs/42621298090.
 <!-- extension-publication:end -->
 
 Updated 2026-11-09. Self-hosted 0.8.8 published and verified; automatic CI rollout in validation.
@@ -80,25 +80,29 @@ When finished, tell the scrobble agent so it erases u_e2eext00001. Do not erase 
   ignored in `tests/artifacts/extension-reenable.json`.
   Transfer/copy unit tests pass 8/8. Firefox re-enable was not tested.
 
-- Native Rooms support is implemented on `wip/fedora-extension-enable` as an
-  extension full-tab view backed by the offscreen player engine and the shared
-  Rooms session/transport. Eligible Melodica tabs can hand off a room ID and
-  paused state; room pause/resume/skip/volume and commands route to that same
-  offscreen session. Room state exposes only the bounded public room/audio
-  snapshot. The bridge keeps OAuth/account checks and active-room ID gates, and
-  joining or listening does not fetch Pandora playlists, songs, or media. DJ
-  track metadata uses `additional_info.duration_ms` with the room server's
-  one-second-to-one-hour limit. Focused native Chromium proof on 2026-11-09
-  passed with a synthetic OAuth/Rooms API and a second browser DJ sending a
-  real oscillator through MediaRecorder and the production relay/MSE transport:
-  the offscreen listener submitted one 1,629 ms receipt; the room opt-out blocked
-  the next receipt; closing the Rooms page left the offscreen room listening;
-  the tuner saw zero Pandora JSON/media calls. Evidence is tracked in
-  `tests/evidence/extension-rooms.json`. P2P fell back to relay in this proof;
-  the extension pins the exact shared Scrobbles UI/media bundles from commit
-  `ada9607f945f5ee789adae87a141b1ada6bc8f1a` and asset hash
-  `a1a0f286c9b5e27c`. The SFU path was not exercised in this browser proof. No
-  release or deployment was performed.
+- Native Rooms 0.9.1 candidate on `wip/fedora-engine-handoff` adds a full-tab
+  extension Rooms view and native background/offscreen room ownership. Room
+  controls route through the extension-owned shared session; the player view
+  exposes sanitized room playback and locks private controls during an active
+  DJ turn. Search/recent, room API, clock forwarding, account sign-out cleanup,
+  bounded public snapshots and per-device room publisher identity are wired
+  through the extension bridge. Each install keeps a non-secret stable room
+  device ID; the server snapshot distinguishes the local publisher from other
+  devices using the same account. The pinned shared UI/media assets are the
+  live `f72faab991631971` bundle (commit
+  `95135d10591a66eae05ca3c3af86c46963f0cc5f`), verified against the immutable
+  public manifest and asset digests. The full unit suite passed 56/56 and the
+  0.9.1 extension build succeeded with this pin.
+  A focused Chromium test against the local tuner and synthetic room API
+  exercised join, listening audio, page unmount, scrobble opt-out, search and
+  zero Pandora JSON/media refetches on the previous media pin. The initial
+  worker-stop/restart proof exposed an Imba compile bug in `restoreRoomSession`
+  (`async is not defined`); the async closure is fixed, but recovery has not been
+  rechecked in Chromium. A focused run against the 0.9.1 pin is pending. SFU
+  media transport is not claimed browser-verified. The 0.9.0 release is live;
+  its package/build and catalog/download checks passed, but full browser proof
+  remains pending after the Chromium/Brave username options assertion and the
+  Firefox diagnostics selector failed.
 
 - Fedora candidate `wip/fedora-engine-handoff` adds private `playback-export` /
   `playback-import` and bounded `playback-copy` commands for the web client's engine handoff. It is

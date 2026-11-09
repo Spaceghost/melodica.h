@@ -39,6 +39,8 @@ export class Engine
 		self.report = host.report or (do(s) null)
 		self.log = host.log or (do(s) null)
 		self.rememberHost = host.remember or (do(r) null)
+		self.roomControl = host.roomControl or null
+		self.roomSnapshot = null
 		self.lastRemember = 0
 		self.transferredPending = no
 		# The current track came from a saved record: {cacheTried, url}.
@@ -342,6 +344,12 @@ export class Engine
 
 	# A track finished: a slot is registered with Pandora, then the next one plays.
 	def ended
+		if roomControl
+			try
+				return if await roomControl('ended')
+			catch e
+				log("room owns ended track; private auto-next suppressed ({e and e.message or e})")
+				return
 		const song = state.track
 		restored = null
 		releaseCopyUrl()
@@ -453,6 +461,12 @@ export class Engine
 
 	# A track that cannot be played is skipped; several in a row stop the station.
 	def onError
+		if roomControl
+			try
+				return if await roomControl('ended')
+			catch e
+				log("room owns failed track; private auto-next suppressed ({e and e.message or e})")
+				return
 		const song = state.track
 		if restored and song
 			# A saved song whose link expired or fails: its audio copy at the same position,
@@ -488,17 +502,58 @@ export class Engine
 	def setupMediaSession
 		return unless 'mediaSession' in navigator
 		try
-			navigator.mediaSession.setActionHandler('play', do resume())
-			navigator.mediaSession.setActionHandler('pause', do pause())
-			navigator.mediaSession.setActionHandler('nexttrack', do skip())
+			navigator.mediaSession.setActionHandler('play', do mediaAction('resume'))
+			navigator.mediaSession.setActionHandler('pause', do mediaAction('pause'))
+			navigator.mediaSession.setActionHandler('nexttrack', do mediaAction('next'))
 		catch e
 			null
 
+	def setRoomState snapshot
+		roomSnapshot = snapshot and snapshot.id ? snapshot : null
+		updateMediaSession()
+
+	def mediaAction action
+		if roomControl
+			try
+				return if await roomControl(action)
+			catch e
+				log("room owns media action {action}; private action suppressed ({e and e.message or e})")
+				return
+		if action === 'play' or action === 'resume'
+			await resume()
+		elif action === 'pause'
+			pause()
+		elif action === 'next'
+			await skip()
+
 	def updateMediaSession
-		return unless 'mediaSession' in navigator and state.track
-		const song = state.track
+		return unless 'mediaSession' in navigator
 		try
+			if roomSnapshot
+				const play = roomSnapshot.state and roomSnapshot.state.play
+				const meta = play and play.track_metadata
+				if meta
+					const art = meta.additional_info and meta.additional_info.art_url
+					navigator.mediaSession.metadata = new MediaMetadata({title: meta.track_name or '', artist: meta.artist_name or '', album: meta.release_name or '', artwork: art ? [{src: art}] : []})
+					const duration = (Number(meta.additional_info and meta.additional_info.duration_ms) or Number(play.duration_ms) or 0) / 1000
+					let position = (Number(play.position_ms) or 0) / 1000
+					position += Math.max(0, (Date.now() - Number(play.server_time)) / 1000) if play.server_time and !play.paused_at
+					const paused = !!play.paused_at or !!(roomSnapshot.audio and roomSnapshot.audio.paused)
+					const audible = ['listening', 'broadcasting'].includes(String(roomSnapshot.audio and roomSnapshot.audio.state or '')) and !paused
+					navigator.mediaSession.playbackState = audible ? 'playing' : 'paused'
+					navigator.mediaSession.setPositionState({duration, position: Math.max(0, Math.min(duration, position)), playbackRate: 1}) if duration > 0 and navigator.mediaSession.setPositionState
+				else
+					navigator.mediaSession.metadata = null
+					navigator.mediaSession.playbackState = 'none'
+					try navigator.mediaSession.setPositionState({duration: 0, position: 0, playbackRate: 1}) catch e null
+				return
+			const song = state.track
+			unless song
+				navigator.mediaSession.metadata = null
+				navigator.mediaSession.playbackState = 'none'
+				return
 			navigator.mediaSession.metadata = new MediaMetadata({title: song.title, artist: song.artist, album: song.album, artwork: song.coverArt ? [{src: song.coverArt}] : []})
 			navigator.mediaSession.playbackState = audio.paused ? 'paused' : 'playing'
+			navigator.mediaSession.setPositionState({duration: state.duration, position: Math.max(0, Math.min(state.duration, Number(audio.currentTime) or state.position)), playbackRate: 1}) if state.duration > 0 and navigator.mediaSession.setPositionState
 		catch e
 			null

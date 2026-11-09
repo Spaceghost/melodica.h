@@ -19,13 +19,13 @@ function validRoomCommand(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Invalid room command.');
   const text = (value, max = 128) => typeof value === 'string' && value.length > 0 && value.length <= max;
   const fields = {
-    join: [], heartbeat: [], close: [], leave: [],
+    join: [], heartbeat: [], close: [], leave: [], 'claim-source': [],
     react: ['play_id', 'reaction'], skip: ['play_id'], end: ['play_id'],
     pause: ['play_id'], resume: ['play_id'],
     'request-dj': [], 'vote-dj': ['account', 'approve', 'override'],
     scrobble: ['enabled'], 'scrobble-past': ['play_id', 'heard'],
     settings: ['kind', 'mode', 'spots', 'skip_fraction'], invite: ['username'],
-    heard: ['play_id', 'listened_ms'],
+    heard: ['play_id', 'listened_ms'], clock: ['play_id', 'position_ms'],
     play: ['track_metadata'],
   };
   const action = body.action;
@@ -58,6 +58,9 @@ function validRoomCommand(body) {
   } else if (action === 'heard') {
     if (!Number.isFinite(body.listened_ms) || body.listened_ms < 0 || body.listened_ms > 86_400_000) throw new Error('Invalid listened time.');
     out.listened_ms = Math.floor(body.listened_ms);
+  } else if (action === 'clock') {
+    if (!Number.isSafeInteger(body.position_ms) || body.position_ms < 0 || body.position_ms > 3_600_000) throw new Error('Invalid room playback clock.');
+    out.position_ms = body.position_ms;
   } else if (action === 'play') {
     const t = body.track_metadata;
     if (!t || !text(t.track_name, 512) || !text(t.artist_name, 512) || (t.release_name !== undefined && !text(t.release_name, 512))) throw new Error('Invalid room track metadata.');
@@ -89,6 +92,7 @@ export class RoomEngine extends EventTarget {
     this.connection = null;
     this.scrobbling = true;
     this.sequence = 0;
+    this.turnGeneration = 0;
     this.stopped = null;
     this.onAudioPlay = () => this.emitPlayerAudio();
     this.onAudioPause = () => this.emitPlayerAudio();
@@ -101,7 +105,7 @@ export class RoomEngine extends EventTarget {
   }
   state() { return { id: this.id || null, state: this.session?.getState?.() || null, audio: this.session?.getAudioState?.() || { state: 'idle' } }; }
 
-  async join(id, { base, paused = false, sequence = 0, scrobbling = true, sfuConfigured = true } = {}) {
+  async join(id, { base, paused = false, sequence = 0, scrobbling = true, sfuConfigured = true, clientId } = {}) {
     if (!ROOM_ID.test(String(id || ''))) throw new Error('Choose a valid room.');
     if (Number.isSafeInteger(sequence) && sequence > this.sequence) this.sequence = sequence;
     if (this.session && this.id === id) {
@@ -109,6 +113,7 @@ export class RoomEngine extends EventTarget {
       return this.waitForInitialState();
     }
     await this.leave({ leave: false });
+    this.turnGeneration++;
     const media = await this.loadMedia();
     if (!media?.createRoomConnection || !media?.createRoomTransport || !media?.createRoomSession || !media?.capturePlayerAudio) throw new Error('Room audio is not available in this extension build.');
     this.media = media;
@@ -119,10 +124,11 @@ export class RoomEngine extends EventTarget {
       token: async () => (await this.send({ type: 'room-token' })).token,
       api: async (path, options = {}) => (await this.send({ type: 'room-api', roomId: id, path, body: options.body })).result,
     };
-    const connection = media.createRoomConnection({ client, id });
+    const connection = media.createRoomConnection({ client, id, clientId });
     const audio = media.createRoomTransport({ connection, sfuConfigured, sfuAvailable: true });
     const player = {
       currentTrack: () => trackMetadata(this.engine.snapshot.track, this.engine.snapshot.duration),
+      positionMs: () => Math.max(0, Math.min(3_600_000, Math.floor((Number(this.engine.audio?.currentTime) || 0) * 1000))),
       startTurn: () => this.startTurn(),
       capture: () => media.capturePlayerAudio(this.engine.audio),
       pause: () => this.engine.pause(),
@@ -136,11 +142,13 @@ export class RoomEngine extends EventTarget {
     this.session = session;
     const sendState = () => this.publish();
     const sendAudio = () => this.publish();
+    const sendClock = (event) => this.publishClock(event.detail || {});
     const sendError = (event) => this.emit('error', event.detail || {});
     session.addEventListener('state', sendState);
     session.addEventListener('audio', sendAudio);
+    session.addEventListener('clock', sendClock);
     session.addEventListener('error', sendError);
-    this.sessionListeners = [['state', sendState], ['audio', sendAudio], ['error', sendError]];
+    this.sessionListeners = [['state', sendState], ['audio', sendAudio], ['clock', sendClock], ['error', sendError]];
     this.engine.audio.addEventListener('play', this.onAudioPlay);
     this.engine.audio.addEventListener('pause', this.onAudioPause);
     if (paused) await session.pause();
@@ -172,20 +180,35 @@ export class RoomEngine extends EventTarget {
 
   publish() {
     const current = this.state();
+    this.engine.setRoomState?.(current);
     const changed = ++this.sequence;
     this.send({ type: 'room-state', roomId: this.id, changed, room: current.state, audio: current.audio }).catch(() => {});
     this.emit('state', current);
   }
 
+  publishClock(detail) {
+    const playId = detail.play_id ?? detail.playId;
+    const positionMs = detail.position_ms ?? detail.positionMs;
+    const serverTime = detail.server_time ?? detail.serverTime;
+    if (!this.id || typeof playId !== 'string' || !Number.isSafeInteger(positionMs) || positionMs < 0 || positionMs > 3_600_000 || !Number.isSafeInteger(serverTime)) return;
+    if (this.session?.getState?.()?.play?.id !== playId) return;
+    this.engine.setRoomState?.(this.state());
+    this.send({ type: 'room-clock', roomId: this.id, playId, positionMs, serverTime }).catch(() => {});
+    this.emit('clock', { play_id: playId, position_ms: positionMs, server_time: serverTime });
+  }
+
   async startTurn() {
+    const generation = this.turnGeneration;
     const before = this.engine.snapshot.track?.trackToken;
     const changedBefore = Number(this.engine.snapshot.changedAt) || 0;
-    if (!this.engine.snapshot.station) throw new Error('Start a station in your player before your DJ turn.');
-    await this.engine.skip();
     const deadline = Date.now() + 30_000;
+    const needsSource = !this.engine.snapshot.station;
+    if (!needsSource) await this.engine.skip();
     while (Date.now() < deadline) {
+      if (generation !== this.turnGeneration || !this.session) throw new Error('The DJ turn ended before its audio started.');
       const state = this.engine.snapshot, token = state.track?.trackToken;
-      if (token && (token !== before || state.changedAt > changedBefore) && state.status === 'playing' && !this.engine.audio.paused) {
+      const sourceReady = needsSource ? !!state.station : (token && (token !== before || state.changedAt > changedBefore));
+      if (sourceReady && token && state.status === 'playing' && !this.engine.audio.paused) {
         const metadata = trackMetadata(state.track, state.duration);
         if (metadata) return { track_metadata: metadata };
       }
@@ -216,17 +239,33 @@ export class RoomEngine extends EventTarget {
 
   setScrobbling(value) { this.scrobbling = value !== false; }
 
+  isDj() {
+    const state = this.session?.getState?.();
+    const me = state?.you;
+    return !!(me && (state.play ? state.play.dj === me && state.you_broadcasting !== false : state.current_dj === me && state.you_broadcasting !== false));
+  }
+
+  async endTurn() {
+    if (!this.session || !this.isDj()) return false;
+    const playId = this.session.getState?.()?.play?.id;
+    if (!playId) return false;
+    await this.session.command({ action: 'end', play_id: playId });
+    return true;
+  }
+
   async leave({ leave = true } = {}) {
     const session = this.session;
     if (!session) { this.id = ''; return this.state(); }
+    this.turnGeneration++;
     this.session = null;
     this.id = '';
     for (const [type, fn] of this.sessionListeners || []) session.removeEventListener(type, fn);
     this.sessionListeners = [];
     this.engine.audio.removeEventListener('play', this.onAudioPlay);
     this.engine.audio.removeEventListener('pause', this.onAudioPause);
-    try { session.close({ leave }); } finally {
+    try { await session.close({ leave }); } finally {
       this.connection = null; this.audio = null; this.media = null;
+      this.engine.setRoomState?.(null);
       this.emit('state', this.state());
     }
     return this.state();

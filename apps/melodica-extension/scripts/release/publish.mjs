@@ -99,13 +99,19 @@ export async function main(args = process.argv.slice(2)) {
     // A later retry can finish the records without losing the proven publication.
     await writeFile(statePath, JSON.stringify({ fingerprint, complete: false, run: report.run, owned: previous.owned || {} }));
     const { recordRelease } = await import('./records.mjs');
-    report.commits = await recordRelease(report, cache, previous.owned || {},
-      owned => writeFile(statePath, JSON.stringify({ fingerprint, complete: false, run: report.run, owned })));
+    const recorded = await recordRelease(report, cache, previous.owned || {},
+      progress => writeFile(statePath, JSON.stringify({ fingerprint, complete: false, run: report.run,
+        owned: progress.owned, pendingRecords: progress.pending })));
+    report.commits = recorded.owned;
+    report.pendingRecords = recorded.pending;
     report.phase = 'complete'; report.status = 'published';
     report.elapsedSeconds = (Date.now() - started) / 1000;
-    await writeFile(statePath, JSON.stringify({ fingerprint, complete: true, run: report.run, owned: report.commits }));
+    await writeFile(statePath, JSON.stringify({ fingerprint, complete: recorded.pending.length === 0, run: report.run,
+      owned: report.commits, pendingRecords: recorded.pending }));
     await save();
-    console.log(`${tag}: both catalogs, both feeds, public packages, browser checks, handoffs and public snapshot completed`);
+    console.log(recorded.pending.length
+      ? `${tag}: catalogs, feeds, packages, and public checks passed; recent repository changes deferred handoff records (${recorded.pending.join(', ')}) for a scheduled retry`
+      : `${tag}: both catalogs, both feeds, public packages, browser checks, handoffs and public snapshot completed`);
     return report;
   } catch (error) {
     if (error.message.startsWith('Refusing to replace newer release')) { report.status = 'superseded'; report.reason = error.message; await save(); return report; }

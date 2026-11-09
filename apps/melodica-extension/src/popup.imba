@@ -20,6 +20,7 @@ tag Popup
 	prop loggedIn = no
 	prop update = null
 	prop recent = null
+	prop recentRooms = []
 
 	def mount
 		self.notice = do(msg, sender, sendResponse) onNotice(msg, sender, sendResponse)
@@ -32,8 +33,10 @@ tag Popup
 	def onNotice msg
 		return no unless msg and typeof msg === 'object'
 		if msg.type === 'player-state'
+			const priorRoom = player and player.room and player.room.id or null
 			player = msg.state
 			stations = msg.state.stations if Array.isArray(msg.state.stations) and msg.state.stations.length
+			loadRooms() if loggedIn and player.room and player.room.id and priorRoom !== player.room.id
 			if msg.state.loggedIn === no and loggedIn
 				loggedIn = no
 				pickView()
@@ -44,7 +47,17 @@ tag Popup
 				message = ''
 				kind = ''
 				pickView()
+				loadRooms()
 			imba.commit()
+			lockPrivateControls()
+		if msg.type === 'room-clock'
+			const room = player and player.room
+			const clock = msg.state and msg.state.room and msg.state.room.state and msg.state.room.state.play or msg.state
+			const playId = clock and (clock.play_id or clock.playId or clock.id)
+			if room and room.id === msg.room and room.state and room.state.play and playId and room.state.play.id === playId
+				room.state.play.position_ms = clock.position_ms
+				room.state.play.server_time = clock.server_time
+				imba.commit()
 		if msg.type === 'scrobble-recent'
 			recent = msg.recent
 			imba.commit()
@@ -75,6 +88,16 @@ tag Popup
 		catch e
 			null
 
+	def loadRooms
+		try
+			const ids = (await send({type: 'room-recent'})).recentRoomIds or []
+			const result = await send({type: 'room-search', query: '', cursor: null, recentIds: ids})
+			recentRooms = result.recent or []
+			imba.commit()
+		catch e
+			recentRooms = []
+			imba.commit()
+
 	def pickView
 		view = loggedIn ? 'player' : 'login'
 
@@ -90,6 +113,7 @@ tag Popup
 			loggedIn = s.loggedIn
 			pickView()
 			loadRecent() if loggedIn
+			loadRooms() if loggedIn
 			accessMessage(s.access) unless s.loggedIn
 			if s.loggedIn and stations.length === 0
 				stations = (await send({type: 'stations'})).stations
@@ -98,6 +122,7 @@ tag Popup
 			message = String(e.message or e)
 			kind = 'error'
 		imba.commit()
+		lockPrivateControls()
 
 	def login e
 		const mail = e.detail.email
@@ -114,6 +139,7 @@ tag Popup
 			kind = ''
 			loggedIn = yes
 			view = 'player'
+			loadRooms()
 		catch err
 			message = String(err.message or err)
 			kind = 'error'
@@ -149,6 +175,9 @@ tag Popup
 
 	# A station starts playing in the background; no tab opens.
 	def select e
+		const room = player and player.room
+		return toast('Room listeners cannot start private playback. Leave the room first.', 'error') if room and room.id and room.role !== 'dj'
+		return toast('Your room DJ broadcast is active. Leave the room before changing stations.', 'error') if room and room.id and room.locked
 		const station = e.detail
 		try
 			player = (await send({type: 'player', action: 'play', stationToken: station.token})).state
@@ -165,6 +194,7 @@ tag Popup
 			toast(String(err.message or err), 'error')
 
 	def control e
+		return toast('Use the room reactions while a room is active.', 'error') if player and player.room and player.room.id and e.detail === 'tired'
 		try
 			player = (await send({type: 'player', action: e.detail})).state
 		catch err
@@ -175,6 +205,9 @@ tag Popup
 
 	def openRooms
 		await send({type: 'open-rooms'})
+
+	def openRoom id
+		await send({type: 'open-rooms', roomId: id})
 
 	def openOptions
 		browser.runtime.openOptionsPage()
@@ -187,8 +220,24 @@ tag Popup
 		player and player.user or {}
 
 	get now
+		const room = player and player.room
+		if room and room.id and room.state and room.state.play and room.state.play.track_metadata
+			const p = room.state.play
+			const t = p.track_metadata
+			const extra = t.additional_info or {}
+			return {song: {title: t.track_name, artist: t.artist_name, album: t.release_name, coverArt: extra.art_url or '', duration: Number(extra.duration_ms or 0) / 1000, rating: p.reaction === 'like' ? 1 : (p.reaction === 'dislike' ? 2 : 0)}, station: {name: room.state.name or 'Room'}, paused: !['broadcasting', 'listening'].includes(room.audio and room.audio.state), position: Number(p.position_ms or 0) / 1000, duration: Number(extra.duration_ms or 0) / 1000}
 		return null unless player and player.track
 		{song: player.track, station: player.station, paused: player.status !== 'playing', position: player.position, duration: player.duration}
+
+	def lockPrivateControls
+		const room = player and player.room
+		const blocked = !!(room and room.id and (room.locked or room.role !== 'dj'))
+		window.requestAnimationFrame(do
+			for control of document.querySelectorAll('#station-list button.station, #station-list button.delete')
+				control.disabled = blocked
+			for control of document.querySelectorAll('#tired')
+				control.disabled = !!(room and room.id)
+		)
 
 	get statusText
 		return '' unless player
@@ -234,6 +283,18 @@ tag Popup
 							<Transport now=now @control=control>
 							<CopyListen song=(now and now.song)>
 							<p#player-status.ext-state> statusText
+						if player and player.room and player.room.id
+							<section#current-room.card>
+								<p.eyebrow> "CURRENT ROOM"
+								<h3> (player.room.state and player.room.state.name or 'Shared room')
+								<p.fine> "{player.room.role === 'dj' ? (player.room.locked ? 'DJ broadcast active' : 'DJ turn ready') : 'Listening'} · {player.room.audio and player.room.audio.state or 'connecting'}"
+								<button#current-room-open.quiet type="button" @click=openRoom(player.room.id)> "View room"
+						if recentRooms.length
+							<section#recent-rooms.card>
+								<h3> "Recently joined"
+								for r in recentRooms
+									if !player or !player.room or r.id !== player.room.id
+										<button.room-recent-open.quiet type="button" @click=openRoom(r.id)> "{r.name} · {r.listeners} listeners"
 						<StationList stations=stations active=(player and player.station and player.station.token) compact=yes @select=select @refresh=reload @delete=remove>
 						if recent
 							<RecentListens recent=recent max=5>

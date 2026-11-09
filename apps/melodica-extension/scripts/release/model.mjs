@@ -67,8 +67,10 @@ export function verifyRelease(release, files, config) {
   assert.equal(chrome.manifest?.update_url,
     `https://spacegho.st/extensions/dl/${PROJECT}/update.xml`, 'Chromium update feed');
   for (const name of ['smoke-extension.json', 'smoke-brave.json', 'smoke-firefox.json']) {
+    const file = files.get(name);
+    if (!file) continue; // A release may publish installables while full browser jobs are still running.
     assert.ok(sums.has(name), `${name}: a published checksum is required`);
-    assert.equal(JSON.parse(files.get(name)?.body.toString('utf8') || '{}').ok, true, `${name}: browser proof must pass`);
+    assert.equal(JSON.parse(file.body.toString('utf8') || '{}').ok, true, `${name}: browser proof must pass when supplied`);
   }
   return sums;
 }
@@ -106,6 +108,14 @@ export function makeEntry({ kind, release, files, sums, config, platform }) {
     release: { tag: release.tag_name, name: release.name || release.tag_name,
       url: release.html_url, published_at: release.published_at, prerelease: false },
     assets,
+  };
+  const browserReports = ['smoke-extension.json', 'smoke-brave.json', 'smoke-firefox.json'];
+  const pendingReports = browserReports.filter(name => !files.has(name));
+  entry.browserProofs = {
+    status: pendingReports.length ? 'pending' : 'passed',
+    chromium: files.has('smoke-extension.json') ? 'passed' : 'pending',
+    brave: files.has('smoke-brave.json') ? 'passed' : 'pending',
+    firefox: files.has('smoke-firefox.json') ? 'passed' : 'pending',
   };
   if (kind === 'extensions') entry.feeds = {
     firefox: { url: `https://spacegho.st/extensions/dl/${PROJECT}/updates.json`, version: versionOf(release.tag_name) },

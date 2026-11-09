@@ -10,6 +10,7 @@ import { Engine } from './engine.imba'
 import { RoomEngine } from './room-engine.js'
 
 const engine = new Engine({
+	roomControl: do(action) (await send({type: 'engine-room-control', action})).handled
 	api: {
 		playlist: do(station, quality) (await send({type: 'playlist', stationToken: station.token, quality})).songs
 		rate: do(trackToken, positive) send({type: 'rate', trackToken, positive})
@@ -67,6 +68,7 @@ def run op, args
 		when 'room-leave' then await roomEngine.leave(args[0] or {})
 		when 'room-command' then await roomEngine.command(args[1])
 		when 'room-audio' then await roomEngine.audioCommand(args[1], args[2])
+		when 'room-end' then return await roomEngine.endTurn()
 		when 'room-scrobbling' then roomEngine.setScrobbling(args[0] !== no)
 		when 'state' then null
 		else throw new Error("unknown engine op {op}")

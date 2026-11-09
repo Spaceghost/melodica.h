@@ -4,7 +4,11 @@ import { run } from './io.mjs';
 
 const START = '<!-- extension-publication:start -->';
 const END = '<!-- extension-publication:end -->';
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const QUIET_WINDOW = 15 * 60_000;
+
+export function shouldDeferRecord(commitTime, now = Date.now(), quietWindow = QUIET_WINDOW) {
+  return now - commitTime < quietWindow;
+}
 
 export function updateRecord(original, block) {
   const section = `${START}\n${block.trim()}\n${END}`;
@@ -29,20 +33,16 @@ export function assertPublicSnapshot(paths) {
 }
 
 async function quietCheckout(dir, branch, owned = []) {
-  const deadline = Date.now() + 20 * 60_000;
-  for (;;) {
-    run('git', ['fetch', '--depth=1', 'origin', branch], { cwd: dir });
-    const sha = run('git', ['rev-parse', 'FETCH_HEAD'], { cwd: dir }).trim();
-    const timestamp = Number(run('git', ['show', '-s', '--format=%ct', sha], { cwd: dir }).trim()) * 1000;
-    if (owned.includes(sha) || Date.now() - timestamp >= 15 * 60_000) {
-      // This is a new disposable clone owned by this publication job.
-      run('git', ['checkout', '-B', 'release-record', sha], { cwd: dir });
-      return sha;
-    }
-    if (Date.now() >= deadline) throw new Error('Release metadata is waiting for ongoing repository work; the scheduled publication will retry');
-    console.log(`${branch}: waiting for ongoing repository changes before recording the release`);
-    await sleep(30_000);
+  run('git', ['fetch', '--depth=1', 'origin', branch], { cwd: dir });
+  const sha = run('git', ['rev-parse', 'FETCH_HEAD'], { cwd: dir }).trim();
+  const timestamp = Number(run('git', ['show', '-s', '--format=%ct', sha], { cwd: dir }).trim()) * 1000;
+  if (!owned.includes(sha) && shouldDeferRecord(timestamp)) {
+    console.log(`${branch}: release metadata deferred; repository has a recent independent update`);
+    return null;
   }
+  // This is a new disposable clone owned by this publication job.
+  run('git', ['checkout', '-B', 'release-record', sha], { cwd: dir });
+  return sha;
 }
 
 async function recordRepo(root, repo, branch, content, tag, owned) {
@@ -52,7 +52,7 @@ async function recordRepo(root, repo, branch, content, tag, owned) {
   run('git', ['config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'], { cwd: dir });
   run('git', ['config', 'commit.gpgsign', 'false'], { cwd: dir });
   for (let attempt = 0; attempt < 3; attempt++) {
-    await quietCheckout(dir, branch, owned);
+    if (!await quietCheckout(dir, branch, owned)) return null;
     const path = join(dir, 'HANDOFF.md');
     const previous = await readFile(path, 'utf8').catch(() => '# Release handoff\n');
     const next = updateRecord(previous, content);
@@ -74,11 +74,14 @@ export async function recordRelease(report, cache, previousOwned = {}, onRecord 
   const url = report.run || 'the self-hosted publication workflow';
   const content = `## Extension catalog publication\n\n- ${report.tag} is published at https://spacegho.st/extensions/#melodica-extension and https://spacegho.st/melodica/extension/.\n- Mozilla unlisted signing is preserved. Both browser update feeds and eight public installable downloads passed checksum verification.\n- Both catalogs passed browser checks at 390 and 1280 pixels; the Melodica catalog contains only its browser extension and keeps the player bar pinned.\n- The Worker release manifests were updated in R2; all other Melodica projects were preserved. No player or Worker code was deployed by this publication.\n- Evidence: ${url}.`;
   const owned = { ...previousOwned };
+  const pending = [];
   try {
     for (const repo of ['extensions-site', 'melodica-web', 'melodica-extension']) {
-      owned[repo] = await recordRepo(root, repo, 'master', content, report.tag,
+      const recorded = await recordRepo(root, repo, 'master', content, report.tag,
         [previousOwned[repo], repo === 'melodica-extension' ? process.env.GITHUB_SHA : null].filter(Boolean));
-      await onRecord({ ...owned });
+      if (recorded) owned[repo] = recorded;
+      else pending.push(repo);
+      await onRecord({ owned: { ...owned }, pending: [...pending] });
     }
     const dir = join(root, 'melodica.h');
     run('gh', ['repo', 'clone', 'Spaceghost/melodica.h', dir, '--', '--depth=1', '--filter=blob:none', '--no-checkout']);
@@ -87,12 +90,15 @@ export async function recordRelease(report, cache, previousOwned = {}, onRecord 
     run('git', ['config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'], { cwd: dir });
     run('git', ['config', 'commit.gpgsign', 'false'], { cwd: dir });
     const base = await quietCheckout(dir, 'main', [previousOwned['melodica.h']].filter(Boolean));
-    run('sh', ['apps/pull.sh', 'melodica-extension'], { cwd: dir });
-    const paths = run('git', ['diff', '--name-only', base, 'HEAD'], { cwd: dir }).trim().split('\n').filter(Boolean);
-    assertPublicSnapshot(paths);
-    if (paths.length) run('git', ['push', 'origin', 'HEAD:main'], { cwd: dir });
-    owned['melodica.h'] = run('git', ['rev-parse', 'HEAD'], { cwd: dir }).trim();
-    await onRecord({ ...owned });
-    return owned;
+    if (!base) pending.push('melodica.h');
+    else {
+      run('sh', ['apps/pull.sh', 'melodica-extension'], { cwd: dir });
+      const paths = run('git', ['diff', '--name-only', base, 'HEAD'], { cwd: dir }).trim().split('\n').filter(Boolean);
+      assertPublicSnapshot(paths);
+      if (paths.length) run('git', ['push', 'origin', 'HEAD:main'], { cwd: dir });
+      owned['melodica.h'] = run('git', ['rev-parse', 'HEAD'], { cwd: dir }).trim();
+    }
+    await onRecord({ owned: { ...owned }, pending: [...pending] });
+    return { owned, pending };
   } finally { await rm(root, { recursive: true, force: true }); }
 }

@@ -26,9 +26,21 @@ def acceptRoom value
 	audio.dispatchEvent(new CustomEvent('state', {detail: lastAudio}))
 	imba.commit()
 
+def acceptClock value
+	const info = value and value.room and typeof value.room === 'object' ? value.room : null
+	const nextPlay = info and info.state and info.state.play
+	const currentPlay = lastRoom and lastRoom.play
+	return unless info and info.id === roomId and currentPlay and nextPlay and nextPlay.id === currentPlay.id
+	return unless Number.isSafeInteger(nextPlay.position_ms) and nextPlay.position_ms >= 0
+	return unless Number.isSafeInteger(nextPlay.server_time) and nextPlay.server_time > (currentPlay.server_time or 0)
+	lastRoom = Object.assign({}, lastRoom, {play: Object.assign({}, currentPlay, {position_ms: nextPlay.position_ms, server_time: nextPlay.server_time})})
+	connection.dispatchEvent(new CustomEvent('clock', {detail: {play_id: nextPlay.id, position_ms: nextPlay.position_ms, server_time: nextPlay.server_time}})) if connection
+
 def onMessage msg
 	if msg and msg.type === 'player-state' and msg.state and msg.state.room
 		acceptRoom({room: msg.state.room})
+	elif msg and msg.type === 'room-clock'
+		acceptClock(msg)
 	no
 
 def setupRoomProxy
@@ -68,8 +80,22 @@ def changeAudio action, value = null
 	result.room
 
 def api path, options = {}
+	if options.body and options.body.action === 'invite'
+		const result = await send({type: 'room-command', roomId, command: options.body})
+		acceptRoom(result)
+		return result.state or result.room and result.room.state
 	const result = await send({type: 'room-api', roomId: roomId or null, path, body: options.body})
 	result.result
+
+def recentRoomIds
+	try
+		(await send({type: 'room-recent'})).recentRoomIds or []
+	catch e
+		[]
+
+def searchRooms options = {}
+	const result = await send({type: 'room-search', query: options.query or '', cursor: options.cursor or null, recentIds: options.recentIds or []})
+	{rooms: result.rooms or [], recent: result.recent or [], next_cursor: result.next_cursor or null}
 
 def mount
 	const nav = document.createElement('nav')
@@ -93,7 +119,7 @@ def mount
 			acceptRoom(current)
 		else
 			const client = {api}
-			roomUi = ui.mountRooms(container, {client, roomBase: browser.runtime.getURL('rooms.html?room=')})
+			roomUi = ui.mountRooms(container, {client, roomBase: browser.runtime.getURL('rooms.html?room='), lobbyHref: browser.runtime.getURL('rooms.html'), recentRoomIds, searchRooms})
 	catch e
 		const message = document.createElement('p')
 		message.setAttribute('role', 'alert')

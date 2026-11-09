@@ -98,15 +98,31 @@ let roomProbe = null;
 const ROOM_MEDIA_BUNDLE = resolve(root, 'vendor/scrobble-ui/room-media.js');
 async function handleRoomProbe(req, res, url, raw) {
   const match = /^\/scrobble\/api\/rooms\/([A-Za-z0-9_-]{16,64})(?:\/(signal|audio|events|ice))?$/.exec(url.pathname);
+  const list = url.pathname === '/scrobble/api/rooms';
   const json = (status, value) => { const text = JSON.stringify(value); res.writeHead(status, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(text), 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); res.end(text); };
-  if (!match || !roomProbe || match[1] !== roomProbe.id) return false;
+  if ((!match && !list) || !roomProbe || (match && match[1] !== roomProbe.id)) return false;
   const token = /^Bearer (.+)$/.exec(req.headers.authorization || '')?.[1];
   if (!token) { json(401, { error: 'invalid_token' }); return true; }
   const viewer = token === 'room-dj' ? 'dj-owner' : 'listener-ci';
   const snapshot = () => ({ ...structuredClone(roomProbe.state), you: viewer });
+  if (list && req.method === 'GET') {
+    const query = { q: url.searchParams.get('q') || '', cursor: url.searchParams.get('cursor') || '', recent: url.searchParams.get('recent') || '' };
+    roomProbe.searches.push(query);
+    const room = { id: roomProbe.id, name: roomProbe.state.name, kind: roomProbe.state.kind, mode: roomProbe.state.mode,
+      listeners: roomProbe.state.members.length, created_at: roomProbe.state.created_at || 1730000000,
+      current_play: roomProbe.state.play?.track_metadata || null };
+    const rows = !query.q || room.name.toLowerCase().includes(query.q.toLowerCase()) ? [room] : [];
+    const recent = query.recent.split(',').includes(roomProbe.id) ? [room] : [];
+    json(200, { rooms: rows, recent, next_cursor: null });
+    return true;
+  }
   const suffix = match[2] || '';
   if (req.method === 'GET' && suffix === 'ice') { json(200, { iceServers: [], sfuConfigured: false }); return true; }
   if (req.method === 'GET' && suffix === 'events') {
+    if (roomProbe.holdEvents) {
+      roomProbe.heldEvents++;
+      await new Promise((resolve) => setTimeout(resolve, 8000));
+    }
     const since = Number(url.searchParams.get('since') || -1);
     json(200, { cursor: roomProbe.cursor, state: snapshot(), signals: roomProbe.signals.filter((s) => s.to === viewer && s.cursor > since) });
     return true;
@@ -137,6 +153,15 @@ async function handleRoomProbe(req, res, url, raw) {
     let body = null; try { body = JSON.parse(raw || 'null'); } catch {}
     if (!body || typeof body.action !== 'string') { json(400, { error: 'invalid_command' }); return true; }
     roomProbe.commands.push({ viewer, action: body.action, play_id: body.play_id, listened_ms: body.listened_ms });
+    if (body.action === 'join') roomProbe.joinCalls++;
+    if (body.action === 'leave') roomProbe.leaveCalls++;
+    if (body.action === 'clock') {
+      roomProbe.clockCalls.push({ viewer, play_id: body.play_id, position_ms: body.position_ms });
+      if (roomProbe.state.play?.id === body.play_id) {
+        roomProbe.state.play.position_ms = body.position_ms;
+        roomProbe.state.play.server_time = Date.now();
+      }
+    }
     if (body.action === 'scrobble') { roomProbe.state.scrobble = body.enabled; roomProbe.state.seq++; }
     if (body.action === 'heard') { roomProbe.heard.push({ viewer, play_id: body.play_id, listened_ms: body.listened_ms }); roomProbe.state.seq++; }
     json(200, snapshot()); return true;
@@ -239,7 +264,7 @@ test.beforeAll(async () => {
       try { await liveForward(req, res, url, await readBody(req)); } catch (e) { res.writeHead(502); res.end(String(e && e.message)); }
       return;
     }
-    if (url.pathname.startsWith('/scrobble/api/rooms/')) {
+    if (url.pathname === '/scrobble/api/rooms' || url.pathname.startsWith('/scrobble/api/rooms/')) {
       if (await handleRoomProbe(req, res, url, await readBody(req))) return;
     }
     if (url.pathname.startsWith('/oauth') || url.pathname.startsWith('/scrobble/') || url.pathname.startsWith('/__fake-github')) {
@@ -1915,13 +1940,13 @@ test('disable and re-enable: an open web player returns to the extension without
   await ctl.close();
 });
 
-test('rooms: an extension-owned room session keeps live audio through page unmount and honors room scrobble opt-out', async () => {
+test('rooms: an extension-owned room session keeps live audio through page unmount, search and sign-out', async () => {
   test.skip(LIVE || !haveTuner || !existsSync(ROOM_MEDIA_BUNDLE), 'requires the local tuner and current shared room media bundle');
   test.setTimeout(120_000);
   const id = await extensionId();
   const roomId = 'nativeRoomProbe12345';
   const metadata = { track_name: 'Room oscillator', artist_name: 'Native extension fixture', release_name: 'Local', additional_info: { duration_ms: 2000 } };
-  roomProbe = { id: roomId, cursor: 0, nextChunk: 0, chunks: [], signals: [], commands: [], heard: [], state: {
+  roomProbe = { id: roomId, cursor: 0, nextChunk: 0, chunks: [], signals: [], commands: [], heard: [], searches: [], joinCalls: 0, leaveCalls: 0, clockCalls: [], holdEvents: false, heldEvents: 0, state: {
     id: roomId, name: 'Native extension room', kind: 'public', mode: 'rotation', host: 'dj-owner',
     you: 'listener-ci', current_dj: 'dj-owner', ready_at: 1, seq: 1, spots: 1, skip_fraction: 0.5,
     scrobble: true, closed_at: null, djs: ['dj-owner'], waiting: [], requests: [], past: [],
@@ -1931,7 +1956,7 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
   } };
   const ctl = await context.newPage();
   const pageErrors = [];
-  let roomPage = null, djPage = null;
+  let roomPage = null, djPage = null, bridgePage = null;
   try {
     await ctl.goto(`chrome-extension://${id}/options.html`);
     await useTuner(ctl);
@@ -1949,6 +1974,24 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
     expect(finish.ok && finish.account.signedIn).toBe(true);
     await auth.close();
 
+    const recentBefore = await send({ type: 'room-recent' });
+    expect(recentBefore.recentRoomIds).toEqual([]);
+    const search = await send({ type: 'room-search', query: 'native', cursor: '', recentIds: [] });
+    expect(search.ok, search.error).toBe(true);
+    expect(search.rooms.map((entry) => entry.id)).toEqual([roomId]);
+    expect(roomProbe.searches.at(-1)).toMatchObject({ q: 'native', cursor: '', recent: '' });
+    bridgePage = await context.newPage();
+    await bridgePage.addInitScript(() => {
+      window.__melodica = [];
+      window.addEventListener('message', (event) => { if (event.source === window && event.data?.melodica === 1) window.__melodica.push(event.data); });
+    });
+    await bridgePage.goto(`https://${WEB_HOST}${APP_PATH}`);
+    await bridgePage.waitForFunction(() => window.__melodica?.some((message) => message.type === 'ready'), null, { timeout: 15_000 });
+    await bridgePage.evaluate(() => window.postMessage({ melodica: 1, type: 'hello' }, location.origin));
+    const bridgedSearch = await bridgeAsk(bridgePage, { type: 'command', action: 'room-api', path: 'rooms?q=native' });
+    expect(bridgedSearch.ok, bridgedSearch.error).toBe(true);
+    expect(bridgedSearch.result.rooms.map((entry) => entry.id)).toEqual([roomId]);
+
     const tunerBefore = await getJson(`${tuner.http}/__tuner/log`);
     const jsonBefore = tunerBefore.filter((row) => row.protocol === 'json').length;
     const mediaBefore = tunerBefore.filter((row) => row.protocol === 'audio').length;
@@ -1959,12 +2002,14 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
     await expect(roomPage.locator('.sui-room-track h2')).toHaveText(metadata.track_name, { timeout: 30_000 });
     const initialRoom = await send({ type: 'room-get' });
     expect(initialRoom.room?.audio?.state).not.toBe('listening');
-    expect(roomProbe.signals.some((signal) => signal.data?.request === true), 'the offscreen listener asks the DJ for a peer stream').toBe(true);
+    expect(roomProbe.signals.some((signal) => signal.data?.request === true || signal.data?.request === 'relay'),
+      'the offscreen listener requests either a peer stream or the room relay transport').toBe(true);
     await roomPage.getByRole('button', { name: 'Connect room audio' }).click();
     await expect.poll(async () => (await send({ type: 'room-get' })).room?.audio?.state).toBe('connecting');
     const beforeAudio = await send({ type: 'player-get' });
-    expect(beforeAudio.state.track, 'room listening does not start or replace a Pandora song').toBe(null);
-    expect(beforeAudio.state.status).toBe('idle');
+    expect(beforeAudio.state.track).toMatchObject({ kind: 'room', title: metadata.track_name, artist: metadata.artist_name });
+    expect(beforeAudio.state.track.trackToken, 'room snapshots do not expose Pandora tokens').toBeUndefined();
+    expect(beforeAudio.state.status, 'connecting room audio is never shown as playing').toBe('loading');
 
     djPage = await context.newPage();
     await djPage.goto(`https://${WEB_HOST}${APP_PATH}room-dj.html?id=${roomId}`);
@@ -2030,13 +2075,54 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
     expect(tunerAfter.filter((row) => row.protocol === 'audio').length, 'room transfer fetches no Pandora media').toBe(mediaBefore);
     expect(pageErrors).toEqual([]);
     const liveRoom = await send({ type: 'room-get' });
+    let workerRestartPreservedRoom = false;
+    if (process.env.MELODICA_NATIVE_RESTART_PROOF === '1') {
+      const joinCallsBeforeRestart = roomProbe.joinCalls;
+      const bootCount = async () => (await ctl.evaluate(async () => (await chrome.storage.session.get('log')).log || []))
+        .filter((line) => line.includes('boot melodica-extension')).length;
+      const bootsBeforeRestart = await bootCount();
+      roomProbe.holdEvents = true;
+      await expect.poll(() => roomProbe.heldEvents, { timeout: 10_000 }).toBeGreaterThan(0);
+      const worker = context.serviceWorkers().find((candidate) => candidate.url().startsWith(`chrome-extension://${id}/`));
+      expect(worker, 'service worker is running before the room recovery proof').toBeTruthy();
+      await worker.evaluate(() => 1);
+      const internals = await context.newPage();
+      await internals.goto('chrome://serviceworker-internals/');
+      const workerRow = internals.locator('.serviceworker-item', { hasText: `chrome-extension://${id}/` });
+      await expect(workerRow).toContainText('Running Status: RUNNING', { timeout: 10_000 });
+      await workerRow.getByRole('button', { name: 'Stop', exact: true }).click();
+      await internals.close();
+      roomProbe.holdEvents = false;
+      const afterRestart = await send({ type: 'room-get' });
+      expect(afterRestart.ok, afterRestart.error).toBe(true);
+      await expect.poll(bootCount, { timeout: 15_000 }).toBeGreaterThan(bootsBeforeRestart);
+      expect(afterRestart.room.id, 'active offscreen membership is recovered after service worker restart').toBe(roomId);
+      expect(afterRestart.room.audio.state, 'room audio remains live across service worker restart').toBe('listening');
+      expect(roomProbe.joinCalls, 'a warm offscreen room session does not POST a duplicate join').toBe(joinCallsBeforeRestart);
+      workerRestartPreservedRoom = true;
+    } else {
+      console.warn('native room worker-restart recovery is not verified; set MELODICA_NATIVE_RESTART_PROOF=1 to run the isolated stop/restart check');
+    }
+    const recent = await send({ type: 'room-recent' });
+    expect(recent.recentRoomIds).toEqual([roomId]);
     const leave = await send({ type: 'room-leave', roomId });
     expect(leave.ok, leave.error).toBe(true);
+    await expect.poll(() => roomProbe.leaveCalls).toBeGreaterThan(0);
+    const rejoined = await send({ type: 'room-join', roomId });
+    expect(rejoined.ok, rejoined.error).toBe(true);
+    await expect.poll(async () => (await send({ type: 'room-get' })).room?.audio?.state, { timeout: 20_000 }).toBe('listening');
+    const leavesBeforeSignout = roomProbe.leaveCalls;
+    const signedOut = await send({ type: 'account-signout' });
+    expect(signedOut.ok, signedOut.error).toBe(true);
+    await expect.poll(() => roomProbe.leaveCalls).toBeGreaterThan(leavesBeforeSignout);
+    expect((await send({ type: 'room-get' })).room?.id).toBe(null);
+    expect((await send({ type: 'room-recent' })).recentRoomIds).toEqual([]);
     const evidence = { date: new Date().toISOString().slice(0, 10), browser: 'Chromium native extension',
-      test: 'rooms: an extension-owned room session keeps live audio through page unmount and honors room scrobble opt-out',
+      test: 'rooms: native ownership survives UI close, routes search, and leaves before sign-out',
       result: 'passed', roomId, transport: liveRoom.room?.audio?.transport || null,
       roomReceipt: roomProbe.heard[0], optOutBlockedSecondReceipt: roomProbe.heard.length === 1,
-      pageUnmountPreservedRoom: true, offscreenTarget: liveOffscreen.url,
+      pageUnmountPreservedRoom: true, workerRestartPreservedRoom, duplicateJoinOnWarmRestart: workerRestartPreservedRoom ? false : null,
+      recentAndSearch: true, signOutLeftRoom: roomProbe.leaveCalls > 0, offscreenTarget: liveOffscreen.url,
       noPandoraRPC: true, noPandoraMedia: true,
       playwright: 'focused local tuner and synthetic OAuth/room API, isolated ports 20443/20080, handle 16251' };
     await writeFile(resolve(here, 'evidence/extension-rooms.json'), JSON.stringify(evidence, null, 2) + '\n');
@@ -2045,6 +2131,7 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
     roomProbe = null;
     if (djPage) await djPage.close().catch(() => {});
     if (roomPage) await roomPage.close().catch(() => {});
+    if (bridgePage) await bridgePage.close().catch(() => {});
     await ctl.close().catch(() => {});
   }
 });

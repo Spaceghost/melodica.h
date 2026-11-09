@@ -128,6 +128,18 @@ def handleCommand data
 			r = await browser.runtime.sendMessage({type: action, roomId: data.roomId or data.id or activeRoomId, action: data.roomAction, value: data.value})
 			return reply({ok: no, error: r and r.error or 'the extension did not answer'}) unless r and r.ok
 			return reply({ok: yes, room: r.room, state: publicState(r.state)})
+		elif action === 'room-api'
+			r = await browser.runtime.sendMessage({type: 'room-api', path: data.path, roomId: data.roomId, body: data.body})
+			return reply({ok: no, error: r and r.error or 'the extension did not answer'}) unless r and r.ok
+			return reply({ok: yes, result: r.result, status: r.status})
+		elif action === 'room-search'
+			r = await browser.runtime.sendMessage({type: 'room-search', query: data.query, cursor: data.cursor, recentIds: data.recentIds})
+			return reply({ok: no, error: r and r.error or 'the extension did not answer'}) unless r and r.ok
+			return reply({ok: yes, rooms: r.rooms, recent: r.recent, recentRoomIds: r.recentRoomIds, next_cursor: r.next_cursor})
+		elif action === 'room-recent'
+			r = await browser.runtime.sendMessage({type: 'room-recent'})
+			return reply({ok: no, error: r and r.error or 'the extension did not answer'}) unless r and r.ok
+			return reply({ok: yes, recentRoomIds: r.recentRoomIds})
 		elif ['room-pause', 'room-resume', 'room-skip', 'room-volume'].includes(action)
 			const roomAction = {'room-pause': 'pause', 'room-resume': 'resume', 'room-skip': 'skip', 'room-volume': 'volume'}[action]
 			r = await browser.runtime.sendMessage({type: 'room-audio-command', roomId: data.id or data.roomId or activeRoomId, action: roomAction, value: data.value})
@@ -177,10 +189,12 @@ browser.runtime.onMessage.addListener do(msg, sender, sendResponse)
 	if msg and msg.type === 'bridge-ping'
 		sendResponse({ok: yes})
 		return no
-	return no unless msg and (msg.type === 'player-state' or msg.type === 'session-state' or msg.type === 'session-account-signout')
+	return no unless msg and (msg.type === 'player-state' or msg.type === 'room-clock' or msg.type === 'session-state' or msg.type === 'session-account-signout')
 	if msg.type === 'player-state'
 		activeRoomId = msg.state and msg.state.room and msg.state.room.id or null
 		pushState(msg.state) if subscribed
+	elif msg.type === 'room-clock'
+		window.postMessage({melodica: 1, type: 'room-clock', room: msg.room, state: publicState(msg.state)}, ORIGIN) if subscribed
 	postSession(msg.view) if sessionAsked and msg.type === 'session-state' and msg.view
 	window.postMessage({melodica: 1, type: 'account-signout'}, ORIGIN) if sessionAsked and msg.type === 'session-account-signout'
 	sendResponse({ok: yes, subscribed})
