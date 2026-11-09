@@ -1421,7 +1421,7 @@ def publicRoomAudio value
 
 def roomIsDj
 	const mine = room.state and room.state.you
-	!!(room.id and mine and (room.state.play ? room.state.play.dj === mine and room.state.you_broadcasting !== no : room.state.current_dj === mine and room.state.you_broadcasting !== no))
+	!!(room.id and mine and (room.state.play ? room.state.play.dj === mine and room.state.you_broadcasting !== false : room.state.current_dj === mine and room.state.you_broadcasting !== false))
 
 def roomBroadcastActive
 	const mine = room.state and room.state.you

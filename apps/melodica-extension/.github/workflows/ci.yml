@@ -69,7 +69,7 @@ jobs:
       - name: Playback transfer and byte-copy validation
         run: npm run test:transfer
       - name: Native Rooms engine and public-state contracts
-        run: node --test tests/room-engine.test.mjs tests/room-state.test.mjs
+        run: node --test tests/room-engine.test.mjs tests/room-state.test.mjs tests/room-role.test.mjs
       - name: Shared UI pin updater validation
         run: npm run test:ui-pin
       - name: listen:// parser test (melodica-scrobble's reference test, unchanged)
