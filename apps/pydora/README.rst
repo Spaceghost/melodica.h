@@ -157,6 +157,44 @@ you want to create the config file manually the format is:
   is not available for the device specified, then the next-highest bit-rate
   stream that Pandora supports for the chosen device will be used.
 
+Scrobbling
+==========
+The player can submit what you play to spacegho.st or any other
+ListenBrainz-compatible server. Add a ``listenbrainz`` section to the config
+file (``pydora-configure`` asks for it), or set ``PYDORA_LISTENBRAINZ_URL`` and
+``PYDORA_LISTENBRAINZ_TOKEN``:
+::
+
+    [listenbrainz]
+    url = https://spacegho.st/scrobble
+    token = your token
+
+``url`` is the API base without ``/1/`` and defaults to spacegho.st; use
+``https://api.listenbrainz.org`` for ListenBrainz. Tokens for spacegho.st are at
+https://spacegho.st/melodica/account/.
+
+Now playing is sent when a song starts. A song counts as a listen once it is
+longer than 30 seconds and has played for half its length or four minutes,
+whichever comes first. Listens that cannot be sent wait in
+``$XDG_DATA_HOME/pydora/listenbrainz-queue.json`` (``~/.local/share`` by
+default) and are retried on the next start and after the next listen that
+goes through. The token is never logged.
+
+listen:// links
+===============
+``pydora <link>`` opens a ``listen://`` link (also ``web+listen://`` and
+``https://spacegho.st/listen/``; see melodica-scrobble docs/LISTEN-URI.md).
+Nothing plays until you answer yes:
+
+* ``artist/<name>`` and ``genre/<name>`` ask "Start <name> station?", then play
+  your station of that name or create one from Pandora's search.
+* ``station/<id>`` asks the same when the station is in your list.
+* Every other target opens on spacegho.st in the browser.
+
+Anything else prints "That link isn't supported". pydora does not register the
+scheme with the desktop; point a ``x-scheme-handler/listen`` desktop entry at
+``pydora %u`` in a terminal if you want that.
+
 Programmatic Use
 ================
 The Pydora distribution contains two python packages. The |pandora package|_

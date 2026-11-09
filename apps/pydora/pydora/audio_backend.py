@@ -8,6 +8,7 @@ from shutil import which
 
 from .utils import iterate_forever, SilentPopen
 from pandora.melodica_backend import OfflineLibrary, StreamingCacheServer
+from .listenbrainz import PlayTracker
 
 
 log = logging.getLogger("pydora.audio_backend")
@@ -58,6 +59,8 @@ class BasePlayer:
         self._offline_library = OfflineLibrary()
         self._offline_streams = StreamingCacheServer(self._offline_library)
         self._history_metadata = None
+        self._paused = False
+        self._replaying = False
 
     def _offline_metadata(self, song):
         return {
@@ -96,6 +99,7 @@ class BasePlayer:
         if not previous:
             return False
         self._history_metadata = previous
+        self._replaying = True
         self._load_url(previous["local_uri"])
         return True
 
@@ -158,6 +162,7 @@ class BasePlayer:
 
     def pause(self):
         """Pause the player"""
+        self._paused = not self._paused
         self._send_cmd("pause")
 
     def __del__(self):
@@ -197,16 +202,30 @@ class BasePlayer:
         output backend process. Calls the input callback when the user has
         input.
         """
+        started_at = time.time()
+        self._paused = False
+        self._replaying = False
         self._callbacks.play(song)
         self._history_metadata = self._offline_metadata(song)
         self._load_track(song)
         time.sleep(2)  # Give the backend time to load the track
+        tracker = PlayTracker(getattr(song, "track_length", None))
+        last = time.monotonic()
 
         while True:
             try:
                 self._callbacks.pre_poll()
                 self._ensure_started()
                 self._loop_hook()
+
+                now = time.monotonic()
+                if not self._paused:
+                    tracker.add(now - last)
+                last = now
+                if not self._replaying and tracker.due():
+                    listened = getattr(self._callbacks, "listened", None)
+                    if listened:
+                        listened(song, started_at)
 
                 readers, _, _ = select.select(
                     self._get_select_readers(), [], [], 1

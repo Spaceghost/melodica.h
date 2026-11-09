@@ -8,6 +8,7 @@ from pandora.client import APIClient
 from pandora.clientbuilder import PydoraConfigFileBuilder
 
 from .utils import Screen, Colors
+from . import listenbrainz
 
 
 class Umask:
@@ -150,6 +151,30 @@ class Configurator:
         for key, value in config.items():
             self.cfg.set("api", key, value)
 
+    def configure_listenbrainz(self):
+        """Ask for a ListenBrainz-compatible server and token (optional)"""
+        self.print_message(
+            "Scrobble to a ListenBrainz-compatible server? Tokens for "
+            "spacegho.st are at {}".format(listenbrainz.TOKEN_PAGE)
+        )
+        for i, (name, url) in enumerate(listenbrainz.PRESETS, 1):
+            print("  {}: {} ({})".format(i, name, url))
+        print("  {}: another server".format(len(listenbrainz.PRESETS) + 1))
+        choice = self.screen.get_string("Server [1, blank to skip]: ")
+        if not choice:
+            return
+        if choice.isdigit() and 1 <= int(choice) <= len(listenbrainz.PRESETS):
+            url = listenbrainz.PRESETS[int(choice) - 1][1]
+        else:
+            url = self.screen.get_string("Server URL (without /1/): ")
+        token = self.screen.get_password("ListenBrainz token: ")
+        if not token:
+            return
+        if not self.cfg.has_section("listenbrainz"):
+            self.cfg.add_section("listenbrainz")
+        self.cfg.set("listenbrainz", "url", listenbrainz.normalize_base(url))
+        self.cfg.set("listenbrainz", "token", token)
+
     def read_config(self):
         with open(self.builder.path) as file:
             self.cfg.read_file(file)
@@ -172,6 +197,7 @@ class Configurator:
         self.set_static_value(
             "api", "default_audio_quality", APIClient.HIGH_AUDIO_QUALITY
         )
+        self.configure_listenbrainz()
 
         self.write_config()
 

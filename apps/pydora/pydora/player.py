@@ -10,9 +10,13 @@ import os
 import sys
 import logging
 import argparse
-from pandora import clientbuilder
+import webbrowser
+from configparser import ConfigParser
+from pandora import __version__, clientbuilder
 
 from .utils import Colors, Screen
+from . import listenbrainz
+from .listen_uri import parse_listen_uri, web_url
 from .audio_backend import RemoteVLC
 from .audio_backend import MPG123Player, VLCPlayer
 from .audio_backend import UnsupportedEncoding, PlayerUnusable
@@ -41,6 +45,11 @@ class PlayerCallbacks:
         """Called after user input during song playback"""
         pass
 
+    def listened(self, song, started_at):
+        """Called once per play, when the song has played long enough to
+        count as a listen (half its length or four minutes)"""
+        pass
+
 
 class PlayerApp:
     CMD_MAP = {
@@ -63,6 +72,59 @@ class PlayerApp:
     def __init__(self):
         self.client = None
         self.screen = Screen()
+        self.scrobbler = None
+        self.scrobble_worker = None
+        self.station = None
+
+    def get_scrobbler(self):
+        """The ListenBrainz-compatible scrobbler, or None without a token.
+
+        Read from the [listenbrainz] section of the pydora config (url, token)
+        or PYDORA_LISTENBRAINZ_URL / PYDORA_LISTENBRAINZ_TOKEN. The url
+        defaults to spacegho.st.
+        """
+        url = os.environ.get("PYDORA_LISTENBRAINZ_URL", "")
+        token = os.environ.get("PYDORA_LISTENBRAINZ_TOKEN", "")
+        path = os.path.expanduser(
+            os.environ.get("PYDORA_CFG", "")
+            or clientbuilder.PydoraConfigFileBuilder.DEFAULT_CONFIG_FILE
+        )
+        if os.path.exists(path):
+            cfg = ConfigParser()
+            try:
+                cfg.read(path)
+            except Exception:
+                cfg = None
+            if cfg is not None and cfg.has_section("listenbrainz"):
+                url = url or cfg.get("listenbrainz", "url", fallback="")
+                token = token or cfg.get("listenbrainz", "token", fallback="")
+        if not token.strip():
+            return None
+        return listenbrainz.ListenBrainzClient(
+            url,
+            token,
+            queue_path=listenbrainz_queue_path(),
+            client="pydora",
+            client_version=__version__,
+        )
+
+    def _song_metadata(self, song):
+        return self.scrobbler.metadata(
+            song.artist_name,
+            song.song_name,
+            album=song.album_name,
+            duration_s=song.track_length,
+            art_url=song.album_art_url,
+            station=getattr(self.station, "name", None),
+        )
+
+    def listened(self, song, started_at):
+        """Listen callback: the song has played long enough to count"""
+        if self.scrobbler and not song.is_ad:
+            meta = self._song_metadata(song)
+            self.scrobble_worker.send(
+                self.scrobbler.listen, meta, int(started_at)
+            )
 
     def get_player(self, vlc_net=None):
         # The user must explicitly request network VLC so we should always
@@ -124,6 +186,9 @@ class PlayerApp:
 
     def play(self, song):
         """Play callback"""
+        if self.scrobbler and not song.is_ad:
+            meta = self._song_metadata(song)
+            self.scrobble_worker.send(self.scrobbler.now_playing, meta)
         if song.is_ad:
             print("{} ".format(Colors.cyan("Advertisement")))
         else:
@@ -229,6 +294,8 @@ class PlayerApp:
             self.screen.print_error("Cannot sleep this type of track")
 
     def quit(self, song):
+        if self.scrobble_worker:
+            self.scrobble_worker.join()
         self.player.end_station()
         sys.exit(0)
 
@@ -261,6 +328,63 @@ class PlayerApp:
     def post_poll(self):
         self.screen.set_echo(True)
 
+    def confirm(self, question):
+        answer = self.screen.get_string("{} [y/N] ".format(question))
+        return answer.strip().lower() in ("y", "yes")
+
+    def _seed_station(self, target, name):
+        """An artist or genre station: one already in the list, or a new one"""
+        wanted = {name.lower(), "{} radio".format(name.lower())}
+        for station in self.stations:
+            if station.name and station.name.lower() in wanted:
+                return station
+        results = self.client.search(
+            name, include_near_matches=True, include_genre_stations=True
+        )
+        if target == "artist":
+            items = [(i.artist, i) for i in results.artists or []]
+        else:
+            items = [(i.station_name, i) for i in results.genre_stations or []]
+        if not items:
+            self.screen.print_error(
+                "Pandora has no {} called {}".format(target, name)
+            )
+            return None
+        exact = [i for n, i in items if n and n.lower() == name.lower()]
+        item = exact[0] if exact else items[0][1]
+        station = self.client.create_station(search_token=item.token)
+        self.stations = self.client.get_station_list()
+        return station
+
+    def open_link(self, link):
+        """Handle a listen:// link (docs/LISTEN-URI.md in melodica-scrobble).
+
+        Returns the station to play once the user has said yes, else None.
+        Nothing plays without that answer. Targets pydora cannot show open
+        on spacegho.st in the browser.
+        """
+        p = parse_listen_uri(link)
+        if not p:
+            self.screen.print_error("That link isn't supported")
+            return None
+        target = p["target"]
+        if target in ("artist", "genre"):
+            if not self.confirm("Start {} station?".format(p["name"])):
+                return None
+            return self._seed_station(target, p["name"])
+        if target == "station":
+            for station in self.stations:
+                if p["station"] in (station.id, station.token):
+                    if self.confirm("Start {} station?".format(station.name)):
+                        return station
+                    return None
+            self.screen.print_error("That station isn't in your station list")
+            return None
+        url = web_url(p)
+        webbrowser.open(url)
+        self.screen.print_success("Opened {}".format(url))
+        return None
+
     def pre_flight_checks(self):
         # See #52, this key no longer passes some server-side check
         if self.client.partner_user == "iphone":
@@ -281,6 +405,14 @@ class PlayerApp:
             "--vlc-net",
             dest="vlc_net",
             help="connect to VLC over the network (host:port)",
+        )
+        parser.add_argument(
+            "link",
+            nargs="?",
+            help=(
+                "a listen:// link (or https://spacegho.st/listen/...) to "
+                "open; asks before anything plays"
+            ),
         )
         parser.add_argument(
             "-v",
@@ -306,7 +438,27 @@ class PlayerApp:
 
         self.pre_flight_checks()
 
+        self.scrobbler = self.get_scrobbler()
+        if self.scrobbler:
+            self.scrobble_worker = listenbrainz.Worker()
+            self.scrobble_worker.send(self.scrobbler.flush)
+            self.screen.print_success(
+                "Scrobbling to {}".format(self.scrobbler.base)
+            )
+
         error = None
+
+        if args.link:
+            station = self.open_link(args.link)
+            if station:
+                self.station = station
+                try:
+                    self.player.play_station(station)
+                except UnsupportedEncoding as ex:
+                    error = str(ex)
+                except KeyboardInterrupt:
+                    self.player.stop()
+                    sys.exit(0)
 
         while True:
             try:
@@ -318,6 +470,7 @@ class PlayerApp:
             except KeyboardInterrupt:
                 sys.exit(0)
 
+            self.station = station
             try:
                 self.player.play_station(station)
             except UnsupportedEncoding as ex:
@@ -325,6 +478,13 @@ class PlayerApp:
             except KeyboardInterrupt:
                 self.player.stop()
                 sys.exit(0)
+
+
+def listenbrainz_queue_path():
+    base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser(
+        "~/.local/share"
+    )
+    return os.path.join(base, "pydora", "listenbrainz-queue.json")
 
 
 def main():
