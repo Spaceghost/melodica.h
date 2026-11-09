@@ -59,6 +59,8 @@ jobs:
         run: node tests/update.test.mjs
       - name: Scrobbles unit test (listen metadata, 50% / 4 min)
         run: node tests/scrobble.test.mjs
+      - name: listen:// parser test (melodica-scrobble's reference test, unchanged)
+        run: node --test tests/listen-uri.test.mjs
       - name: Design lint (no colored single side on any element)
         run: node scripts/lint-edges.mjs public/*.css
       - name: Firefox manifest lint (web-ext)

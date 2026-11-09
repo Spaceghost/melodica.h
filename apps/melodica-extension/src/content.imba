@@ -29,6 +29,11 @@ const METHOD = /^[a-z]+\.[A-Za-z]+$/
 const ORIGIN = 'https://spacegho.st'
 const PATH = '/melodica/'
 
+# A https://spacegho.st/listen/ link (docs/LISTEN-URI.md) loaded as a page: the
+# extension's player tab takes it over (it offers Play; nothing starts by itself).
+if location.pathname.startsWith('/listen/')
+	browser.runtime.sendMessage({type: 'listen-open', uri: location.href.split('#')[0]}).catch(do(e) null)
+
 let subscribed = no
 
 def announce
@@ -43,7 +48,7 @@ def strip song
 
 def publicState state
 	return state unless state and typeof state === 'object'
-	Object.assign({}, state, {track: strip(state.track), history: Array.isArray(state.history) ? state.history.map(strip) : []})
+	Object.assign({}, state, {track: strip(state.track), history: Array.isArray(state.history) ? state.history.map(strip) : [], queue: Array.isArray(state.queue) ? state.queue.map(strip) : []})
 
 # Answers to a subscribe (the page repeats it every few seconds) and the
 # background's pushes can cross: a state older than the newest one sent is

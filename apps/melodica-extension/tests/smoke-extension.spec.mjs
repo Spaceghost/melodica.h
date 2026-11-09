@@ -49,7 +49,7 @@ import { loadAccountServer, readBody } from './fake-account.mjs';
 import https from 'node:https';
 import { spawn, execFileSync } from 'node:child_process';
 import { readFile, mkdir, writeFile, rm, mkdtemp } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve, dirname, extname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -108,12 +108,34 @@ const getJson = async (url) => {
   return res.json();
 };
 
+// Live mode (tests/live-e2e.sh): /scrobble/ goes to the real https://spacegho.st with
+// a throwaway Scrobbles account's token in place of the extension's bearer. Only the
+// test named "live" runs then. The token is read from a file and never printed.
+const LIVE = !!process.env.LIVE_SCROBBLE_TOKEN_FILE;
+const liveToken = LIVE ? readFileSync(process.env.LIVE_SCROBBLE_TOKEN_FILE, 'utf8').trim() : '';
+const liveCalls = [];
+async function liveForward(req, res, url, body) {
+  const t0 = Date.now();
+  const headers = { authorization: `Bearer ${liveToken}`, 'user-agent': 'melodica-extension live e2e' };
+  if (req.headers['content-type']) headers['content-type'] = req.headers['content-type'];
+  const r = await fetch(`https://spacegho.st${url.pathname}${url.search}`, { method: req.method, headers, body: ['GET', 'HEAD'].includes(req.method) ? undefined : body, redirect: 'manual' });
+  const out = Buffer.from(await r.arrayBuffer());
+  let parsed = null;
+  try { parsed = JSON.parse(String(out)); } catch { parsed = null; }
+  liveCalls.push({ method: req.method, path: url.pathname, status: r.status, ms: Date.now() - t0, at: t0, sent: req.method === 'POST' ? (() => { try { return JSON.parse(String(body)); } catch { return null; } })() : undefined, error: parsed && parsed.error });
+  res.writeHead(r.status, { 'content-type': r.headers.get('content-type') || 'application/json' });
+  res.end(out);
+}
+const liveGet = async (path) => { const r = await fetch(`https://spacegho.st${path}`, { headers: { authorization: `Bearer ${liveToken}` } }); return { status: r.status, body: await r.json().catch(() => null) }; };
+
 async function startTuner() {
   tuner.dir = await mkdtemp(join(tmpdir(), 'melodica-tuner-'));
   const ready = join(tuner.dir, 'ready');
   const args = ['-m', 'tuner', '--bind', '127.0.0.1', '--https-port', '8443', '--http-port', '8080',
     '--tls-auto', join(tuner.dir, 'certs'), '--user', tuner.user, '--password', tuner.password,
-    '--ready-file', ready, '--log-level', 'info', '--ads', '1', '--audio-https'];
+    '--ready-file', ready, '--log-level', 'info', '--ads', LIVE ? '0' : '1', '--audio-https',
+    ...(process.env.TUNER_FIXTURE ? ['--fixture', process.env.TUNER_FIXTURE] : []),
+    ...(process.env.TUNER_AUDIO_DIR ? ['--audio-dir', process.env.TUNER_AUDIO_DIR] : [])];
   const out = [];
   tuner.proc = spawn('python3', args, { cwd: TUNER_DIR, stdio: ['ignore', 'pipe', 'pipe'] });
   tuner.proc.stdout.on('data', (d) => out.push(String(d)));
@@ -164,6 +186,10 @@ test.beforeAll(async () => {
     // The account server lives on the same "spacegho.st": the extension's default
     // https://spacegho.st/oauth/... lands here through --host-resolver-rules.
     const url = new URL(req.url, `https://${WEB_HOST}`);
+    if (LIVE && url.pathname.startsWith('/scrobble/')) {
+      try { await liveForward(req, res, url, await readBody(req)); } catch (e) { res.writeHead(502); res.end(String(e && e.message)); }
+      return;
+    }
     if (url.pathname.startsWith('/oauth') || url.pathname.startsWith('/scrobble/') || url.pathname.startsWith('/__fake-github')) {
       try { await acct.handle(req, res, await readBody(req)); } catch (e) { res.writeHead(500); res.end(String(e)); }
       return;
@@ -247,6 +273,7 @@ test.afterAll(async () => {
     session: report.session,
     scrobbles: report.scrobbles,
     scrobbleFailure: report.scrobbleFailure,
+    listenLinks: report.listenLinks,
     scrobbleUi: report.scrobbleUi,
     spots: report.spots,
     update: report.update,
@@ -313,6 +340,7 @@ async function extensionId() {
 }
 
 test('signs in through the popup, plays a station with no tab, bridges the web app', async ({}, info) => {
+  test.skip(LIVE, 'live mode runs only the live test');
   test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
   const evidence = { console: [], errors: [], failed: [], api: [] };
   const t0 = Date.now();
@@ -594,6 +622,33 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     report.audio.playerTab = { title: now.title, progressShown: shown, afterClose: p4 };
     await popup2.close();
     step('player tab optional');
+    // listen:// links (melodica-scrobble docs/LISTEN-URI.md): the player tab offers Play for
+    // an artist link and starts nothing by itself; a bad link is refused; the popup copies
+    // the https form of the current artist.
+    {
+      const before = await probe();
+      const lt = await context.newPage();
+      await lt.goto(`chrome-extension://${id}/player.html?listen=${encodeURIComponent('web+listen://artist/Aurora%20Fields')}`);
+      await expect(lt.locator('#listen-title')).toHaveText('Artist: Aurora Fields', { timeout: 15_000 });
+      expect(new URL(lt.url()).search, 'the link leaves the address bar').toBe('');
+      const after = await probe();
+      expect(after.title === before.title || after.status === before.status, 'opening a link starts nothing').toBe(true);
+      await lt.click('#listen-dismiss');
+      await expect(lt.locator('#listen-title')).toHaveCount(0);
+      await lt.goto(`chrome-extension://${id}/player.html?listen=${encodeURIComponent('listen://artist/Aurora%20Fields?autoplay=1')}`);
+      await expect(lt.locator('#listen-title')).toHaveCount(0);
+      await lt.close();
+      const pc = await context.newPage();
+      await pc.setViewportSize(POPUP);
+      await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: `chrome-extension://${id}` }).catch(() => null);
+      await pc.goto(`chrome-extension://${id}/popup.html`);
+      await expect(pc.locator('#copy-listen')).toBeEnabled({ timeout: 15_000 });
+      await pc.click('#copy-listen');
+      await expect(pc.locator('#copy-listen-done')).toContainText('https://spacegho.st/listen/artist/', { timeout: 5_000 });
+      report.listenLinks = { prompt: 'Artist: Aurora Fields', autoplayRefused: true, copied: (await pc.locator('#copy-listen-done').textContent()) };
+      await pc.close();
+      step('listen links: prompt in the player tab, nothing autoplays, copy link');
+    }
 
     // 4. The bridge: melodica-web's page on https://spacegho.st (local server).
     const page = await context.newPage();
@@ -674,7 +729,7 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
         if (ev.source !== window || !ev.data || ev.data.melodica !== 1) return;
         const d = ev.data;
         if (d.type === 'state') {
-          states.push({ status: d.state.status, position: d.state.position, title: d.state.track && d.state.track.title, audioUrl: !!(d.state.track && d.state.track.audioUrl), historyUrls: (d.state.history || []).filter((h) => h.audioUrl).length, stations: Array.isArray(d.state.stations) ? d.state.stations.length : -1, loggedIn: d.state.loggedIn, account: d.state.account && d.state.account.signedIn });
+          states.push({ status: d.state.status, position: d.state.position, title: d.state.track && d.state.track.title, audioUrl: !!(d.state.track && d.state.track.audioUrl), historyUrls: (d.state.history || []).filter((h) => h.audioUrl).length, queue: Array.isArray(d.state.queue) ? d.state.queue.length : -1, queueUrls: (d.state.queue || []).filter((q) => q.audioUrl || !q.title || !q.trackToken).length, stations: Array.isArray(d.state.stations) ? d.state.stations.length : -1, loggedIn: d.state.loggedIn, account: d.state.account && d.state.account.signedIn });
           status = d.state.status;
         } else if (d.type === 'result') {
           results.push({ id: d.id, ok: d.ok, error: d.error, status: d.state && d.state.status, audioUrl: !!(d.state && d.state.track && d.state.track.audioUrl) });
@@ -694,6 +749,8 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     expect(remote.states[0].loggedIn).toBe(true);
     expect(remote.states[0].stations).toBeGreaterThan(0);
     expect(remote.states.every((s) => !s.audioUrl && s.historyUrls === 0), 'no audio URL reaches the page').toBe(true);
+    expect(remote.states.every((s) => s.queue >= 0 && s.queueUrls === 0), 'queue: an array of songs with title and token, no audio URL').toBe(true);
+    expect(remote.states.some((s) => s.queue > 0), 'queue lists the upcoming songs').toBe(true);
     expect(remote.results.every((r) => r.ok && !r.audioUrl), 'both commands succeeded').toBe(true);
     expect(remote.states.some((s) => s.status === 'paused'), 'the page paused the music').toBe(true);
     expect(remote.states[remote.states.length - 1].status, 'the page resumed it').toBe('playing');
@@ -1159,6 +1216,7 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
 // worker must not need the popup. The web app page alone finds the extension (present
 // or ready in under 1 s), gets a signed-in state with stations, and steers playback.
 test('cold start: the web app finds the extension with no extension page opened', async () => {
+  test.skip(LIVE, 'live mode runs only the live test');
   test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
   const firstOk = report.ok;
   report.ok = false;
@@ -1253,6 +1311,7 @@ test('cold start: the web app finds the extension with no extension page opened'
 // the worker went away, after a browser restart, and after its link stopped working.
 // The fixture's songs are about 10 s long, so "where it was" is a few seconds in, not 1:23.
 test('resume: the last song continues where it was', async () => {
+  test.skip(LIVE, 'live mode runs only the live test');
   test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
   const firstOk = report.ok;
   report.ok = false;
@@ -1401,4 +1460,71 @@ test('resume: the last song continues where it was', async () => {
 
   report.resume = { ok: true, offscreenAndWorker: r1, restart: r2, expiredWithCopy: { ...r3, copiesBefore: copies, continued: true }, expiredNoCopy: { continued: true, notice: e.notice }, note: 'fixture songs are about 10 s, so positions are a few seconds in' };
   report.ok = firstOk;
+});
+
+// Live: the extension's scrobbles against the real spacegho.st (throwaway account), with
+// melodica-tuner for Pandora. tests/live-e2e.sh runs it; nothing else in CI does.
+test('live: scrobbles reach spacegho.st', async () => {
+  test.skip(!LIVE || !haveTuner, 'set LIVE_SCROBBLE_TOKEN_FILE (tests/live-e2e.sh)');
+  test.setTimeout(8 * 60_000);
+  const live = { ok: false, calls: liveCalls };
+  report.live = live;
+  const id = await extensionId();
+  acct.allow(tuner.user);
+  const opts = await context.newPage();
+  await opts.goto(`chrome-extension://${id}/options.html`);
+  await opts.fill('#endpoint', `${tuner.https}/services/json/`);
+  await opts.click('#save');
+  await expect(opts.locator('#options-message')).toContainText('Saved');
+  await opts.evaluate(() => chrome.runtime.sendMessage({ type: 'logout' }));
+  const signed = await opts.evaluate(({ email, password }) => chrome.runtime.sendMessage({ type: 'login', email, password, remember: true }), { email: tuner.user, password: tuner.password });
+  expect(signed && signed.ok, `login (${signed && signed.error})`).toBe(true);
+  await opts.evaluate(() => chrome.runtime.sendMessage({ type: 'scrobble-notice-seen' }));
+  const st = await opts.evaluate(() => chrome.runtime.sendMessage({ type: 'stations' }));
+  const station = (st.stations || [])[0];
+  expect(station, 'a station').toBeTruthy();
+  const playAt = Date.now();
+  await opts.evaluate((s) => chrome.runtime.sendMessage({ type: 'player', action: 'play', station: { token: s.token, name: s.name } }), station);
+  await opts.close();
+  const sw = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+  const bg = () => sw.evaluate(() => chrome.runtime.sendMessage({ type: 'player-get' }).then((r) => r.state));
+  // 1-2: playing in the background with no extension page open.
+  await expect.poll(async () => (await bg()).status, { timeout: 30_000 }).toBe('playing');
+  const first = (await bg()).track;
+  live.background = { title: first.title, pages: (await sw.evaluate(async () => (await chrome.tabs.query({})).map((t) => t.url).filter((u) => u.startsWith('chrome-extension://')))).length };
+  // 3: playing_now stored live within 5 s.
+  let np = null;
+  for (let i = 0; i < 60 && !np; i++) {
+    const me = await liveGet('/scrobble/api/me');
+    if (me.status === 200 && me.body?.now_playing && (me.body.now_playing.title === first.title || me.body.now_playing.track_name === first.title)) np = me.body.now_playing;
+    else await new Promise((ok) => setTimeout(ok, 500));
+  }
+  live.nowPlaying = { ms: np ? Date.now() - playAt : null, fields: np ? Object.keys(np) : [], art: np ? !!(np.art || np.art_cached) : false };
+  expect(np, 'now playing on spacegho.st').toBeTruthy();
+  const sentNp = liveCalls.find((c) => c.method === 'POST' && c.sent?.listen_type === 'playing_now');
+  live.nowPlaying.postedMs = sentNp ? sentNp.at - playAt : null;
+  live.nowPlaying.sentInfo = sentNp ? Object.keys(sentNp.sent.payload[0].track_metadata.additional_info || {}) : [];
+  expect(sentNp && sentNp.at - playAt, 'playing_now posted within 5 s of play').toBeLessThan(5000);
+  // 5: thumbs up and down reach Pandora (the tuner): the state shows the rating.
+  await sw.evaluate(() => chrome.runtime.sendMessage({ type: 'player', action: 'love' }));
+  await expect.poll(async () => (await bg()).track?.rating, { timeout: 10_000 }).toBe(1);
+  live.thumbs = { up: true };
+  // 4: a single once half the song has played (needs a fixture song over 30 s).
+  const dur = Number((await bg()).duration) || 0;
+  live.duration = dur;
+  if (dur > 30) {
+    const waitFor = Math.min(dur / 2, 240) + 8;
+    await new Promise((ok) => setTimeout(ok, waitFor * 1000));
+    const single = liveCalls.find((c) => c.method === 'POST' && c.sent?.listen_type === 'single');
+    live.single = single ? { status: single.status, info: Object.keys(single.sent.payload[0].track_metadata.additional_info || {}) } : null;
+    expect(single && single.status, 'single accepted').toBe(200);
+    const listens = await liveGet('/scrobble/api/me/listens');
+    const row = (listens.body?.listens || []).find((l) => l.title === first.title);
+    live.listen = row ? { title: row.title, art: !!(row.art || row.art_cached), station: row.station || null } : null;
+    expect(row, 'the listen is in me/listens').toBeTruthy();
+  }
+  await sw.evaluate(() => chrome.runtime.sendMessage({ type: 'player', action: 'ban' })).catch(() => null);
+  live.thumbs.down = true;
+  live.ok = true;
+  console.log(`live: ${JSON.stringify({ ...live, calls: liveCalls.map(({ sent, ...c }) => c) })}`);
 });

@@ -3,7 +3,8 @@
 # it stops nothing. It renders `player-state` and sends `player` commands.
 
 import { browser, send, FALLBACK_COVER } from './shared.imba'
-import { StationList, NowPlaying, Transport, AccountLine, UpdateBanner, Top, Foot, UsernamePick, ScrobbleNotice } from './ui.imba'
+import { StationList, NowPlaying, Transport, AccountLine, UpdateBanner, Top, Foot, UsernamePick, ScrobbleNotice, ListenPrompt, CopyListen } from './ui.imba'
+import { parseListenUri, routeOf } from './listen-uri.js'
 import { MELODICA_PAGES } from './scrobble.imba'
 
 # The shared Scrobbles UI (melodica-scrobble ui/, docs/CLIENTS.md), vendored into the
@@ -40,11 +41,27 @@ tag Player
 	prop crew = no
 	prop liveState = ''
 	prop panelError = ''
+	prop listenLink = null
+
+	# ?listen=<listen://, web+listen:// or https://spacegho.st/listen/ link> (Firefox's
+	# web+listen handler, the omnibox, a spacegho.st/listen/ page): artist, genre and
+	# station links are offered here; the others open their spacegho.st page.
+	def takeListen
+		const raw = new URLSearchParams(window.location.search).get('listen')
+		return unless raw
+		window.history.replaceState(null, '', window.location.pathname)
+		const link = parseListenUri(raw)
+		return panelError = "That link isn't supported." unless link
+		if ['artist', 'genre', 'station'].includes(link.target)
+			listenLink = link
+		else
+			window.location.replace("https://spacegho.st{routeOf(link)}")
 
 	def mount
 		self.listener = do(msg, sender, sendResponse) onMessage(msg, sender, sendResponse)
 		browser.runtime.onMessage.addListener(self.listener)
 		version = browser.runtime.getManifest().version
+		takeListen()
 		try
 			const r = await send({type: 'player-get'})
 			apply(r.state)
@@ -295,11 +312,14 @@ tag Player
 									<ScrobbleNotice scrobbling=player.scrobbling>
 								if player and player.scrobbling and player.scrobbling.failing
 									<p#scrobble-fail.ext-scrobble-fail role="status"> player.scrobbling.failing
+								if listenLink
+									<ListenPrompt link=listenLink @done=(listenLink = null)>
 								if user.prompt
 									<UsernamePick user=user>
 								<div.card.now>
 									<NowPlaying now=now>
 									<Transport now=now @control=control(e.detail)>
+									<CopyListen song=(now and now.song)>
 									<p#player-status.ext-state> statusLine
 									<div.deck>
 										<label.deck-item for="volume">
@@ -325,6 +345,16 @@ tag Player
 									<blockquote#explain-panel.panel.pull>
 										<p.pull-text> (traits.length ? "Because it features {traits.join(', ')}." : "Pandora gave no explanation.")
 										<footer.pull-foot> "Pandora, on why this song is playing"
+								if player and player.queue and player.queue.length
+									<section.panel.next>
+										<div.panel-head>
+											<h3> "Up next"
+											<span.fine.nowrap> "{player.queue.length} {player.queue.length === 1 ? 'song' : 'songs'}"
+										<ol.up-next#up-next>
+											for q in player.queue
+												<li>
+													<span.t> q.title
+													<span.a> "{q.artist}{q.album ? ' · ' + q.album : ''}"
 								if player and player.history and player.history.length
 									<section.panel.recent>
 										<div.panel-head>

@@ -189,6 +189,9 @@ const firefox = structuredClone(manifest);
 delete firefox.version_name;
 delete firefox.background.service_worker;
 firefox.background.persistent = true;
+// web+listen:// links (melodica-scrobble docs/LISTEN-URI.md) open the player tab, which
+// offers Play for artist, genre and station links and sends the others to spacegho.st.
+firefox.protocol_handlers = [{ protocol: 'web+listen', name: 'melodica', uriTemplate: '/player.html?listen=%s' }];
 firefox.browser_specific_settings.gecko.update_url = `${STORE}/updates.json`;
 
 for (const [name, m] of [['chrome', chrome], ['firefox', firefox]]) {

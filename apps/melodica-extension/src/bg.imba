@@ -17,6 +17,7 @@ import { Core } from './core.imba'
 import { Pandora, PandoraError, QUALITIES } from './pandora.imba'
 import { browser, loadSettings, normalizeEndpoint, fromBase64, toBase64, SETTINGS_DEFAULTS } from './shared.imba'
 import { seal, unseal, wipe, vaultAvailable, sealAs, unsealAs, wipeAs } from './vault.imba'
+import { parseListenUri } from './listen-uri.js'
 import { SCROBBLE_NOTICE, LEADERBOARD_URL, MELODICA_PAGES, recentFrom, listenOf, prependListen, isSpot, trackMetadata, thresholdSeconds, playingNow, single, enqueue, outcome, genomeTraits, failureText, SEED_KINDS, seedStation, seedPick } from './scrobble.imba'
 import { normalizeAccountBase, randomString, pkceChallenge, authorizeUrl, parseRedirect, tokenForm, storedTokens, accessFresh, policyFrom, spotsFlag, accountLabel, jwtClaims, CLIENT_ID, TAB_CLIENT_ID, TAB_REDIRECT, POLICY_DEFAULT } from './account.imba'
 import { feedUrl, latestVersion, bannerState, compareVersions, STORE_URL } from './update.imba'
@@ -35,7 +36,7 @@ const TAB_ENGINE = !browser.offscreen and (browser.runtime.getManifest().backgro
 const SIGNIN_PENDING_FOR = 10 * 60 * 1000
 let engineWaiters = []
 const SESSION_KEYS = {session: null, stations: [], player: null, log: [], melodica: null, meta: null}
-const PLAYER_IDLE = {status: 'idle', station: null, track: null, position: 0, duration: 0, volume: 80, quality: 'high', queueLength: 0, error: '', history: [], changedAt: 0}
+const PLAYER_IDLE = {status: 'idle', station: null, track: null, position: 0, duration: 0, volume: 80, quality: 'high', queueLength: 0, queue: [], error: '', history: [], changedAt: 0}
 const PLAYER_ACTIONS = new Set(['play', 'resume', 'pause', 'toggle', 'next', 'love', 'ban', 'tired', 'sleep', 'stop', 'volume', 'quality'])
 const LOG_MAX = 200
 # The spacegho.st account's policy is asked again at least this often while the
@@ -1113,6 +1114,33 @@ def openLogin
 
 # The player tab is optional: a full-size view of the same state. Opening it
 # starts nothing; closing it stops nothing.
+# listen:// links (docs/LISTEN-URI.md) open in the player tab: from a
+# spacegho.st/listen/ page (that tab), the omnibox keyword `listen`, or Firefox's
+# web+listen handler (the manifest points it at the player tab directly).
+def listenTab uri, tabId = null
+	const link = parseListenUri(String(uri or ''))
+	return no unless link
+	const url = "{PLAYER_URL}?listen={encodeURIComponent(link.uri)}"
+	if tabId !== null
+		await browser.tabs.update(tabId, {url})
+	else
+		await browser.tabs.create({url})
+	yes
+
+# Omnibox: "listen artist/Modest Mouse", a whole link, or just an artist's name.
+def omniboxLink text
+	const t = String(text or '').trim()
+	return t if /^(listen|web\+listen):\/\//i.test(t) or t.toLowerCase().startsWith('https://spacegho.st/listen/')
+	const path = t.split('/').map(do(p, i) i === 0 ? p : encodeURIComponent(p.trim())).join('/')
+	return "listen://{path}" if parseListenUri("listen://{path}")
+	"listen://artist/{encodeURIComponent(t)}"
+
+if browser.omnibox and browser.omnibox.onInputEntered
+	browser.omnibox.setDefaultSuggestion({description: 'Open a listen link in melodica (artist/<name>, genre/<name>, or a name)'}) if browser.omnibox.setDefaultSuggestion
+	browser.omnibox.onInputEntered.addListener do(text, disposition)
+		const tabs = disposition === 'currentTab' ? await browser.tabs.query({active: yes, currentWindow: yes}) : []
+		listenTab(omniboxLink(text), tabs[0] ? tabs[0].id : null).catch(do(e) note("listen link failed: {(e and e.message) or e}"))
+
 def openPlayer
 	const tabs = await browser.tabs.query({url: PLAYER_URL + '*'})
 	const tab = tabs[0]
@@ -1585,6 +1613,10 @@ def handle msg, sender
 			{state: playerView(), settings: state.settings, account: accountView(), update: updateState()}
 		when 'player'
 			await playerCommand(msg)
+		when 'listen-open'
+			const u = sender and sender.url and new URL(sender.url)
+			throw new PandoraError('not allowed', null, 0, 'bridge') unless sender and sender.id === browser.runtime.id and sender.frameId === 0 and sender.tab and u and u.origin === BRIDGE_ORIGIN and u.pathname.startsWith('/listen/')
+			{opened: await listenTab(msg.uri, sender.tab.id)}
 		when 'play-seed'
 			throw new PandoraError('not allowed', null, 0, 'bridge') unless melodicaPageSender(sender) or extensionPage(sender)
 			await playSeed(String(msg.kind or ''), msg.name)

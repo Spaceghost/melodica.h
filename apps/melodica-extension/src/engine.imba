@@ -51,7 +51,7 @@ export class Engine
 		self.doc = host.document or document
 		self.state = {
 			status: 'idle', station: null, track: null, position: 0, duration: 0,
-			volume: 80, quality: 'high', queueLength: 0, error: '', notice: '', history: [], changedAt: 0
+			volume: 80, quality: 'high', queueLength: 0, queue: [], error: '', notice: '', history: [], changedAt: 0
 		}
 		self.queue = []
 		self.generation = 0
@@ -157,6 +157,8 @@ export class Engine
 	def emit force = no
 		state.changedAt = Date.now()
 		state.queueLength = queue.length
+		# Up next (docs/BRIDGE.md `queue`): songs only, in order, never an audio URL.
+		state.queue = queue.filter(do(x) x and x.kind !== 'spot' and !x.ad and x.title).map(do(x) {title: x.title, artist: x.artist or '', album: x.album or '', coverArt: x.coverArt or '', art: x.coverArt or '', duration: Number(x.duration) or 0, trackToken: x.trackToken or ''})
 		report(snapshot)
 
 	def set patch

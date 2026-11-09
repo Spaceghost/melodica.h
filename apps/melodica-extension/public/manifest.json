@@ -30,7 +30,8 @@
   "content_scripts": [
     {
       "matches": [
-        "https://spacegho.st/melodica/*"
+        "https://spacegho.st/melodica/*",
+        "https://spacegho.st/listen/*"
       ],
       "js": [
         "content.js"
@@ -53,6 +54,9 @@
     "https://*/*",
     "http://*/*"
   ],
+  "omnibox": {
+    "keyword": "listen"
+  },
   "web_accessible_resources": [],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"

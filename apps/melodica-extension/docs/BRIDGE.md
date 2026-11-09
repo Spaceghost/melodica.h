@@ -46,7 +46,8 @@ becomes a view of that playback and a remote for it, instead of running its own 
   "station": {"token": "…", "name": "…"},
   "track": {"title": "…", "artist": "…", "album": "…", "coverArt": "…", "trackToken": "…", "rating": 0, "duration": 0, "quality": "high", "audioFormat": "aacplus"},
   "position": 12.3, "duration": 240, "volume": 80, "quality": "high",
-  "queueLength": 3, "error": "", "history": [], "changedAt": 1794038444947,
+  "queueLength": 3, "queue": [{"title": "…", "artist": "…", "album": "…", "coverArt": "…", "art": "…", "duration": 200, "trackToken": "…"}],
+  "error": "", "history": [], "changedAt": 1794038444947,
   "stations": [{"token": "…", "name": "…", "isQuickMix": false, "allowDelete": true}],
   "loggedIn": true,
   "account": {"signedIn": false, "label": ""},
@@ -54,6 +55,10 @@ becomes a view of that playback and a remote for it, instead of running its own 
   "scrobbling": {"on": true}
 }
 ```
+
+`queue` (since 0.8.6) is Up next: the songs left in the current playlist, in play order,
+without slots or audio URLs (`art` is `coverArt` as Pandora gives it). It is pushed with
+every state change, so it shrinks as songs start. `queueLength` still counts every item.
 
 `last` (since 0.8.4) is the song this device's extension played last, or `null`:
 `{title, artist, album, coverArt, trackToken, station: {token, name}, position, duration,

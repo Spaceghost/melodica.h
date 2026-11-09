@@ -5,6 +5,7 @@
 # No scoped css here: the look is the shared stylesheet's.
 
 import { FALLBACK_COVER, fmtTime, send } from './shared.imba'
+import { listenUri } from './listen-uri.js'
 
 # The concentric-rings mark of the sign-in cards.
 export tag Mark
@@ -231,6 +232,51 @@ export tag RecentListens
 				<a#link-account href=pages.account target="_blank" rel="noopener"> "Account"
 				" · "
 				<a#link-melodica href=pages.home target="_blank" rel="noopener"> "melodica"
+
+# "Copy listen link" (melodica-scrobble docs/LISTEN-URI.md): the https form of the
+# current song's artist, the link that opens it everywhere.
+export tag CopyListen
+	prop song = null
+	prop copied = ''
+	def copy
+		const f = song and song.artist and !song.ad ? listenUri({target: 'artist', name: String(song.artist).trim()}) : null
+		return copied = "That artist has no listen link." unless f
+		try
+			await window.navigator.clipboard.writeText(f.https)
+			copied = "Copied {f.https}"
+		catch e
+			copied = "Copy failed: {f.https}"
+		window.setTimeout((do copied = ''; imba.commit()), 4000)
+	def render
+		<self.ext-copy-listen>
+			<button#copy-listen.quiet type="button" disabled=!(song and song.artist and !song.ad) @click=copy> "Copy listen link"
+			<p#copy-listen-done.ext-copy-done role="status"> copied
+
+# A listen link opened in the extension (player.html?listen=…): artist, genre and
+# station links offer Play; a link never starts playback by itself.
+export tag ListenPrompt
+	prop link = null
+	prop busy = no
+	prop error = ''
+	def play
+		busy = yes
+		error = ''
+		try
+			if link.target === 'station'
+				await send({type: 'player', action: 'play', station: {token: link.station, name: ''}})
+			else
+				await send({type: 'play-seed', kind: link.target, name: link.name})
+			emit('done')
+		catch e
+			error = String(e and e.message or e)
+		busy = no
+	def render
+		<self.card.ext-listen-prompt>
+			<p#listen-title> (link.target === 'station' ? "Station {link.station}" : "{link.target === 'artist' ? 'Artist' : 'Genre'}: {link.name}")
+			<div.ext-actions>
+				<button#listen-play type="button" disabled=busy @click=play> "Play"
+				<button#listen-dismiss.quiet type="button" @click=emit('done')> "Not now"
+			<p#listen-error.ext-listen-error role="alert"> error
 
 # The first-run scrobbling notice; nothing is sent until it has been seen.
 export tag ScrobbleNotice

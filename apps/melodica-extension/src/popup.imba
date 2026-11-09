@@ -3,7 +3,7 @@
 # page is a view of the background's player state and sends it commands.
 
 import { browser, send } from './shared.imba'
-import { Login, StationList, NowPlaying, Transport, AccountLine, UpdateBanner, Top, Foot, UsernamePick, ScrobbleNotice, RecentListens } from "./ui.imba"
+import { Login, StationList, NowPlaying, Transport, AccountLine, UpdateBanner, Top, Foot, UsernamePick, ScrobbleNotice, RecentListens, CopyListen } from "./ui.imba"
 
 tag Popup
 	prop view = 'loading'
@@ -226,6 +226,7 @@ tag Popup
 						<div.card.now.ext-compact>
 							<NowPlaying now=now compact=yes>
 							<Transport now=now @control=control>
+							<CopyListen song=(now and now.song)>
 							<p#player-status.ext-state> statusText
 						<StationList stations=stations active=(player and player.station and player.station.token) compact=yes @select=select @refresh=reload @delete=remove>
 						if recent

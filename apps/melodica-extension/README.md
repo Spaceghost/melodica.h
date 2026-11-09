@@ -356,6 +356,27 @@ the worker went away, after a browser restart, and with the link made unusable
 Safari, and not against real Pandora audio hosts: a copy needs the audio host to be
 inside the extension's host permissions (`*.pandora.com`).
 
+## listen:// links
+
+Links in melodica-scrobble's format (docs/LISTEN-URI.md there; parser copied unchanged into
+`src/listen-uri.js`, its test into `tests/listen-uri.test.mjs`) open in the player tab. An
+artist, genre or station link shows a Play button. Nothing plays until it is pressed, and a
+link with `autoplay` or any other unknown key is refused. Any other target opens its
+spacegho.st page. Ways in:
+
+- **Firefox:** the manifest registers `web+listen` (`protocol_handlers`) to the player tab.
+- **Chrome, Brave, Edge:** extensions cannot register schemes. Type `listen` and a space in
+  the address bar, then `artist/<name>`, `genre/<name>`, a whole link or just an artist's
+  name (the omnibox keyword). A https://spacegho.st/listen/ page that loads in a tab is
+  taken over by the player tab. While spacegho.st answers that path with a redirect, the
+  redirect wins and the page it leads to handles the link.
+- **iPhone and iPad:** the app registers `listen://` and opens the https form in Safari.
+
+"Copy listen link" in the popup and the player tab copies the https form of the current
+song's artist. Proven in the Chromium and Brave smokes: the player-tab prompt, the refused
+`autoplay` and the copy. Not proven anywhere: the Firefox handler, the omnibox and the iOS
+scheme.
+
 ## Updates
 
 What updates by itself: **Firefox** reads `gecko.update_url`
