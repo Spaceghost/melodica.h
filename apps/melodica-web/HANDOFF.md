@@ -3,11 +3,11 @@
 <!-- extension-publication:start -->
 ## Extension catalog publication
 
-- v0.9.4 is published at https://spacegho.st/extensions/#melodica-extension and https://spacegho.st/melodica/extension/.
+- v0.9.6 is published at https://spacegho.st/extensions/#melodica-extension and https://spacegho.st/melodica/extension/.
 - Mozilla unlisted signing is preserved. Both browser update feeds and eight public installable downloads passed checksum verification.
 - Both catalogs passed browser checks at 390 and 1280 pixels; the Melodica catalog contains only its browser extension and keeps the player bar pinned.
 - The Worker release manifests were updated in R2; all other Melodica projects were preserved. No player or Worker code was deployed by this publication.
-- Evidence: https://github.com/Spaceghost/melodica-extension/actions/runs/42625955613.
+- Evidence: https://github.com/Spaceghost/melodica-extension/actions/runs/42629074465.
 <!-- extension-publication:end -->
 
 Updated 2026-11-09 PT. Production is web 0.13.3 (GET verified), source/tag
