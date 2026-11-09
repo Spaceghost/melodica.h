@@ -2,13 +2,16 @@
 // Protocol: ./piano.js (melodica.h in wasm). Audio: the <audio> element.
 
 import { PianoClient, PianoError, resolveApiBase } from './piano.js';
-import { BridgeTransport } from './bridge.js';
+import { BridgeTransport, bridgeAllowed } from './bridge.js';
+import { Vault } from './vault.js';
 import { Account, USERNAME_RE, USERNAME_FORMAT, normalizeUsername } from './account.js';
 
 const VERSION = '__MELODICA_WEB_VERSION__';
 const STORAGE = {
   email: 'melodica.email',
-  password: 'melodica.password',
+  password: 'melodica.password', // plaintext from versions before 0.8.0: moved into the vault on load, then erased
+  revoked: 'melodica.revoked',   // the last 8 sids signed out here (docs/BRIDGE.md 4.4); no secrets
+  accountSignout: 'melodica.account.signout', // a spacegho.st sign-out the extension has not heard of yet (4.6)
   volume: 'melodica.volume',
   quality: 'melodica.quality',
   station: 'melodica.station',
@@ -51,7 +54,7 @@ const el = {
   accountName: $('account-name'), accountSignout: $('account-signout'),
   accountMenuLine: $('account-menu-line'), accountMenuName: $('account-menu-name'), accountMenuSignout: $('account-menu-signout'),
   loginForm: $('login-form'), email: $('login-email'), password: $('login-password'),
-  remember: $('login-remember'), rememberWarning: $('remember-warning'),
+  remember: $('login-remember'), rememberMenu: $('remember-menu'),
   loginButton: $('login-button'), loginMessage: $('login-message'), fatal: $('fatal-message'),
   stationList: $('station-list'), stationFilter: $('station-filter'), stationEmpty: $('station-empty'),
   stationCount: $('station-count'),
@@ -107,6 +110,12 @@ const state = {
   accountReady: Promise.resolve(), // the policy is known once this settles
   policyReady: Promise.resolve(),  // the latest policy request
   remote: false,      // true when the melodica extension plays and this page is its view
+  vault: null,        // Vault: the encrypted "Remember me" store (web/vault.js)
+  saved: null,        // what the vault holds: {session, credential, relay}, or null
+  savedReady: Promise.resolve(),
+  remember: false,    // "Remember me on this device"
+  sessionMeta: null,  // {sid, email, createdAt} of the Pandora session in the wasm client
+  extSid: '',         // sid of the extension's session last seen (docs/BRIDGE.md 4.4)
   remoteState: null,  // last state pushed by the extension
   apiBase: '',
   apiFromQuery: false,
@@ -914,9 +923,16 @@ async function remoteCommand(action, fields = {}) {
   }
 }
 
+let sessionSyncedFor = '';
 function onBridgeChange(bridge) {
   updateStatus();
   if (bridge.active && bridge.player && !state.remote) enterRemote();
+  if (state.remote) el.logout.hidden = !bridge.session;
+  // Once per extension (and version): exchange sessions (docs/BRIDGE.md 4.3).
+  if (bridge.active && bridge.player && bridge.session && sessionSyncedFor !== bridge.label) {
+    sessionSyncedFor = bridge.label;
+    syncWithExtension();
+  }
 }
 
 async function openExtensionLogin() {
@@ -1017,7 +1033,7 @@ function enterRemote() {
   el.audio.load();
   el.searchForm.hidden = true;
   el.searchResults.hidden = true;
-  el.logout.hidden = true;
+  el.logout.hidden = !state.bridge.session; // with the session layer, signing out here signs out both
   closeUsernamePick();
   el.usernameChange.hidden = true; // the extension's account is the extension's to name
   el.signedIn.textContent = 'melodica extension';
@@ -1066,7 +1082,9 @@ async function setupAccount() {
   const a = state.account;
   if (!(await a.discover())) return;
   const back = await a.finishRedirect(location, history);
-  if (back.error) loginMessage(`spacegho.st sign-in did not complete (${back.error}).`, 'error');
+  if (back.done && !back.error) store.remove(STORAGE.accountSignout); // signed in again: nothing to deliver
+  // login_required answers a silent sign-in (prompt=none) when there is no spacegho.st session.
+  if (back.error && back.error !== 'login_required') loginMessage(`spacegho.st sign-in did not complete (${back.error}).`, 'error');
   await refreshPolicy();
   if (a.signedIn) await a.profile();
   updateAccountLine();
@@ -1081,8 +1099,31 @@ async function accountSignIn(ev) {
   }
 }
 
+// Signing out of spacegho.st here signs the extension out of it too (docs/BRIDGE.md 4.6):
+// at once when it is there, else at the next handshake.
 async function accountSignOut() {
   await state.account.signOut();
+  await refreshPolicy();
+  updateAccountLine();
+  store.set(STORAGE.accountSignout, '1');
+  deliverAccountSignout();
+}
+
+async function deliverAccountSignout() {
+  const b = state.bridge;
+  if (store.get(STORAGE.accountSignout) !== '1' || !b || !b.active || !b.session) return;
+  let r = null;
+  try { r = await b.accountSignout(); } catch (_) { r = null; }
+  if (r && r.ok) store.remove(STORAGE.accountSignout);
+}
+
+// The extension signed out of spacegho.st: so does this page, and no silent sign-in follows.
+async function onExtensionAccountSignout() {
+  const a = state.account;
+  if (!a) return;
+  a.session.set(SILENT_KEY, '1');
+  if (!a.signedIn) return;
+  await a.signOut();
   await refreshPolicy();
   updateAccountLine();
 }
@@ -1176,6 +1217,206 @@ async function saveUsername(input, msgEl, button) {
   }
 }
 
+// ---------------------------------------------------------------- remembered session
+// docs/BRIDGE.md 5: "Remember me on this device" keeps the Pandora session (and the
+// relay token, and the credential for when the session has expired) encrypted in
+// web/vault.js; nothing secret in localStorage. Off, logout or a revoked session wipes it.
+
+function randomSid() {
+  const a = new Uint8Array(18);
+  crypto.getRandomValues(a);
+  return btoa(String.fromCharCode(...a)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function revokedList() {
+  try { const v = JSON.parse(store.get(STORAGE.revoked) || '[]'); return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []; } catch (_) { return []; }
+}
+function addRevoked(sid) {
+  if (!sid) return;
+  store.set(STORAGE.revoked, JSON.stringify([...revokedList().filter((x) => x !== sid), sid].slice(-8)));
+}
+
+function syncRemember() {
+  el.remember.checked = state.remember;
+  el.rememberMenu.checked = state.remember;
+}
+
+async function loadSaved() {
+  const plain = store.get(STORAGE.password);
+  if (plain !== null) {
+    // Versions before 0.8.0 kept the password as plain text: move it, then erase it.
+    const email = store.get(STORAGE.email) || '';
+    store.remove(STORAGE.password);
+    if (plain && email) await state.vault.write({ session: null, credential: { email, password: plain }, relay: null });
+  }
+  state.saved = await state.vault.read();
+  state.remember = !!state.saved;
+}
+
+async function forgetSaved() {
+  state.saved = null;
+  await state.vault.wipe();
+}
+
+async function writeSaved(rec) {
+  state.saved = rec;
+  try { await state.vault.write(rec); } catch (err) { console.debug('[vault]', describeError(err)); }
+}
+
+// The wasm client has a new Pandora session (a login or a re-login): a new sid, and
+// stored when remembered.
+function onClientSession() {
+  const c = state.client.credentials;
+  state.sessionMeta = { sid: randomSid(), email: c ? c.user : '', createdAt: Date.now() };
+  persistSession();
+}
+
+function currentRecord() {
+  const s = state.client.session();
+  if (!s || !state.sessionMeta) return null;
+  const c = state.client.credentials;
+  return {
+    session: { ...state.sessionMeta, ...s },
+    credential: c ? { email: c.user, password: c.password } : null,
+    relay: state.client.accessToken ? { token: state.client.accessToken, at: state.client.accessAt } : null,
+  };
+}
+
+function persistSession() {
+  if (!state.remember || state.remote) return;
+  const rec = currentRecord();
+  if (rec) writeSaved(rec);
+}
+
+// The checkbox on the login card or in the account menu.
+function setRemember(on) {
+  state.remember = !!on;
+  syncRemember();
+  if (!state.remember) { forgetSaved(); return; }
+  if (state.remote) {
+    if (state.extSid) syncWithExtension(true);
+  } else persistSession();
+}
+
+const RELAY_TOKEN_MS = 11 * 3600_000; // the relay's tokens last 12 h
+
+// Until when a relay token may be sent: its exp claim less 5 min (read, not verified:
+// the relay verifies), else 11 h after it was received.
+function relayTokenUntil(relay) {
+  if (!relay || !relay.token) return 0;
+  try {
+    const part = relay.token.split('.')[1];
+    const exp = JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/'))).exp;
+    if (Number.isFinite(exp)) return exp * 1000 - 300_000;
+  } catch (_) { /* not a JWT: the age rule below */ }
+  return (Number(relay.at) || 0) + RELAY_TOKEN_MS;
+}
+
+// Resume the stored Pandora session; its credential is used only when Pandora or the
+// relay no longer honour it (PianoClient re-logs in on 1001 / relay 401).
+async function resumeSaved() {
+  const s = state.saved;
+  if (!s || !s.session || !state.client.restore(s.session)) return false;
+  state.sessionMeta = { sid: s.session.sid, email: s.session.email, createdAt: s.session.createdAt };
+  state.client.setCredentials(s.credential ? { user: s.credential.email, password: s.credential.password } : null);
+  const fresh = s.relay && s.relay.token && Date.now() < relayTokenUntil(s.relay);
+  state.client.restoreAccess(fresh ? s.relay.token : '', fresh ? s.relay.at : 0);
+  if (fresh) refreshPolicy();
+  el.loginButton.disabled = true;
+  loginMessage('Signing in…', 'info');
+  try {
+    await state.policyReady;
+    if (state.remote) return true;
+    if (s.session.email) store.set(STORAGE.email, s.session.email);
+    await enterPlayer();
+    loginMessage('');
+    persistSession(); // a re-login meanwhile, or a new relay token
+    return true;
+  } catch (err) {
+    state.client.logout();
+    state.sessionMeta = null;
+    if (state.remote) return false;
+    // An expired session without a stored password: sign in again (nothing is wiped).
+    loginMessage(s.credential ? describeError(err) : 'Your Pandora session ended; sign in again.', s.credential ? 'error' : 'info');
+    return false;
+  } finally {
+    el.loginButton.disabled = false;
+  }
+}
+
+// ---------------------------------------------------------------- sessions with the extension
+// docs/BRIDGE.md 4: signed in on either side is signed in on both; signing out on
+// either side signs out both. No prompt.
+
+function accountView() {
+  const a = state.account;
+  return a && a.signedIn ? { signedIn: true, username: a.name || '', github: null } : { signedIn: false, username: '', github: null };
+}
+
+async function syncWithExtension(force = false) {
+  await state.savedReady;
+  let m;
+  try { m = await state.bridge.sessionGet(); } catch (err) { console.debug('[bridge]', describeError(err)); return; }
+  await applyExtensionSession(m, true, force);
+  deliverAccountSignout();
+}
+
+// m: {session, credential, account, revoked} from the extension (answer or push).
+async function applyExtensionSession(m, initial, force = false) {
+  await state.savedReady;
+  const mine = state.saved && state.saved.session;
+  if (m.session) {
+    if (revokedList().includes(m.session.sid)) {
+      // Signed out here while the extension was away: sign it out too.
+      try { await state.bridge.sessionLogout(m.session.sid); } catch (_) { /* tried */ }
+      return;
+    }
+    state.extSid = m.session.sid;
+    const same = mine && mine.sid === m.session.sid;
+    const credential = m.credential || (state.saved && state.saved.credential && state.saved.credential.email === m.session.email ? state.saved.credential : null);
+    const newAccess = !!m.access && !(state.saved && state.saved.relay && state.saved.relay.token === m.access);
+    if (!same || force || newAccess || JSON.stringify(credential) !== JSON.stringify(state.saved && state.saved.credential)) {
+      // A copy in this page's own store, so it stays signed in without the extension.
+      state.remember = true;
+      syncRemember();
+      const relay = m.access ? { token: m.access, at: Date.now() } : (same && state.saved ? state.saved.relay : null);
+      await writeSaved({ session: m.session, credential, relay });
+      if (m.session.email) store.set(STORAGE.email, m.session.email);
+    }
+  } else {
+    const mirrored = mine && (m.revoked.includes(mine.sid) || mine.sid === state.extSid);
+    state.extSid = '';
+    if (mirrored) {
+      await forgetSaved();
+      syncRemember();
+    } else if (mine && initial) {
+      let r = null;
+      try { r = await state.bridge.sessionOffer({ session: mine, credential: state.saved.credential || undefined, account: accountView() }); } catch (_) { r = null; }
+      if (r && (r.outcome === 'revoked' || r.outcome === 'invalid')) await forgetSaved();
+      else if (r && r.ok) state.extSid = mine.sid;
+    }
+  }
+  applyExtensionAccount(m.account);
+}
+
+// spacegho.st: the extension signed in and this page not -> a silent sign-in (prompt=none,
+// once per browser session); the extension signed out after being signed in -> sign out.
+const SILENT_KEY = 'melodica.account.silent';
+function applyExtensionAccount(acc) {
+  const a = state.account;
+  if (!acc || !a || !a.config) return;
+  if (acc.signedIn && !a.signedIn && a.session.get(SILENT_KEY) !== '1') {
+    a.session.set(SILENT_KEY, '1');
+    a.startUrl({ prompt: 'none' }).then((u) => location.assign(u), () => {});
+  }
+}
+
+// Sign out from the remote: the extension signs out (and so does this page's copy).
+async function remoteLogout(sid) {
+  el.account.open = false;
+  try { await state.bridge.sessionLogout(state.extSid || sid); } catch (err) { playerMessage(describeError(err), 'error'); }
+}
+
 // ---------------------------------------------------------------- login
 
 function showLogin() {
@@ -1184,10 +1425,8 @@ function showLogin() {
   show(el.viewLogin);
   updateAccountLine();
   el.email.value = store.get(STORAGE.email) || '';
-  const saved = store.get(STORAGE.password);
-  el.password.value = saved || '';
-  el.remember.checked = !!saved;
-  el.rememberWarning.hidden = !el.remember.checked;
+  el.password.value = '';
+  syncRemember();
   (el.email.value ? el.password : el.email).focus();
 }
 
@@ -1196,7 +1435,9 @@ async function login(email, password) {
   loginMessage('Signing in…', 'info');
   try {
     await state.accountReady; // the playback policy is known before anything plays
-    await state.client.login(email, password);
+    state.remember = el.remember.checked;
+    if (!state.remember) await forgetSaved();
+    await state.client.login(email, password); // onSession stores the session when remembered
     await state.policyReady; // asked with the relay's new access token (onAccess)
     if (store.get(STORAGE.email) !== email) {
       // A different account: its predecessor's play log (and rate tokens) must not carry over.
@@ -1204,16 +1445,8 @@ async function login(email, password) {
       renderHistory();
     }
     store.set(STORAGE.email, email);
-    if (el.remember.checked) store.set(STORAGE.password, password);
-    else store.remove(STORAGE.password);
     loginMessage('');
-    showUsername(''); // never the Pandora email: "Signed in" until /oauth/melodica/me names the user
-    await loadStations();
-    show(el.viewPlayer);
-    updateHint();
-    renderUpNext();
-    visibleStationButton()?.focus();
-    refreshMe({ prompt: true }); // not awaited: the username never holds up playback
+    await enterPlayer();
   } catch (err) {
     loginMessage(describeError(err), 'error');
   } finally {
@@ -1221,13 +1454,29 @@ async function login(email, password) {
   }
 }
 
+// The player after a login or a resumed session.
+async function enterPlayer() {
+  showUsername(''); // never the Pandora email: "Signed in" until /oauth/melodica/me names the user
+  await loadStations();
+  show(el.viewPlayer);
+  updateHint();
+  renderUpNext();
+  visibleStationButton()?.focus();
+  refreshMe({ prompt: true }); // not awaited: the username never holds up playback
+}
+
+// Signing out here signs out the extension too (docs/BRIDGE.md 4.4).
 function logout() {
+  const sid = state.sessionMeta ? state.sessionMeta.sid : (state.saved && state.saved.session ? state.saved.session.sid : '');
+  if (sid) addRevoked(sid);
+  state.sessionMeta = null;
+  forgetSaved();
+  if (state.remote) { remoteLogout(sid); return; }
   closeUsernamePick();
   showUsername('');
   if (state.account && !state.account.signedIn) state.account.name = '';
   stopPlayback();
   state.client.logout();
-  store.remove(STORAGE.password);
   state.history = [];
   renderHistory();
   // Nothing from this account may carry into the next one's session.
@@ -1263,7 +1512,8 @@ function installEvents() {
     ev.preventDefault();
     login(el.email.value.trim(), el.password.value);
   });
-  el.remember.addEventListener('change', () => { el.rememberWarning.hidden = !el.remember.checked; });
+  el.remember.addEventListener('change', () => setRemember(el.remember.checked));
+  el.rememberMenu.addEventListener('change', () => setRemember(el.rememberMenu.checked));
   el.shortcutsEnabled.checked = state.shortcutsOn;
   el.shortcutsEnabled.addEventListener('change', () => {
     state.shortcutsOn = el.shortcutsEnabled.checked;
@@ -1437,7 +1687,10 @@ async function main() {
   state.apiBase = api.apiBase;
   state.apiFromQuery = api.fromQuery;
   const log = (m) => console.debug('[piano]', m);
-  state.client = new PianoClient({ apiBase: api.apiBase, log, onAccess: () => { refreshPolicy(); } });
+  state.client = new PianoClient({ apiBase: api.apiBase, log, onAccess: () => { refreshPolicy(); }, onSession: onClientSession });
+  // The encrypted "Remember me" store; an old plaintext password is moved into it first.
+  state.vault = new Vault();
+  state.savedReady = loadSaved().catch((err) => { console.debug('[vault]', describeError(err)); state.saved = null; });
   // The optional spacegho.st account: finishes a sign-in round trip and reads the
   // policy while the wasm loads; logins wait for it so the policy is known first.
   const session = {
@@ -1451,8 +1704,8 @@ async function main() {
   // script can answer while the wasm loads; it may also appear later, and the page
   // then switches to remote mode (onBridgeChange). An explicit ?api= means the relay
   // given there, without the extension (the CI smoke relies on that).
-  if (!api.fromQuery) {
-    state.bridge = new BridgeTransport(window, { log, onChange: onBridgeChange });
+  if (!api.fromQuery && bridgeAllowed(location)) {
+    state.bridge = new BridgeTransport(window, { log, onChange: onBridgeChange, onSession: (m) => applyExtensionSession(m, false), onAccountSignout: onExtensionAccountSignout });
     state.bridge.start();
   }
   updateStatus();
@@ -1474,7 +1727,11 @@ async function main() {
   if (state.bridge) await state.bridge.waitReady();
   if (state.remote) return;
   updateAccountLine();
-  if (el.email.value && el.password.value) login(el.email.value, el.password.value);
+  await state.savedReady;
+  if (state.remote) return;
+  syncRemember();
+  if (state.saved && state.saved.session) resumeSaved();
+  else if (state.saved && state.saved.credential) login(state.saved.credential.email, state.saved.credential.password);
 }
 
 // The view is unhidden before the alert text is set so it is announced; focus

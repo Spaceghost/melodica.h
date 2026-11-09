@@ -27,7 +27,7 @@ VERSION="${VERSION#v}"
 rm -rf dist
 mkdir -p dist
 
-EXPORTS='_mw_init,_mw_begin,_mw_continue,_mw_finish,_mw_free,_mw_version,_mw_logged_in,_mw_stations,_malloc,_free'
+EXPORTS='_mw_init,_mw_begin,_mw_continue,_mw_finish,_mw_free,_mw_version,_mw_logged_in,_mw_session,_mw_restore,_mw_stations,_malloc,_free'
 RUNTIME='ccall,cwrap,UTF8ToString,stringToUTF8,lengthBytesUTF8'
 
 emcc -O2 -std=c99 -Wall -Wextra \
@@ -43,7 +43,7 @@ emcc -O2 -std=c99 -Wall -Wextra \
     -sEXPORTED_RUNTIME_METHODS="[$RUNTIME]" \
     -o dist/melodica.js
 
-cp web/index.html web/app.js web/app.css web/piano.js web/bridge.js web/account.js dist/
+cp web/index.html web/app.js web/app.css web/piano.js web/bridge.js web/account.js web/vault.js dist/
 cp LICENSE dist/LICENSE
 cp "$VENDOR/LICENSE.libpiano" dist/LICENSE.libpiano
 cp "$VENDOR/THIRD_PARTY_NOTICES.md" dist/THIRD_PARTY_NOTICES.md

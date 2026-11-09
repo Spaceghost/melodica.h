@@ -581,6 +581,53 @@ MW_EXPORT int mw_logged_in(void) {
     return g_inited && g_ph.user.authToken != NULL && g_ph.user.listenerId != NULL;
 }
 
+/* The Pandora session (docs/BRIDGE.md 4.1), flat: {"partnerAuthToken","partnerId",
+ * "userAuthToken","userId","syncOffset"} with syncOffset = Pandora time minus local time
+ * in seconds; "null" when not logged in. */
+MW_EXPORT char *mw_session(void) {
+    if (!mw_logged_in() || g_ph.partner.authToken == NULL) return mw_strdup("null");
+    mw_buf b; buf_init(&b);
+    buf_putc(&b, '{');
+    buf_kv_string(&b, "partnerAuthToken", g_ph.partner.authToken); buf_putc(&b, ',');
+    buf_kv_long(&b, "partnerId", (long)g_ph.partner.id); buf_putc(&b, ',');
+    buf_kv_string(&b, "userAuthToken", g_ph.user.authToken); buf_putc(&b, ',');
+    buf_kv_string(&b, "userId", g_ph.user.listenerId); buf_putc(&b, ',');
+    buf_kv_long(&b, "syncOffset", -(long)g_ph.timeOffset);
+    buf_putc(&b, '}');
+    return buf_finish(&b);
+}
+
+/* Restores a session exported by mw_session (or the extension; same partner). All five
+ * fields as strings. Returns 0 on success, 1 on a missing or bad field (nothing changed). */
+MW_EXPORT int mw_restore(const char *json) {
+    if (!g_inited || json == NULL) return 1;
+    MelodicaJsonDoc doc;
+    if (!melodica_json_parse(&doc, json)) return 1;
+    char *pat = json_field(&doc, "partnerAuthToken");
+    char *pid = json_field(&doc, "partnerId");
+    char *uat = json_field(&doc, "userAuthToken");
+    char *uid = json_field(&doc, "userId");
+    char *off = json_field(&doc, "syncOffset");
+    melodica_json_destroy(&doc);
+    char *end = NULL;
+    long id = pid ? strtol(pid, &end, 10) : -1;
+    int idOk = pid && *pid && end && *end == '\0' && id >= 0;
+    long so = off ? strtol(off, &end, 10) : 0;
+    int offOk = off && *off && end && *end == '\0';
+    if (!pat || !*pat || !uat || !*uat || !uid || !*uid || !idOk || !offOk) {
+        free(pat); free(pid); free(uat); free(uid); free(off);
+        return 1;
+    }
+    clear_request_state();
+    free(g_ph.partner.authToken); g_ph.partner.authToken = pat;
+    free(g_ph.user.authToken); g_ph.user.authToken = uat;
+    free(g_ph.user.listenerId); g_ph.user.listenerId = uid;
+    g_ph.partner.id = (unsigned int)id;
+    g_ph.timeOffset = (int)-so;
+    free(pid); free(off);
+    return 0;
+}
+
 static char *issue(void) {
     void *data = NULL;
     switch (g_action) {

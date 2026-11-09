@@ -32,6 +32,8 @@
           </div>
           <p id="username-change-message" class="message" role="status"></p>
         </form>
+        <label class="check menu-check"><input id="remember-menu" type="checkbox">
+          <span>Remember me on this device</span></label>
         <button id="shortcuts-open" type="button" class="menu-item">Keyboard shortcuts <kbd>?</kbd></button>
         <button id="logout" type="button" class="menu-item">Sign out</button>
         <button id="account-menu-signout" type="button" class="menu-item" hidden>Sign out of spacegho.st</button>
@@ -57,12 +59,8 @@
         <span>Password</span>
         <input id="login-password" name="password" type="password" autocomplete="current-password" required>
       </label>
-      <label class="check"><input id="login-remember" type="checkbox" aria-describedby="remember-warning">
-        <span>Remember password on this device</span></label>
-      <p id="remember-warning" class="warn" role="status" hidden>
-        The password will be stored unencrypted in this browser's local storage.
-        Anyone with access to this browser profile can read it.
-      </p>
+      <label class="check"><input id="login-remember" type="checkbox">
+        <span>Remember me on this device</span></label>
       <button id="login-button" type="submit" class="primary">Sign in</button>
       <p id="login-message" class="message" role="status"></p>
       <p id="account-line" class="fine account-line-login" hidden>

@@ -251,6 +251,49 @@ log('client re-login on 1001 ok');
   log('relay access token ok');
 }
 
+// --- the Pandora session out of and back into the wasm client (docs/BRIDGE.md 4.1) ---
+{
+  const seen = [];
+  const mk = () => new PianoClient({ apiBase: 'https://relay.example/api/', fetch: async (url, init) => {
+    const u = new URL(url);
+    const method = u.searchParams.get('method');
+    seen.push({ method, auth: u.searchParams.get('auth_token'), user: u.searchParams.get('user_id'), partner: u.searchParams.get('partner_id') });
+    if (method === 'auth.partnerLogin') return new Response(partnerBody);
+    if (method === 'auth.userLogin') return new Response(JSON.stringify({ stat: 'ok', result: { userId: 'U9', userAuthToken: 'USER+TOKEN/9==' } }));
+    if (method === 'user.getStationList') return new Response(JSON.stringify(stationsBody));
+    throw new Error(`unexpected ${method}`);
+  }, onSession: () => { sessions += 1; } });
+  let sessions = 0;
+  const a = mk();
+  await a.load();
+  assert.equal(a.session(), null, 'no session before a login');
+  await a.login('a@b.c', 'pw');
+  assert.equal(sessions, 1, 'onSession after the login');
+  const s = a.session();
+  assert.deepEqual(s.partner, { authToken: 'CANNED+PARTNER/TOKEN==', id: 42 });
+  assert.deepEqual(s.user, { authToken: 'USER+TOKEN/9==', id: 'U9' });
+  assert.equal(typeof s.syncOffset, 'number');
+  // A second client resumes it: no login, the same tokens on the next call.
+  const b = mk();
+  await b.load();
+  assert.equal(b.restore(s), true);
+  assert.equal(b.loggedIn, true);
+  assert.deepEqual(b.session(), s, 'what goes in comes out');
+  seen.length = 0;
+  assert.equal((await b.stations()).length, 3);
+  assert.deepEqual(seen.map((x) => x.method), ['user.getStationList'], 'no login round trip');
+  assert.equal(seen[0].auth, 'USER+TOKEN/9==');
+  assert.equal(seen[0].user, 'U9');
+  assert.equal(seen[0].partner, '42');
+  // Malformed sessions are refused and leave the client logged out.
+  const c = mk();
+  await c.load();
+  assert.equal(c.restore({ partner: { authToken: 'P', id: 1 }, user: { authToken: '', id: 'x' } }), false);
+  assert.equal(c.loggedIn, false);
+  assert.equal(c.restore(null), false);
+  log('session export and restore ok');
+}
+
 // --- churn: no crash across many cycles (memory growth sanity) -------------
 for (let i = 0; i < 300; i++) {
   req = client.begin({ action: 'playlist', stationId: 'S1', quality: 'medium' });

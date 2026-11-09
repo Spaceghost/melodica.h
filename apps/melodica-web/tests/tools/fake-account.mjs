@@ -49,6 +49,7 @@ export function makeBackend(issuer, { github = {}, emailSending = true } = {}) {
   const log = [];
   const people = new Map();      // 'e:<email>' | 'u:<user id>' -> {username, chosen, suggested, notice, changes}
   const locked = new Set();
+  const loginOks = [];           // emails confirmed through login-ok
   const redirectUri = `${issuer}/melodica/app/`;
 
   const html = (body, status = 200, headers = {}) => new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>spacegho.st</title></head><body><main>${body}</main></body></html>`,
@@ -186,6 +187,22 @@ ${emailSending ? `<p class="or">or</p><form method="post" action="/oauth/email">
       const u = users.get(a.user);
       return json({ playback: { plus: !u.inserts }, display: { name: u.name || null } });
     }
+    // login-ok (docs/ACCOUNT.md): the Pandora session is taken on trust here (the real
+    // Worker checks it with Pandora); the token is one the fake relay accepts, as the
+    // live relay accepts the extension's tokens since spaceghost-auth 216b0a10.
+    if (p === '/oauth/melodica/login-ok' && m === 'POST') {
+      let body = null;
+      try { body = await req.json(); } catch (_) { /* below */ }
+      const e = norm(body && body.email);
+      if (!e || !body.pandora || !body.pandora.userAuthToken) return json({ error: 'invalid_request' }, 400);
+      const entry = allowList.get(e);
+      if (!entry) return json({ error: 'not_allowed', error_description: 'melodica is not available for this account.' }, 403);
+      const token = `mat.ext.${rand()}`;
+      accessTokens.set(token, e);
+      const who = person(`e:${e}`);
+      loginOks.push(e);
+      return json({ ok: true, plus: !entry.inserts, token, username: who.username, username_chosen: who.chosen, scrobbling: false });
+    }
     if (p === '/oauth/melodica/me' && m === 'GET') {
       const who = bearerPerson(req);
       if (!who) return json({ error: 'invalid_token' }, 401);
@@ -264,6 +281,7 @@ ${emailSending ? `<p class="or">or</p><form method="post" action="/oauth/email">
     log,
     mail,
     requests,
+    loginOks,
     accessCheck,
     accessVerify,
     allow(email, { inserts = true } = {}) { allowList.set(norm(email), { inserts }); },

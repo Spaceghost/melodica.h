@@ -414,7 +414,7 @@ The browser checks exercise playback, account policy, authentication and the req
 The melodica extension 0.3.0 and later plays music in its background, with no
 tab needed. When it is installed the page is an optional view of that
 playback and a remote for it, instead of running its own loop. The protocol
-is melodica-extension's `docs/BRIDGE.md` ("Remote control"); the page side is
+is `docs/BRIDGE.md` (owned here; section 3, "Remote control"); the page side is
 in `web/bridge.js` (`subscribe`, `command`) and `web/app.js` ("remote mode"):
 
 - On `ready` the page shows the player view at once ("Connecting to the
@@ -481,12 +481,67 @@ Your Pandora email and password are encrypted by the wasm module (Blowfish,
 as Pandora's API requires) and sent only to Pandora, through the relay or
 directly through the melodica browser extension. The relay never keeps the
 password; what spacegho.st records about a login is listed in
-`docs/ACCOUNT.md`. The page keeps your email in
-`localStorage`; your password is stored there only if you tick "remember
-password on this device", and the form says so in plain words. An optional
+`docs/ACCOUNT.md`. The page keeps your email in `localStorage` to fill
+the form. With "Remember me on this device" ticked it keeps the Pandora
+session (and your password, for when the session has expired) encrypted with
+AES-GCM under a non-extractable WebCrypto key in IndexedDB (see "Remember me
+on this device"); nothing secret is in `localStorage`. An optional
 spacegho.st sign-in (see "spacegho.st account") adds its tokens to
 `localStorage` until you sign out of it on the page. Nothing else leaves the
 browser.
+
+## Remember me on this device
+
+`web/vault.js`, `docs/BRIDGE.md` section 5:
+
+- "Remember me on this device" (on the login card and in the account menu)
+  keeps `{session, credential, relay}` in IndexedDB `melodica-vault`: one
+  AES-GCM 256 key generated with `extractable: false`, and one record
+  `{v: 1, iv, ct}`. Nothing secret goes to `localStorage`.
+- A start resumes the stored Pandora session (and the relay token while it is
+  younger than 11 h) without a login; the stored password is used only when
+  Pandora answers 1001 or the relay 401.
+- Signing out, unchecking the box, or a session signed out in the extension
+  deletes the whole database (key and record).
+- A plaintext `melodica.password` from versions before 0.8.0 is moved into
+  the vault on load and erased.
+
+This keeps the password out of anything that reads the profile's files or
+`localStorage` as text. Script running in this origin can still use the key.
+`tests/smoke-playback.spec.mjs` ("remember me on this device") dumps
+`localStorage`, `sessionStorage` and every IndexedDB store after a remembered
+login and checks the password string is absent, then checks resume, sign-out,
+the migration and the unchecked box; `tests/node-unit.mjs` checks the session
+export and restore in the wasm module.
+
+## Signed in on the page or the extension: signed in on both
+
+`docs/BRIDGE.md` section 4, with an extension whose `ready` says `session: 1`:
+
+- The page signed in and the extension not: the page offers its session (and
+  its credential when remembered); the extension signs in without a prompt and
+  the page is its remote.
+- The extension signed in: the page keeps an encrypted copy (above), so it
+  stays signed in when the extension is removed; it stays a remote while the
+  extension is there.
+- Signing out on either side signs out both; a sid signed out on the page
+  while the extension was away is signed out in the extension at the next
+  start (`melodica.revoked`, the last 8 sids, no secrets).
+- spacegho.st: when the extension is signed in and the page is not, the page
+  tries one silent sign-in (`prompt=none`) per browser session.
+- Messages go only to `https://spacegho.st` (localhost for the tests), never
+  `'*'`, and only messages from this window and that exact origin are read.
+
+Tests: `tests/bridge-unit.mjs` (origin and path checks, the session messages),
+`tests/remote.spec.mjs` ("sessions with the extension", a fake extension), and
+`tests/extension-real.spec.mjs` ("cross sign-in", the released extension
+against melodica-tuner: web first, extension first, sign-out both ways; skipped
+until the released extension has the session layer).
+
+Not done: the relay accepts only its own access tokens (aud `melodica`), so a
+page holding only the extension's session logs in through the relay again
+with the remembered password when it plays on its own; without one it shows
+the login card with the email filled in.
 
 ## License
 

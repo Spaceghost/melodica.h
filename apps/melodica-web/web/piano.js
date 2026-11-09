@@ -73,6 +73,10 @@ export class PianoClient {
     // x-melodica-access on every later relay call. onAccess(token) hears each new one.
     this.accessToken = '';
     this.onAccess = options.onAccess || null;
+    this.accessAt = 0;                      // when accessToken was handed out (ms)
+    // onSession() hears every new Pandora login (first login and each re-login),
+    // so the page can store the new session (docs/BRIDGE.md 5).
+    this.onSession = options.onSession || null;
     this.module = null;
     this.credentials = null;
     this.busy = Promise.resolve();
@@ -89,6 +93,8 @@ export class PianoClient {
       free: m.cwrap('mw_free', null, ['number']),
       version: m.cwrap('mw_version', 'string', []),
       loggedIn: m.cwrap('mw_logged_in', 'number', []),
+      session: m.cwrap('mw_session', 'number', []),
+      restore: m.cwrap('mw_restore', 'number', ['number']),
       stations: m.cwrap('mw_stations', 'number', []),
     };
     const rc = this.fn.init();
@@ -162,6 +168,7 @@ export class PianoClient {
       const token = res.headers && res.headers.get ? res.headers.get('x-melodica-access') : null;
       if (token) {
         this.accessToken = token;
+        this.accessAt = Date.now();
         if (this.onAccess) {
           try { this.onAccess(token); } catch (_) { /* a listener must not break the login */ }
         }
@@ -195,6 +202,7 @@ export class PianoClient {
         if (err instanceof PianoError && err.needsRelogin && request.action !== 'login' && this.credentials) {
           this.log('session expired; signing in again');
           await this.callOnce({ action: 'login', ...this.credentials });
+          this.sessionChanged();
           if (request.action !== 'stations' && request.action !== 'login') {
             await this.callOnce({ action: 'stations' });
           }
@@ -211,12 +219,52 @@ export class PianoClient {
   async login(user, password) {
     const result = await this.call({ action: 'login', user, password });
     this.credentials = { user, password };
+    this.sessionChanged();
     return result;
   }
   logout() {
     this.credentials = null;
     this.accessToken = '';
+    this.accessAt = 0;
     this.fn.init();
+  }
+  sessionChanged() {
+    if (!this.onSession) return;
+    try { this.onSession(); } catch (_) { /* a listener must not break the login */ }
+  }
+
+  // The Pandora session (docs/BRIDGE.md 4.1, without sid/email/createdAt, which the
+  // page keeps), or null when not logged in.
+  session() {
+    if (!this.fn || !this.loggedIn) return null;
+    const s = this.takeJson(this.fn.session());
+    if (!s) return null;
+    return {
+      partner: { authToken: s.partnerAuthToken, id: Number(s.partnerId) },
+      user: { authToken: s.userAuthToken, id: s.userId },
+      syncOffset: Number(s.syncOffset) | 0,
+    };
+  }
+
+  // Restores a session from session() or the extension. true when it was accepted
+  // (well formed); whether Pandora still honours it shows on the next call (1001).
+  restore(s) {
+    if (!this.fn || !s || !s.partner || !s.user) return false;
+    const flat = {
+      partnerAuthToken: String(s.partner.authToken || ''), partnerId: String(Number(s.partner.id) | 0),
+      userAuthToken: String(s.user.authToken || ''), userId: String(s.user.id || ''),
+      syncOffset: String(Number(s.syncOffset) | 0),
+    };
+    this.fn.init();
+    return this.withCString(JSON.stringify(flat), (p) => this.fn.restore(p)) === 0;
+  }
+  // The relay token kept with a stored session (docs/BRIDGE.md 5).
+  restoreAccess(token, at) {
+    this.accessToken = String(token || '');
+    this.accessAt = this.accessToken ? Number(at) || Date.now() : 0;
+  }
+  setCredentials(c) {
+    this.credentials = c && c.user && c.password ? { user: String(c.user), password: String(c.password) } : null;
   }
   stations() { return this.call({ action: 'stations' }).then((r) => r.stations); }
   // Songs in order, with each ad item as {isAd: true, adToken} at its place.

@@ -16,6 +16,17 @@
 //     within 1 s; every timing is in the report. The page has no <audio> source and fetches no audio, and makes no
 //     relay request.
 //
+//
+// Cross sign-in (docs/BRIDGE.md 4), when the extension's ready says session: 1:
+//   (a) sign in on the web (through the relay, /melodica/api/ here: tests/tools/fake-relay.mjs
+//       in front of the tuner), then start the browser with the extension: the extension
+//       is signed in with the page's session and the page is its remote;
+//   (b) sign in in the extension, then open the page: the page keeps an encrypted copy;
+//       started again without the extension, the page still plays on its own;
+//   (c) signing out on the page signs out the extension, and signing out in the
+//       extension wipes the page's copy.
+// Each starts its own browser profile.
+//
 // Env: MELODICA_EXT_DIR (unpacked Chrome build; the test is skipped without it),
 // TUNER_HTTPS_URL / TUNER_HTTP_URL / TUNER_USER / TUNER_PASSWORD or MELODICA_TUNER_DIR.
 // Artifacts: tests/artifacts/extension-real.json, extension-real-*.png.
@@ -30,6 +41,7 @@ import { resolve, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { makeBackend } from './tools/fake-account.mjs';
+import { makeRelay } from './tools/fake-relay.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const DIST = resolve(process.env.MELODICA_DIST || resolve(here, '..', 'dist'));
@@ -61,11 +73,20 @@ let tmp = '';
 let context = null;
 let backend = null;
 let pageRef = null;
+let relay = null;
 const appRequests = [];
 
 async function serve(req, res) {
   const url = new URL(req.url, ORIGIN);
   try {
+    if (url.pathname === '/melodica/api/' && relay) {
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      const r = await relay.handle(req.method, url.search, req.headers, Buffer.concat(chunks));
+      res.writeHead(r.status, r.headers);
+      res.end(r.body);
+      return;
+    }
     if (url.pathname.startsWith('/oauth/') || url.pathname.startsWith('/.well-known/')) {
       const chunks = [];
       for await (const c of req) chunks.push(c);
@@ -120,18 +141,27 @@ test.beforeAll(async () => {
   await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
   backend = makeBackend(ORIGIN, {});
   backend.allow(tuner.user, { inserts: true });
-  context = await chromium.launchPersistentContext(join(tmp, 'profile'), {
+  // A chosen username: no "Pick a username" sheet over the page when it plays on its own.
+  backend.setPerson(tuner.user, { username: 'tuner_listener', chosen: true });
+  relay = makeRelay({ upstream: `${tuner.https}/services/json/`, access: backend });
+  context = await launch(join(tmp, 'profile'), true);
+});
+
+// A browser profile, with or without the extension.
+function launch(dir, withExtension) {
+  return chromium.launchPersistentContext(dir, {
     channel: 'chromium',
     headless: true,
     ignoreHTTPSErrors: true,
     viewport: { width: 1280, height: 800 },
     args: [
-      `--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, '--ignore-certificate-errors',
+      ...(withExtension ? [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`] : ['--disable-extensions']),
+      '--ignore-certificate-errors',
       `--host-resolver-rules=MAP spacegho.st 127.0.0.1:${server.address().port}, MAP github.com ~NOTFOUND`,
       '--autoplay-policy=no-user-gesture-required',
     ],
   });
-});
+}
 
 test.afterAll(async () => {
   if (context) await context.close().catch(() => {});
@@ -141,9 +171,9 @@ test.afterAll(async () => {
   if (EXT && haveTuner) await writeFile(resolve(ARTIFACTS, 'extension-real.json'), JSON.stringify(report, null, 2) + '\n');
 });
 
-async function extensionId() {
-  let sw = context.serviceWorkers()[0];
-  if (!sw) sw = await context.waitForEvent('serviceworker', { timeout: 30_000 });
+async function extensionId(ctx = context) {
+  let sw = ctx.serviceWorkers()[0];
+  if (!sw) sw = await ctx.waitForEvent('serviceworker', { timeout: 30_000 });
   return new URL(sw.url()).host;
 }
 
@@ -265,4 +295,153 @@ test('the page is a remote of the real extension: no local playback, both direct
   expect(errors).toEqual([]);
   await info.attach('timings', { body: JSON.stringify(report.timings, null, 2), contentType: 'application/json' });
   await send({ type: 'player', action: 'stop' }).catch(() => {});
+});
+
+// --- cross sign-in (docs/BRIDGE.md 4) -------------------------------------------------
+
+// The extension in `ctx`, pointed at the tuner; returns {send, bg, id, page}.
+async function extensionIn(ctx) {
+  const id = await extensionId(ctx);
+  const ext = await ctx.newPage();
+  await ext.goto(`chrome-extension://${id}/options.html`);
+  await ext.fill('#endpoint', `${tuner.https}/services/json/`);
+  await ext.click('#save');
+  await expect(ext.locator('#options-message')).toContainText('Saved');
+  const send = (msg) => ext.evaluate((m) => chrome.runtime.sendMessage(m), msg);
+  return { id, page: ext, send, bg: async () => (await send({ type: 'player-get' })).state };
+}
+
+// Whether the extension speaks the session layer (ready says session: 1).
+async function sessionLayer(ctx) {
+  const p = await ctx.newPage();
+  await p.addInitScript(() => {
+    window.__ready = null;
+    addEventListener('message', (ev) => { if (ev.data && ev.data.melodica === 1 && ev.data.type === 'ready') window.__ready = ev.data; });
+  });
+  await p.goto(APP);
+  await expect.poll(() => p.evaluate(() => window.__ready), { timeout: 10_000 }).not.toBeNull();
+  const on = (await p.evaluate(() => window.__ready.session)) === 1;
+  await p.close();
+  return on;
+}
+
+const vaultRead = (page) => page.evaluate(async () => { const { Vault } = await import('./vault.js'); return new Vault().read(); });
+
+async function webLogin(page, remember = true) {
+  await page.goto(APP);
+  await expect(page.locator('#app')).toHaveAttribute('data-view', 'login', { timeout: 30_000 });
+  await page.fill('#login-email', tuner.user);
+  await page.fill('#login-password', tuner.password);
+  if (remember) await page.check('#login-remember');
+  await page.click('#login-button');
+  await expect(page.locator('#app')).toHaveAttribute('data-view', 'player', { timeout: 30_000 });
+}
+
+test.describe('cross sign-in with the real extension', () => {
+  test.describe.configure({ retries: 0 });
+
+  test('(a) signed in on the web, then the extension: it signs in with the page\'s session; (c) the page signs both out', async ({}, info) => {
+    test.skip(!EXT, 'no extension build: set MELODICA_EXT_DIR to an unpacked Chrome build');
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    test.setTimeout(180_000);
+    const dir = join(tmp, 'profile-a');
+    // 1. Without the extension: a remembered web login through the relay.
+    let ctx = await launch(dir, false);
+    let page = await ctx.newPage();
+    await webLogin(page, true);
+    const mine = await vaultRead(page);
+    expect(mine && mine.session && mine.session.sid, 'the page stored its session').toBeTruthy();
+    await ctx.close();
+    // 2. The same profile with the extension (pointed at the tuner first).
+    ctx = await launch(dir, true);
+    try {
+      if (!(await sessionLayer(ctx))) test.skip(true, 'this extension build has no session layer (docs/BRIDGE.md 4)');
+      const ext = await extensionIn(ctx);
+      expect((await ext.bg()).loggedIn, 'the extension starts signed out').toBe(false);
+      page = await ctx.newPage();
+      const t0 = Date.now();
+      await page.goto(APP);
+      await expect(page.locator('#app')).toHaveAttribute('data-mode', 'remote', { timeout: 10_000 });
+      await expect.poll(async () => (await ext.bg()).loggedIn, { timeout: 30_000 }).toBe(true);
+      report.timings['web session -> extension signed in'] = Date.now() - t0;
+      await expect(page.locator('#remote-signin')).toBeHidden({ timeout: 5_000 });
+      await expect(page.locator('#station-list button.station').first()).toBeVisible({ timeout: 5_000 });
+      await page.screenshot({ path: resolve(ARTIFACTS, 'extension-real-cross-a.png') });
+      report.steps.push('(a) web session -> extension signed in');
+      // (c) Sign out on the page: the extension signs out too.
+      await page.click('#account summary');
+      await page.click('#logout');
+      await expect.poll(async () => (await ext.bg()).loggedIn, { timeout: 10_000 }).toBe(false);
+      await expect(page.locator('#remote-signin')).toBeVisible({ timeout: 5_000 });
+      expect(await vaultRead(page), 'the page\'s copy is gone').toBeNull();
+      report.steps.push('(c) page sign-out -> extension signed out');
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('(b) signed in in the extension, then the page: it keeps a copy and plays without the extension; (c) the extension signs both out', async ({}, info) => {
+    test.skip(!EXT, 'no extension build: set MELODICA_EXT_DIR to an unpacked Chrome build');
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    test.setTimeout(180_000);
+    const dir = join(tmp, 'profile-b');
+    let hadAccess = false;
+    let ctx = await launch(dir, true);
+    try {
+      if (!(await sessionLayer(ctx))) test.skip(true, 'this extension build has no session layer (docs/BRIDGE.md 4)');
+      const ext = await extensionIn(ctx);
+      const r = await ext.send({ type: 'login', email: tuner.user, password: tuner.password, remember: true });
+      expect(r && r.ok, `extension login: ${JSON.stringify(r)}`).toBe(true);
+      const page = await ctx.newPage();
+      const t0 = Date.now();
+      await page.goto(APP);
+      await expect(page.locator('#app')).toHaveAttribute('data-mode', 'remote', { timeout: 10_000 });
+      await expect.poll(async () => (await vaultRead(page))?.session?.sid || '', { timeout: 10_000 }).not.toBe('');
+      report.timings['extension session -> page copy'] = Date.now() - t0;
+      const copy = await vaultRead(page);
+      expect(copy.session.email).toBe(tuner.user);
+      expect(copy.credential && copy.credential.email, 'the remembered credential came along').toBe(tuner.user);
+      hadAccess = !!(copy.relay && copy.relay.token);
+      report.steps.push(`(b) the copy ${hadAccess ? 'has' : 'has no'} the extension's access token`);
+      report.steps.push('(b) extension session -> page copy');
+    } finally {
+      await ctx.close();
+    }
+    // Without the extension: the page plays on its own with its copy.
+    ctx = await launch(dir, false);
+    try {
+      const page = await ctx.newPage();
+      relay.seen.length = 0;
+      await page.goto(APP);
+      await expect(page.locator('#app')).toHaveAttribute('data-view', 'player', { timeout: 30_000 });
+      await expect(page.locator('#app')).not.toHaveAttribute('data-mode', 'remote');
+      await page.locator('#station-list button.station', { hasNotText: 'QuickMix' }).first().click();
+      await expect(page.locator('#np-title')).not.toHaveText(/^(Pick a station)?$/, { timeout: 30_000 });
+      await page.screenshot({ path: resolve(ARTIFACTS, 'extension-real-cross-b.png') });
+      report.steps.push(`(b) page alone with the copy: playing (relay calls: ${relay.seen.map((e) => `${e.method} ${e.status}`).join(', ')})`);
+      // With the extension's login-ok token in the copy (docs/BRIDGE.md 4.5) the page
+      // needs no new Pandora login: the relay takes that token.
+      if (hadAccess) {
+        expect(relay.seen.filter((e) => e.method === 'auth.userLogin'), 'no auth.userLogin: the extension\'s token was enough').toEqual([]);
+        expect(relay.seen.filter((e) => e.status === 401), 'no relay 401').toEqual([]);
+      }
+    } finally {
+      await ctx.close();
+    }
+    // (c) Back with the extension: signing out there wipes the page's copy.
+    ctx = await launch(dir, true);
+    try {
+      const ext = await extensionIn(ctx);
+      const page = await ctx.newPage();
+      await page.goto(APP);
+      await expect(page.locator('#app')).toHaveAttribute('data-mode', 'remote', { timeout: 10_000 });
+      await expect.poll(async () => (await ext.bg()).loggedIn, { timeout: 30_000 }).toBe(true);
+      await ext.send({ type: 'logout' });
+      await expect.poll(() => vaultRead(page), { timeout: 10_000 }).toBeNull();
+      await expect(page.locator('#remote-signin')).toBeVisible({ timeout: 5_000 });
+      report.steps.push('(c) extension sign-out -> page copy wiped');
+    } finally {
+      await ctx.close();
+    }
+  });
 });

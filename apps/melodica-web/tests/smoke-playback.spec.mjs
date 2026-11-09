@@ -26,6 +26,13 @@
 //   7. "Not now" keeps the sheet closed for the session; the renamed_github notice.
 //   8. a revoked relay token: the page logs out and says the session ended.
 //
+// Remember me on this device (docs/BRIDGE.md 5, web/vault.js):
+//   9. after a remembered login a dump of localStorage, sessionStorage and IndexedDB
+//      does not contain the password; a reload resumes the stored session (no
+//      auth.userLogin) and plays; signing out deletes the vault.
+//  10. a plaintext password left by an older version is moved into the vault and
+//      erased; unchecking the box in the account menu deletes the vault.
+//
 // The tuner comes from TUNER_HTTPS_URL / TUNER_HTTP_URL / TUNER_USER /
 // TUNER_PASSWORD (the Spaceghost/melodica-tuner action) or MELODICA_TUNER_DIR
 // (a checkout; the test starts it). Its `ads` setting is changed at runtime
@@ -57,7 +64,7 @@ const tuner = {
   https: process.env.TUNER_HTTPS_URL || '',
   http: process.env.TUNER_HTTP_URL || '',
   user: process.env.TUNER_USER || 'test@example.com',
-  password: process.env.TUNER_PASSWORD || 'test',
+  password: process.env.TUNER_PASSWORD || 'tuner-pass-7Qx', // distinctive: the storage test searches for it
   version: '', proc: null, dir: null,
 };
 const haveTuner = !!tuner.https || existsSync(join(TUNER_DIR, 'tuner', '__main__.py'));
@@ -473,6 +480,99 @@ test.describe.serial('usernames through the relay', () => {
     await page.click('#username-change-save');
     await expect(page.locator('#app')).toHaveAttribute('data-view', 'login', { timeout: 10_000 });
     await expect(page.locator('#login-message')).toHaveText('Your melodica session has ended; log in again.');
+    expect(errors).toEqual([]);
+  });
+});
+
+// Everything this origin stores, as text: localStorage, sessionStorage, and every
+// IndexedDB database, store and value (binary values decoded as UTF-8 and Latin-1).
+async function storageDump(page) {
+  return page.evaluate(async () => {
+    const out = [];
+    for (const st of [localStorage, sessionStorage]) for (let i = 0; i < st.length; i++) out.push(`${st.key(i)}=${st.getItem(st.key(i))}`);
+    const text = (v) => {
+      if (v instanceof ArrayBuffer || ArrayBuffer.isView(v)) {
+        const b = new Uint8Array(v.buffer ? v.buffer : v, v.byteOffset || 0, v.byteLength);
+        return `${new TextDecoder().decode(b)} ${String.fromCharCode(...b)}`;
+      }
+      if (v && typeof v === 'object' && !(v instanceof CryptoKey)) return Object.entries(v).map(([k, x]) => `${k}:${text(x)}`).join(' ');
+      return String(v);
+    };
+    const dbs = await indexedDB.databases();
+    for (const { name } of dbs) {
+      const db = await new Promise((ok, fail) => { const r = indexedDB.open(name); r.onsuccess = () => ok(r.result); r.onerror = () => fail(r.error); });
+      for (const store of db.objectStoreNames) {
+        const all = await new Promise((ok) => { const r = db.transaction(store).objectStore(store).getAll(); r.onsuccess = () => ok(r.result); });
+        for (const v of all) out.push(`${name}/${store}: ${text(v)}`);
+      }
+      db.close();
+    }
+    return { text: out.join('\n'), databases: dbs.map((d) => d.name) };
+  });
+}
+
+test.describe.serial('remember me on this device', () => {
+  test('a remembered login: no password in any storage; a reload resumes the session; sign-out deletes the vault', async ({ page }, info) => {
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    account.allow(tuner.user, { inserts: true });
+    account.setPerson(tuner.user, { username: 'tuner_listener', chosen: true, notice: '' });
+    relay.seen.length = 0;
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e)));
+    await page.goto(appUrl);
+    await expect(page.locator('#app')).toHaveAttribute('data-view', 'login', { timeout: 30_000 });
+    await expect(page.locator('label.check', { has: page.locator('#login-remember') })).toHaveText('Remember me on this device');
+    await page.fill('#login-email', tuner.user);
+    await page.fill('#login-password', tuner.password);
+    await page.check('#login-remember');
+    await page.click('#login-button');
+    await expect(page.locator('#app')).toHaveAttribute('data-view', 'player', { timeout: 30_000 });
+    await expect.poll(async () => (await storageDump(page)).databases, { timeout: 5_000 }).toContain('melodica-vault');
+    const dump = await storageDump(page);
+    await info.attach('storage', { body: dump.text, contentType: 'text/plain' });
+    expect(tuner.password.length, 'a password distinctive enough to search for').toBeGreaterThanOrEqual(6);
+    expect(dump.text.includes(tuner.password), 'the password in plain text somewhere in storage').toBe(false);
+    expect(dump.text).not.toMatch(/melodica\.password=/);
+    // A reload resumes the stored session: straight to the player, no new Pandora login.
+    const loginsBefore = relay.seen.filter((e) => e.method === 'auth.userLogin').length;
+    await page.reload();
+    await expect(page.locator('#app')).toHaveAttribute('data-view', 'player', { timeout: 30_000 });
+    await page.locator('#station-list button.station', { hasNotText: 'QuickMix' }).first().click();
+    await expect(page.locator('#np-title')).not.toHaveText(/^(Pick a station)?$/, { timeout: 30_000 });
+    expect(relay.seen.filter((e) => e.method === 'auth.userLogin').length, 'no new auth.userLogin after the reload').toBe(loginsBefore);
+    await page.screenshot({ path: resolve(ARTIFACTS, 'remember-resumed.png') });
+    // Sign out: the vault (key and record) is gone.
+    await page.click('#account summary');
+    await page.click('#logout');
+    await expect(page.locator('#app')).toHaveAttribute('data-view', 'login');
+    await expect.poll(async () => (await storageDump(page)).databases, { timeout: 5_000 }).not.toContain('melodica-vault');
+    await expect(page.locator('#login-password')).toHaveValue('');
+    expect(errors).toEqual([]);
+  });
+
+  test('a plaintext password from an older version moves into the vault; unchecking the box deletes it', async ({ page }) => {
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    account.allow(tuner.user, { inserts: true });
+    account.setPerson(tuner.user, { username: 'tuner_listener', chosen: true, notice: '' });
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e)));
+    await page.goto(appUrl);
+    await expect(page.locator('#app')).toHaveAttribute('data-view', 'login', { timeout: 30_000 });
+    await page.evaluate(({ u, p }) => { localStorage.setItem('melodica.email', u); localStorage.setItem('melodica.password', p); }, { u: tuner.user, p: tuner.password });
+    await page.reload();
+    // Logged in with the moved credential, and no plain text left.
+    await expect(page.locator('#app')).toHaveAttribute('data-view', 'player', { timeout: 30_000 });
+    const dump = await storageDump(page);
+    expect(dump.text.includes(tuner.password)).toBe(false);
+    expect(dump.databases).toContain('melodica-vault');
+    await page.click('#account summary');
+    await expect(page.locator('#remember-menu')).toBeChecked();
+    await page.uncheck('#remember-menu');
+    await expect.poll(async () => (await storageDump(page)).databases, { timeout: 5_000 }).not.toContain('melodica-vault');
+    // Still playing in this tab; the next start shows the login card.
+    await expect(page.locator('#app')).toHaveAttribute('data-view', 'player');
+    await page.reload();
+    await expect(page.locator('#app')).toHaveAttribute('data-view', 'login', { timeout: 30_000 });
     expect(errors).toEqual([]);
   });
 });

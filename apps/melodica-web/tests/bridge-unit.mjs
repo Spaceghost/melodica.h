@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = resolve(process.env.MELODICA_DIST || resolve(here, '..', 'dist'));
-const { BridgeTransport, BridgeError, HELLO_WINDOW_MS } = await import(pathToFileURL(resolve(dist, 'bridge.js')).href);
+const { BridgeTransport, BridgeError, HELLO_WINDOW_MS, bridgeAllowed, sessionMessage } = await import(pathToFileURL(resolve(dist, 'bridge.js')).href);
 const { PianoClient } = await import(pathToFileURL(resolve(dist, 'piano.js')).href);
 
 const log = (...a) => console.log('[bridge-unit]', ...a);
@@ -148,10 +148,10 @@ assert.equal('bridge' in new PianoClient({ apiBase: 'https://relay.example/api/'
   assert.equal(typeof cmd.id, 'string');
   win.inject({ melodica: 1, type: 'result', id: 'someone-else', ok: true });
   win.inject({ melodica: 1, type: 'result', id: cmd.id, ok: true, state: { status: 'loading' } });
-  assert.deepEqual(await c, { ok: true, error: '', state: { status: 'loading' } });
+  assert.deepEqual(await c, { ok: true, error: '', state: { status: 'loading' }, outcome: '' });
   const bad = bridge.command('next', {}, 200);
   win.inject({ melodica: 1, type: 'result', id: win.posted.at(-1).data.id, ok: false, error: 'not signed in' });
-  assert.deepEqual(await bad, { ok: false, error: 'not signed in', state: null });
+  assert.deepEqual(await bad, { ok: false, error: 'not signed in', state: null, outcome: '' });
   await assert.rejects(bridge.command('pause', {}, 50), (err) => err instanceof BridgeError && err.kind === 'timeout');
 
   bridge.unsubscribe();
@@ -160,6 +160,72 @@ assert.equal('bridge' in new PianoClient({ apiBase: 'https://relay.example/api/'
   assert.equal(pushed.length, 2, 'no states after unsubscribe');
   bridge.stop();
   log('remote control ok');
+}
+
+// --- session layer (docs/BRIDGE.md 1 and 4) ---------------------------------------------
+{
+  const L = (href) => { const u = new URL(href); return { origin: u.origin, pathname: u.pathname, protocol: u.protocol, hostname: u.hostname }; };
+  assert.equal(bridgeAllowed(L('https://spacegho.st/melodica/app/')), true);
+  assert.equal(bridgeAllowed(L('https://spacegho.st/melodica/app/?x=1')), true);
+  assert.equal(bridgeAllowed(L('https://spacegho.st/other/')), false, 'another path on the origin');
+  assert.equal(bridgeAllowed(L('https://evil.spacegho.st/melodica/app/')), false, 'a subdomain');
+  assert.equal(bridgeAllowed(L('https://spacegho.st.evil.example/melodica/app/')), false);
+  assert.equal(bridgeAllowed(L('http://spacegho.st/melodica/app/')), false, 'plain http');
+  assert.equal(bridgeAllowed(L('http://127.0.0.1:8080/melodica/app/')), true, 'a local test server');
+
+  const win = fakeWindow();
+  const bridge = new BridgeTransport(win, { helloWindow: 0, onSession: (m) => pushed.push(m) });
+  const pushed = [];
+  bridge.start();
+  win.inject({ melodica: 1, type: 'ready', name: 'melodica-extension', version: '0.6.0', player: true, session: 1 });
+  assert.equal(bridge.session, 1);
+  assert.ok(win.posted.every((p) => p.targetOrigin === 'https://spacegho.st'), 'every message to the exact origin, never *');
+  // session-get answered by id.
+  const asked = bridge.sessionGet();
+  const get = win.posted.at(-1).data;
+  assert.equal(get.type, 'session-get');
+  const S = { sid: 'abc', email: 'a@example.com', partner: { authToken: 'P', id: 42 }, user: { authToken: 'U', id: '7' }, syncOffset: -3, createdAt: 5 };
+  win.inject({ melodica: 1, type: 'session', id: get.id, session: S, credential: { email: 'a@example.com', password: 'pw' }, account: { signedIn: true, username: 'night_owl', github: 'octo' }, revoked: ['x', 1] });
+  const m = await asked;
+  assert.deepEqual(m.session, S);
+  assert.deepEqual(m.credential, { email: 'a@example.com', password: 'pw' });
+  assert.deepEqual(m.account, { signedIn: true, username: 'night_owl', github: 'octo' });
+  assert.deepEqual(m.revoked, ['x'], 'non-strings dropped');
+  // A push (no id) goes to onSession; one from another origin or frame is ignored.
+  win.inject({ melodica: 1, type: 'session', session: null, revoked: ['abc'] }, { origin: 'https://evil.example' });
+  win.inject({ melodica: 1, type: 'session', session: null, revoked: ['abc'] }, { source: {} });
+  assert.equal(pushed.length, 0);
+  win.inject({ melodica: 1, type: 'session', session: null, credential: null, revoked: ['abc'] });
+  assert.equal(pushed.length, 1);
+  assert.equal(pushed[0].session, null);
+  // Malformed sessions are null.
+  assert.equal(sessionMessage({ session: { sid: 'a', partner: {}, user: {} } }).session, null);
+  assert.equal(sessionMessage({ session: { sid: '', partner: { authToken: 'P' }, user: { authToken: 'U', id: '1' } } }).session, null);
+  // session-offer / session-logout resolve with the result's outcome.
+  const offered = bridge.sessionOffer({ session: S });
+  const off = win.posted.at(-1).data;
+  assert.equal(off.type, 'session-offer');
+  win.inject({ melodica: 1, type: 'result', id: off.id, ok: false, outcome: 'revoked', error: '' });
+  assert.equal((await offered).outcome, 'revoked');
+  const out = bridge.sessionLogout('abc');
+  const lo = win.posted.at(-1).data;
+  assert.deepEqual([lo.type, lo.sid], ['session-logout', 'abc']);
+  win.inject({ melodica: 1, type: 'result', id: lo.id, ok: true });
+  assert.equal((await out).ok, true);
+  // account-signout (4.6): a push (no id) calls onAccountSignout; ours is answered by id.
+  let heard = 0;
+  bridge.onAccountSignout = () => { heard += 1; };
+  win.inject({ melodica: 1, type: 'account-signout' });
+  win.inject({ melodica: 1, type: 'account-signout' }, { origin: 'https://evil.example' });
+  assert.equal(heard, 1);
+  const so = bridge.accountSignout();
+  const sm = win.posted.at(-1).data;
+  assert.equal(sm.type, 'account-signout');
+  win.inject({ melodica: 1, type: 'result', id: sm.id, ok: true });
+  assert.equal((await so).ok, true);
+  assert.equal(heard, 1, 'our own message is not taken for the extension\'s');
+  bridge.stop();
+  log('session layer ok');
 }
 
 log('ALL OK');

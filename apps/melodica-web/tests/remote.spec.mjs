@@ -85,9 +85,11 @@ test.afterAll(async () => {
 // the first state comes that many ms after the first subscribe (a slow service worker).
 // `opts.lateReady`: the content script says nothing until then (ms), then announces
 // itself. `opts.player` false: an extension before 0.3.0. `opts.openLogin`: it knows
-// the open-login command.
+// the open-login command. `opts.session`: it speaks the session layer (docs/BRIDGE.md 4,
+// ready says session: 1), holding `opts.extSession` (or none), `opts.credential` and
+// `opts.revoked`; window.__ext.logout() signs it out as its popup would.
 function fakeExtension(opts) {
-  const log = window.__remote = { sent: [], commands: [], pushes: 0 };
+  const log = window.__remote = { sent: [], commands: [], pushes: 0, gets: 0, offers: [], logouts: [], accountSignouts: 0 };
   const tracks = [
     { title: 'Slow Light', artist: 'Aurora Fields', album: 'Northern', trackToken: 'T1', duration: 200, rating: 0, coverArt: '' },
     { title: 'Second Song', artist: 'Band Two', album: 'Album Two', trackToken: 'T2', duration: 180, rating: 0, coverArt: '' },
@@ -107,7 +109,18 @@ function fakeExtension(opts) {
   let firstAsked = 0;
   let idx = 0;
   const born = Date.now();
-  const ready = () => post({ type: 'ready', name: 'melodica-extension', version: opts.player === false ? '0.2.0' : '0.3.0', ...(opts.player === false ? {} : { player: true }) });
+  const ready = () => post({ type: 'ready', name: 'melodica-extension', version: opts.player === false ? '0.2.0' : opts.session ? '0.6.0' : '0.3.0',
+    ...(opts.player === false ? {} : { player: true }), ...(opts.session ? { session: 1 } : {}) });
+  let sess = opts.extSession || null;
+  let credential = opts.credential || null;
+  const revoked = [...(opts.revoked || [])];
+  if (opts.session) st.loggedIn = !!sess;
+  const sessionMsg = (id) => ({ type: 'session', ...(id ? { id } : {}), session: sess, credential, account: { signedIn: false, username: '', github: null }, revoked: [...revoked], access: sess ? (opts.access || null) : null });
+  const signOut = (sid) => {
+    if (sid && !revoked.includes(sid)) revoked.push(sid);
+    if (sess && (!sid || sess.sid === sid)) { if (!revoked.includes(sess.sid)) revoked.push(sess.sid); sess = null; credential = null; st.loggedIn = false; st.status = 'idle'; st.track = null; }
+  };
+  window.__ext = { logout() { signOut(sess && sess.sid); post(sessionMsg()); push(); } };
   if (opts.lateReady) setTimeout(ready, opts.lateReady);
   const post = (m) => window.postMessage({ melodica: 1, ...m }, location.origin);
   const push = () => {
@@ -139,6 +152,31 @@ function fakeExtension(opts) {
       subscribed = true; push(); return;
     }
     if (d.type === 'unsubscribe') { subscribed = false; return; }
+    if (opts.session && d.type === 'session-get') {
+      log.gets += 1;
+      post(sessionMsg(d.id));
+      // docs/BRIDGE.md 4.6: a spacegho.st sign-out made while no page was there.
+      if (opts.accountSignoutPending && log.gets === 1) post({ type: 'account-signout' });
+      return;
+    }
+    if (opts.session && d.type === 'account-signout' && d.id) { log.accountSignouts += 1; post({ type: 'result', id: d.id, ok: true, error: '' }); return; }
+    if (opts.session && d.type === 'session-offer') {
+      log.offers.push({ sid: d.session && d.session.sid, email: d.session && d.session.email, password: d.credential && d.credential.password });
+      let outcome = 'signed-in';
+      if (revoked.includes(d.session.sid)) outcome = 'revoked';
+      else if (sess) outcome = 'kept';
+      else { sess = d.session; credential = d.credential || null; st.loggedIn = true; }
+      post({ type: 'result', id: d.id, ok: outcome !== 'revoked', outcome, error: '' });
+      if (outcome === 'signed-in') { post(sessionMsg()); push(); }
+      return;
+    }
+    if (opts.session && d.type === 'session-logout') {
+      log.logouts.push(d.sid);
+      signOut(d.sid);
+      post({ type: 'result', id: d.id, ok: true, error: '' });
+      post(sessionMsg()); push();
+      return;
+    }
     if (d.type !== 'command') return;
     const { id, action } = d;
     log.commands.push(action === 'play' && d.station ? `play ${d.station.token}` : action === 'volume' || action === 'quality' ? `${action} ${d.value}` : action);
@@ -348,5 +386,100 @@ test.describe.serial('remote mode (the extension plays, the page is a view)', ()
     } finally {
       await finish(page, evidence, info);
     }
+  });
+});
+
+// What the page's encrypted store holds (web/vault.js), read inside the page.
+const vaultRead = (page) => page.evaluate(async () => { const { Vault } = await import('./vault.js'); return new Vault().read(); });
+const SESSION = (sid, email = 'listener@example.com') => ({
+  sid, email, partner: { authToken: `PAT-${sid}`, id: 42 }, user: { authToken: `UAT-${sid}`, id: '437598256' }, syncOffset: -3, createdAt: Date.now(),
+});
+
+test.describe.serial('sessions with the extension (docs/BRIDGE.md 4)', () => {
+  test('signed out of spacegho.st here while the extension was away: it hears account-signout at the next start', async ({ page }, info) => {
+    await page.addInitScript(() => { if (!sessionStorage.getItem('t')) { sessionStorage.setItem('t', '1'); localStorage.setItem('melodica.account.signout', '1'); } });
+    const evidence = await open(page, { session: true });
+    await expect.poll(() => page.evaluate(() => window.__remote.accountSignouts), { timeout: 10_000 }).toBe(1);
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('melodica.account.signout')), { timeout: 5_000 }).toBeNull();
+    await finish(page, evidence, info);
+  });
+
+  test('the extension signed out of spacegho.st: the page forgets its spacegho.st tokens', async ({ page }, info) => {
+    await page.addInitScript(() => { if (!sessionStorage.getItem('t')) { sessionStorage.setItem('t', '1'); localStorage.setItem('melodica.account', JSON.stringify({ access: 'A', refresh: 'R', expiresAt: Date.now() + 3600_000 })); } });
+    const evidence = await open(page, { session: true, accountSignoutPending: true });
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('melodica.account')), { timeout: 10_000 }).toBeNull();
+    expect(await page.evaluate(() => sessionStorage.getItem('melodica.account.silent')), 'no silent sign-in after it').toBe('1');
+    expect(await page.evaluate(() => window.__remote.accountSignouts), 'not echoed back').toBe(0);
+    await finish(page, evidence, info);
+  });
+
+  test('page signed in, extension signed out: the page offers its session and the extension signs in', async ({ page }, info) => {
+    const evidence = await open(page, { session: true });
+    await page.evaluate(async (rec) => { const { Vault } = await import('./vault.js'); await new Vault().write(rec); },
+      { session: SESSION('S1'), credential: { email: 'listener@example.com', password: 'pw-S1-secret' }, relay: null });
+    await page.reload({ waitUntil: 'load' });
+    await expect.poll(() => page.evaluate(() => window.__remote.offers.length), { timeout: 10_000 }).toBe(1);
+    const offer = (await page.evaluate(() => window.__remote.offers))[0];
+    expect(offer).toEqual({ sid: 'S1', email: 'listener@example.com', password: 'pw-S1-secret' });
+    await expect(page.locator('#remote-signin')).toBeHidden({ timeout: 5_000 });
+    await expect(page.locator('#app')).toHaveAttribute('data-mode', 'remote');
+    expect(apiHits, 'no relay request').toEqual([]);
+    await finish(page, evidence, info);
+  });
+
+  test('extension signed in: the page keeps its own encrypted copy, credential included', async ({ page }, info) => {
+    const evidence = await open(page, { session: true, extSession: SESSION('S2'), credential: { email: 'listener@example.com', password: 'pw-S2-secret' },
+      access: 'eyJhbGciOiJFUzI1NiJ9.eyJleHAiOjQxMDI0NDQ4MDB9.sig' });
+    await expect.poll(async () => (await vaultRead(page))?.session?.sid, { timeout: 10_000 }).toBe('S2');
+    const rec = await vaultRead(page);
+    expect(rec.credential).toEqual({ email: 'listener@example.com', password: 'pw-S2-secret' });
+    expect(rec.relay && rec.relay.token, 'the extension\'s access token kept for the relay').toBe('eyJhbGciOiJFUzI1NiJ9.eyJleHAiOjQxMDI0NDQ4MDB9.sig');
+    expect(rec.session.user.authToken).toBe('UAT-S2');
+    await page.click('#account summary');
+    await expect(page.locator('#remember-menu')).toBeChecked();
+    await expect(page.locator('#logout')).toBeVisible();
+    expect(await page.evaluate(() => window.__remote.offers.length), 'nothing offered back').toBe(0);
+    await finish(page, evidence, info);
+  });
+
+  test('signed out here while the extension was away: its session is signed out at the next start', async ({ page }, info) => {
+    await page.addInitScript(() => localStorage.setItem('melodica.revoked', JSON.stringify(['S3'])));
+    const evidence = await open(page, { session: true, extSession: SESSION('S3') });
+    await expect.poll(() => page.evaluate(() => window.__remote.logouts), { timeout: 10_000 }).toEqual(['S3']);
+    await expect(page.locator('#remote-signin')).toBeVisible();
+    expect(await vaultRead(page), 'no copy of a revoked session').toBeNull();
+    await finish(page, evidence, info);
+  });
+
+  test('the extension signs out: the page wipes its copy', async ({ page }, info) => {
+    const evidence = await open(page, { session: true, extSession: SESSION('S4') });
+    await expect.poll(async () => (await vaultRead(page))?.session?.sid, { timeout: 10_000 }).toBe('S4');
+    await page.evaluate(() => window.__ext.logout());
+    await expect.poll(() => vaultRead(page), { timeout: 5_000 }).toBeNull();
+    await expect(page.locator('#remote-signin')).toBeVisible();
+    await finish(page, evidence, info);
+  });
+
+  test('signing out on the page signs the extension out too', async ({ page }, info) => {
+    const evidence = await open(page, { session: true, extSession: SESSION('S5') });
+    await expect.poll(async () => (await vaultRead(page))?.session?.sid, { timeout: 10_000 }).toBe('S5');
+    await page.click('#account summary');
+    await page.click('#logout');
+    await expect.poll(() => page.evaluate(() => window.__remote.logouts), { timeout: 5_000 }).toEqual(['S5']);
+    await expect(page.locator('#remote-signin')).toBeVisible();
+    expect(await vaultRead(page)).toBeNull();
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('melodica.revoked') || '[]'))).toContain('S5');
+    await finish(page, evidence, info);
+  });
+
+  test('a revoked session offered to the extension is wiped here, not signed back in', async ({ page }, info) => {
+    const evidence = await open(page, { session: true, revoked: ['S6'] });
+    await page.evaluate(async (rec) => { const { Vault } = await import('./vault.js'); await new Vault().write(rec); }, { session: SESSION('S6'), credential: null, relay: null });
+    await page.reload({ waitUntil: 'load' });
+    // The extension lists S6 as revoked in its answer: the page wipes without offering.
+    await expect.poll(() => vaultRead(page), { timeout: 10_000 }).toBeNull();
+    expect(await page.evaluate(() => window.__remote.offers.length)).toBe(0);
+    await expect(page.locator('#remote-signin')).toBeVisible();
+    await finish(page, evidence, info);
   });
 });

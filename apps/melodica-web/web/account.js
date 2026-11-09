@@ -105,7 +105,9 @@ export class Account {
   redirectUri() { return `${this.origin}/melodica/app/`; }
 
   // The authorize URL to navigate to; remembers state and verifier for the way back.
-  async startUrl() {
+  // prompt: 'none' for a silent sign-in (docs/BRIDGE.md 4.1); the answer is a code, or
+  // error=login_required without a spacegho.st session.
+  async startUrl({ prompt = '' } = {}) {
     const d = await this.discover();
     if (!d) throw new Error('no account server here');
     const verifier = randomString(32);
@@ -116,7 +118,7 @@ export class Account {
     u.search = new URLSearchParams({
       response_type: 'code', client_id: CLIENT_ID, redirect_uri: redirectUri,
       code_challenge: await pkceChallenge(verifier), code_challenge_method: 'S256',
-      state, scope: SCOPE,
+      state, scope: SCOPE, ...(prompt ? { prompt } : {}),
     }).toString();
     return u.toString();
   }
