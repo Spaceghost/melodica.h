@@ -91,8 +91,9 @@ export function createRoomHost({ loadUi, token, remote, send, player, onChange =
   const reportEvent = (e) => { report(e.detail instanceof Error ? e.detail : Object.assign(new Error(e.detail.message), e.detail)); };
   function leave({ leave = true } = {}) {
     generation++;
-    session?.close({ leave }); session = null;
+    const closing = session?.close({ leave }); session = null;
     update(null);
+    return Promise.resolve(closing);
   }
   function suspend() {
     generation++;
@@ -114,12 +115,12 @@ export function createRoomHost({ loadUi, token, remote, send, player, onChange =
     }
     if (action === 'room-get') return { ok: true, room: snapshot };
     if (action === 'room-join') await join(fields.roomId || fields.id, { paused: fields.paused === true });
-    else if (action === 'room-leave') leave();
+    else if (action === 'room-leave') await leave();
     else {
       if (!session) throw new Error('Join the room first.');
       if (fields.id && fields.id !== snapshot?.id) throw new Error('The active room changed.');
       if (action === 'room-command') {
-        if (fields.body?.action === 'leave') leave();
+        if (fields.body?.action === 'leave') await leave();
         else await session.command(fields.body);
       } else if (action === 'room-pause') await session.pause();
       else if (action === 'room-resume') await session.resume();

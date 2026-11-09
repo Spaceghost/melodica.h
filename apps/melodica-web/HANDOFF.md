@@ -135,3 +135,7 @@ supersedes their pending-work and version statements.
 Web 0.13.6 (3def66a6197fe7c11147420a5aca65af896baaea) is live with shared pin 92145388e550904a. Room/session shutdown now returns the pending authenticated Leave attempt before sign-out discards credentials, while stopping local transport immediately. Connection/session checks passed 18/18. Extension 0.9.7 passed the focused native restart/sign-out proof twice: actual CDP stopped/running states, same retained offscreen document and no duplicate room join. Native evidence is tracked in the extension repository.
 
 The actual Cloudflare SFU provider check passed with the shipped adapter/gateway/SQLite authority and a disposable app: one source and three audible receivers, with median source delays 113/132/127 ms. The temporary app and credentials were deleted. Physical devices were not measured. App CSS remains byte-identical to v0.12.1 (SHA256 79ab46d34d468595cc15dc04ba60223f0de1ca6b4dc0d242fae65ac02d34ea59).
+
+## Web departure command propagation (0.13.7)
+
+The final sign-out audit found that the web RoomHost wrapper discarded the shared session's shutdown promise. Both room-leave and room-command leave now await that returned departure attempt before account sign-out continues; the local room view still clears immediately. A deferred-shutdown regression failed on the old wrapper and passes after the fix; all nine focused room-host checks passed. No styles changed.

@@ -124,3 +124,18 @@ test('only the current DJ without a broadcast can choose an initial source while
   assert.equal(roomBlocksSource({id,state:{you:'me',current_dj:'me',play:{id:'play'},you_broadcasting:false}}),true);
   assert.equal(roomBlocksSource({id,state:{closed_at:123,play:{id:'play'}}}),false);
 });
+
+test('room leave commands retain authentication until the shared shutdown completes',async(t)=>{
+  const f=fixture(t),original=f.mod.createRoomSession;
+  let pending;
+  f.mod.createRoomSession=()=>{const session=original();session.close=()=>pending;return session;};
+  for(const [action,fields] of [['room-leave',{}],['room-command',{body:{action:'leave'}}]]){
+    await f.host.command('room-join',{id});
+    let finish;pending=new Promise(resolve=>{finish=resolve;});
+    let completed=false;const leaving=f.host.command(action,fields).then(()=>{completed=true;});
+    assert.equal(f.host.getState(),null,'the local room view clears immediately');
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(completed,false,'account sign-out must wait for the server departure');
+    finish();await leaving;assert.equal(completed,true);
+  }
+});
