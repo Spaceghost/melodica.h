@@ -31,8 +31,8 @@ progress when this was written. The main branch holds only what was pushed after
 | epimetheus | 616ac22 (dev), CI fix 134a855 | 42573142304 green (web, APK, web + Android smoke) | done | done: 4284a19 (CFBundleURLSchemes + intent filter; macOS/iOS never built; no station creation from links) |
 | pithos | cadd46f (master) | CI green; CodeQL failing (also failing before, at 685c964) | covered by the Python family (pydora) | done: 79dceb3, CI green (desktop x-scheme-handler) |
 | pydora | 8a1248f (master) | green | done, read back (Python family) | done: c64a407, CI green (CLI argument only) |
-| pianobar | 7735f87 (master) | green | not reported yet | in progress (wip/scrobble) |
-| pianobar-windows | 41c1044 (develop) | release workflow failing (also failing at a02c887 and dc29f54); not yet investigated | not reported yet | not started |
+| pianobar | e850ac0, 7735f87 (master) | green | done, read back (C family) | done: f3c04fd, CI green (.desktop wrapper); NFC only partial (6 value diffs vs reference on decomposed input) |
+| pianobar-windows | 426404422 (develop) | smoke green (run 42573270253) | covered by the C family; no single listen on the runner | done: 981b47a + 542b52c, release workflow green (HKCU registry) |
 | umbra-piano | none needed | - | - | none: it has no Pandora playback; XivPiano scrobbles and takes links |
 
 Unverified across the board: no app has been run interactively on its real platform with
@@ -41,11 +41,12 @@ any CI.
 
 ## Left to do
 
-1. Finish listen:// in each app: a port of src/listen-uri.js that matches
-   tests/listen-uri.test.mjs exactly, OS registration, and CI green. Then fast-forward
-   main from the work, not from wip/scrobble blindly.
-2. Live submits for the Python and C families, if their reports don't show them.
-3. pianobar-windows: find out why the release workflow is red.
+1. Done: scrobbling and listen:// are on every app's branch with CI green. The
+   `wip/scrobble` branches are stale handoff snapshots; delete them when convenient.
+2. pianobar: finish NFC normalisation in src/listen_uri.c (a decomposed e + U+0301
+   is not composed); accept/reject already matches the reference.
+3. Never run on the real platform: macOS/iOS (epimetheus, no CI), Windows clicks
+   (elpis, pianobar-windows), in-game (xivpiano), phones (pandoroid, epimetheus).
 4. Tell the melodica-scrobble owner to erase the test account `u_scrobbletest01`, with its
    listens, tokens, now playing and outbox rows. Listens are marked artist "Test Artist",
    track "melodica-client-test ...".
