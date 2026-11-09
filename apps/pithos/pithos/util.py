@@ -156,7 +156,7 @@ class _SecretService:
             on_password_lookup_finish,
         )
 
-    def set_account_password(self, old_email, new_email, password, callback):
+    def set_account_password(self, old_email, new_email, password, callback, label='Pandora Account'):
         def on_password_store_finish(source, result, data):
             try:
                 success = Secret.password_store_finish(result)
@@ -182,7 +182,7 @@ class _SecretService:
                     self._account_schema,
                     {'email': new_email},
                     self._current_collection,
-                    'Pandora Account',
+                    label,
                     password,
                     None,
                     on_password_store_finish,
@@ -203,7 +203,7 @@ class _SecretService:
                 self._account_schema,
                 {'email': new_email},
                 self._current_collection,
-                'Pandora Account',
+                label,
                 password,
                 None,
                 on_password_store_finish,

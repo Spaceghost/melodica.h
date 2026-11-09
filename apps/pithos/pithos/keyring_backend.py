@@ -46,7 +46,7 @@ class KeyringService:
 
         self._worker.send(keyring.get_password, (_SERVICE, email), on_finish, on_error)
 
-    def set_account_password(self, old_email, new_email, password, callback):
+    def set_account_password(self, old_email, new_email, password, callback, label=None):
         def on_finish(success):
             if callback:
                 callback(success)

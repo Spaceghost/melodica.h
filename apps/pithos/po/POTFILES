@@ -14,5 +14,7 @@ pithos/StationsPopover.py
 pithos/PreferencesPithosDialog.py
 pithos/plugins/journald_logging.py
 pithos/plugins/lastfm.py
+pithos/plugins/listenbrainz.py
+pithos/listen_links.py
 pithos/plugins/notification_icon.py
 pithos/plugins/auto_volume_normalization.py

@@ -23,6 +23,7 @@ from gi.repository import GLib, Gio, Gtk
 
 from .pithos import PithosWindow
 from .util import open_browser
+from .listen_links import is_listen_link, open_listen_link
 
 
 class PithosApplication(Gtk.Application):
@@ -169,6 +170,11 @@ class PithosApplication(Gtk.Application):
         self.test_mode = options.lookup_value('test')
 
         self.do_activate()
+
+        # listen:// links (the desktop entry passes them as %u); never autoplay.
+        for arg in command_line.get_arguments()[1:]:
+            if is_listen_link(arg):
+                open_listen_link(self.window, arg)
 
         return 0
 

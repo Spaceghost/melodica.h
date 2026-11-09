@@ -48,7 +48,7 @@
       "buildsystem": "meson",
       "cleanup": ["/share/man"],
       "post-install": [
-        "sed -i 's|^Exec=.*|Exec=pithos|' /app/share/applications/io.github.Pithos.desktop"
+        "sed -i 's|^Exec=.*|Exec=pithos %u|' /app/share/applications/io.github.Pithos.desktop"
       ],
       "sources": [
         {

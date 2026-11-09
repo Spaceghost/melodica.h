@@ -43,6 +43,7 @@ from .gobject_worker import GObjectWorker
 from .pandora import *
 from .pandora.data import *
 from .plugin import load_plugins
+from .listen_links import open_listen_link
 from .util import parse_proxy, open_browser, SecretService, popup_at_pointer, is_flatpak
 from .migrate_settings import maybe_migrate_settings
 from .melodica_backend import OfflineLibrary, StreamingCacheServer
@@ -355,6 +356,7 @@ class PithosWindow(Gtk.ApplicationWindow):
         self.filter_state = None
         self.auto_retrying_auth = False
         self.have_stations = False
+        self.pending_listen_link = None
         self.playcount = 0
         self.gstreamer_errorcount_1 = 0
         self.gstreamer_errorcount_2 = 0
@@ -651,6 +653,9 @@ class PithosWindow(Gtk.ApplicationWindow):
             self.process_stations(self)
             if callback:
                 callback()
+            link, self.pending_listen_link = self.pending_listen_link, None
+            if link:
+                open_listen_link(self, link)
 
         def pandora_ready(*ignore):
             logging.info("Pandora connected")

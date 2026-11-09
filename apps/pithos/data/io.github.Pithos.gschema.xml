@@ -69,6 +69,7 @@
     <child name="journald-logging" schema="io.github.Pithos.plugin-enabled"/>
     <child name="notify" schema="io.github.Pithos.plugin"/>
     <child name="lastfm" schema="io.github.Pithos.plugin"/>
+    <child name="listenbrainz" schema="io.github.Pithos.listenbrainz"/>
     <child name="notification-icon" schema="io.github.Pithos.plugin"/>
 
   </schema>
@@ -83,6 +84,26 @@
     <key type="s" name="data">
       <default>""</default>
       <summary>Custom data set by plugin</summary>
+    </key>
+
+  </schema>
+
+  <schema id="io.github.Pithos.listenbrainz" gettext-domain="pithos">
+
+    <key type="b" name="enabled">
+      <default>false</default>
+      <summary>If the plugin is loaded</summary>
+    </key>
+
+    <key type="s" name="data">
+      <default>""</default>
+      <summary>Custom data set by plugin</summary>
+    </key>
+
+    <key type="s" name="server-url">
+      <default>"https://spacegho.st/scrobble"</default>
+      <summary>ListenBrainz-compatible API base URL</summary>
+      <description>The server's API base, without /1/. The token is kept in the keyring, not here.</description>
     </key>
 
   </schema>
