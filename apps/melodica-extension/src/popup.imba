@@ -207,11 +207,10 @@ tag Popup
 	def select e
 		const room = player and player.room
 		return toast('Room listeners cannot start private playback. Leave the room first.', 'error') if room and room.id and room.role !== 'dj'
-		return toast('Your room DJ broadcast is active. Leave the room before changing stations.', 'error') if room and room.id and room.locked
 		const station = e.detail
 		try
 			player = (await send({type: 'player', action: 'play', stationToken: station.token})).state
-			toast("Playing {station.name}.", 'info')
+			toast(room and room.locked ? "{station.name} queued for your next DJ track." : "Playing {station.name}.", 'info')
 		catch err
 			toast(String(err.message or err), 'error')
 
@@ -309,10 +308,12 @@ tag Popup
 
 	def lockPrivateControls
 		const room = player and player.room
-		const blocked = !!(room and room.id and (room.locked or room.role !== 'dj'))
+		const blocked = !!(room and room.id and room.role !== 'dj')
 		window.requestAnimationFrame(do
-			for control of document.querySelectorAll('#station-list button.station, #station-list button.delete')
+			for control of document.querySelectorAll('#station-list button.station')
 				control.disabled = blocked
+			for control of document.querySelectorAll('#station-list button.delete')
+				control.disabled = blocked or !!(room and room.locked)
 			for control of document.querySelectorAll('#tired')
 				control.disabled = !!(room and room.id)
 		)
@@ -328,6 +329,7 @@ tag Popup
 			else "Pick a station"
 
 	get roomStatus
+		return "{player.pendingStation.name} queued for your next DJ track." if player and player.pendingStation
 		const room = player and player.room
 		return '' unless room and room.id
 		return 'This room is closed.' if room.state and room.state.closed_at

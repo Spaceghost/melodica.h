@@ -53,7 +53,7 @@ export class Engine
 		self.held = no
 		self.doc = host.document or document
 		self.state = {
-			status: 'idle', station: null, track: null, position: 0, duration: 0,
+			status: 'idle', station: null, pendingStation: null, track: null, position: 0, duration: 0,
 			volume: 80, quality: 'high', queueLength: 0, queue: [], error: '', notice: '', history: [], changedAt: 0, played: no
 		}
 		self.queue = []
@@ -80,7 +80,7 @@ export class Engine
 	def lastRecord
 		const t = state.track
 		return null unless t and !t.ad and state.station and t.trackToken
-		{station: state.station, track: t, position: Number(audio.currentTime) or state.position or 0, duration: state.duration or t.duration or 0, quality: state.quality, queue: queue.filter(do(x) x and x.kind !== 'spot' and !x.ad).slice(0, 4), savedAt: Date.now()}
+		{station: state.station, pendingStation: state.pendingStation, track: t, position: Number(audio.currentTime) or state.position or 0, duration: state.duration or t.duration or 0, quality: state.quality, queue: queue.filter(do(x) x and x.kind !== 'spot' and !x.ad).slice(0, 4), savedAt: Date.now()}
 
 	def saveLast urgent = yes
 		return if transferredPending or !state.played
@@ -138,6 +138,7 @@ export class Engine
 		transferredPending = no
 		state.played = yes
 		releaseCopyUrl()
+		state.pendingStation = r.pendingStation or null
 		state.station = r.station
 		state.track = r.track
 		state.position = Number(r.position) or 0
@@ -174,6 +175,7 @@ export class Engine
 		audio.pause()
 		releaseCopyUrl()
 		restored = {cacheTried: no}
+		state.pendingStation = null
 		state.station = {token: p.station.id, name: p.station.name}
 		state.track = p.song
 		state.played = p.played === yes
@@ -215,6 +217,11 @@ export class Engine
 	# --- commands -------------------------------------------------------
 
 	# Start (or restart) a station; the first track plays as soon as the playlist is in.
+	def queueStation station
+		return unless station and station.token
+		set({pendingStation: {token: station.token, name: station.name or ''}})
+		saveLast()
+
 	def play station
 		return resume() if !station and state.station
 		return unless station
@@ -222,7 +229,7 @@ export class Engine
 		transferredPending = no
 		generation += 1
 		queue = []
-		set({station: {token: station.token, name: station.name or ''}, track: null, position: 0, duration: 0, status: 'loading', error: ''})
+		set({station: {token: station.token, name: station.name or ''}, pendingStation: null, track: null, position: 0, duration: 0, status: 'loading', error: ''})
 		await next()
 
 	# One diagnostics line per transport change (src presence only, never the URL).
@@ -270,6 +277,10 @@ export class Engine
 			await resume()
 
 	def next
+		if state.pendingStation
+			generation += 1
+			queue = []
+			set({station: state.pendingStation, pendingStation: null})
 		return unless state.station
 		const gen = generation
 		try
@@ -333,7 +344,7 @@ export class Engine
 		audio.removeAttribute('src')
 		audio.load()
 		queue = []
-		set({status: 'stopped', track: null, position: 0, duration: 0, error: ''})
+		set({status: 'stopped', pendingStation: null, track: null, position: 0, duration: 0, error: ''})
 
 	# Next is not available while `track.ad` is set.
 	def skip
@@ -404,6 +415,7 @@ export class Engine
 			restoring = null
 			return if done
 		state.station = saved.station or null
+		state.pendingStation = saved.pendingStation or null
 		if saved.track and saved.track.audioUrl and saved.status !== 'stopped' and saved.status !== 'idle'
 			state.track = saved.track
 			state.played = saved.played === yes or saved.status === 'playing'

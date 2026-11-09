@@ -1,5 +1,18 @@
 # Handoff (melodica-extension)
 
+## Mobile DJ station selection — 2026-11-09
+
+- Final native 0.9.14 private-playback/full-page bridge proof passed (2.6 minutes) using isolated tuner ports 18443/18080 and actual web 0.13.12. Native room evidence also reports 0.9.14 passed. Primary proof is preserved in `/var/home/jack/workspaces/melodica-next-station-primary-smoke.json`; combined release status is `/var/home/jack/workspaces/melodica-next-station-release-status.json`.
+
+- Signing retry is queued for 2026-11-09 23:51 UTC (15:51 Pacific) in user timer `melodica-extension-0914-sign-retry.timer`. Its script is `/var/home/jack/workspaces/melodica-extension-0914-sign-retry.sh`; it retries only failed jobs in CI 42710960096 and iOS 42710959928. Service-account GitHub access was verified through systemd, and user lingering is enabled. The successful CI/iOS hooks drive normal self-hosted catalog publication.
+- Retry v0.9.14 only. Intermediate v0.9.12/v0.9.13 builds were not published and are superseded. Web 0.13.12 is already live and verified against official release files.
+
+- Broadcasting DJs can select a station while the current room track continues. Per the user’s choice, the selection queues for their next DJ track; no room play is replaced or ended by station selection.
+- Engine queueStation preserves the current song, audio position and station. The next turn discards the old station queue and fetches from the selected station. Pending selection is persisted in engine and last-play state.
+- The DJ keeps station choices in playerView during a broadcast; listeners do not see private station choices. Controls and copy say “queued for your next DJ track.” Existing stylesheets are unchanged.
+- Built as 0.9.14 with shared UI b5d4feddc03ab557. The experimental immediate switch and service replacement API were reverted. Mozilla signing remains throttled until about 2026-11-09 23:49 UTC; 0.9.10 remains the verified signed public extension until the new release is published.
+- Validation: production Imba engine/room routing/player-view regression tests, production web queue/next-song tests, 27 web remote browser tests including 390px DJ/listener controls, and focused native Chromium room lifecycle. Physical mobile devices and real Pandora login are not claimed.
+
 ## Startup cleanup patch — 0.9.3
 
 - v0.9.3 at 500faea fixes the 0.9.2 Chromium startup cleanup regression. Engine-state reports no longer close the document; explicit room cleanup rechecks activity after awaiting engine creation.
@@ -16,7 +29,7 @@
 - Mozilla unlisted signing is preserved. Both browser update feeds and eight public installable downloads passed checksum verification.
 - Both catalogs passed browser checks at 390 and 1280 pixels; the Melodica catalog contains only its browser extension and keeps the player bar pinned.
 - The Worker release manifests were updated in R2; all other Melodica projects were preserved. No player or Worker code was deployed by this publication.
-- Evidence: https://github.com/Spaceghost/melodica-extension/actions/runs/42696537716.
+- Evidence: https://github.com/Spaceghost/melodica-extension/actions/runs/42711948269.
 <!-- extension-publication:end -->
 
 Updated 2026-11-09. Self-hosted 0.9.2 published and verified; full tag browser suites remain in progress.

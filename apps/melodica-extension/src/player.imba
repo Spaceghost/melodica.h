@@ -259,10 +259,14 @@ tag Player
 
 	def lockPrivateControls
 		const room = currentRoom()
-		const blocked = !!(room and (room.locked or room.role !== 'dj'))
+		const blocked = !!(room and room.role !== 'dj')
 		window.requestAnimationFrame(do
-			for control of self.querySelectorAll('#station-list button.station, #station-list button.delete, #quality')
+			for control of self.querySelectorAll('#station-list button.station')
 				control.disabled = blocked
+			for control of self.querySelectorAll('#quality')
+				control.disabled = !!(room and (room.locked or room.role !== 'dj'))
+			for control of self.querySelectorAll('#station-list button.delete')
+				control.disabled = blocked or !!(room and room.locked)
 			for control of self.querySelectorAll('#tired')
 				control.disabled = !!room
 		)
@@ -352,7 +356,6 @@ tag Player
 	def select e
 		const room = currentRoom()
 		return toast('Room listeners cannot start private playback. Leave the room first.', 'error') if room and room.role !== 'dj'
-		return toast('Your room DJ broadcast is active. Leave the room before changing stations.', 'error') if room and room.locked
 		traits = null
 		command({action: 'play', stationToken: e.detail.token})
 
@@ -483,7 +486,9 @@ tag Player
 									<label.deck-item for="room-volume">
 										<span.sr> "Room volume"
 										<input#room-volume type="range" min="0" max="100" value=(player and Number.isFinite(player.volume) ? player.volume : 80) aria-label="Room volume" @change=setVolume(e.target.value)>
-							<p.fine> (currentRoom() and currentRoom().locked ? 'Your DJ broadcast is active. Leave the room to change private stations or quality.' : (currentRoom() and currentRoom().role === 'dj' ? 'Your DJ turn is ready. Choose a Pandora station from the Player tab to start broadcasting.' : 'You are listening to the room. Leave before starting private playback.'))
+							if player and player.pendingStation
+								<p.fine> "{player.pendingStation.name} queued for your next DJ track."
+							<p.fine> (currentRoom() and currentRoom().locked ? 'Your DJ broadcast is active. Select a station for your next DJ track.' : (currentRoom() and currentRoom().role === 'dj' ? 'Your DJ turn is ready. Choose a Pandora station from the Player tab to start broadcasting.' : 'You are listening to the room. Leave before starting private playback.'))
 							<div#panel-room-content>
 						<div.ext-desk hidden=(panel !== 'player')>
 							<aside.ext-side>

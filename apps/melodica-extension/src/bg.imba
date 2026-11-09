@@ -959,9 +959,9 @@ def createTerrainStation st
 # Play a seed from a spacegho.st/melodica/ page (the Conquest map's Play, docs/BRIDGE.md
 # play-seed): a station of that artist or genre already in the list is reused, else
 # Pandora's best match of that kind becomes a new station; then it plays.
-def playSeed kind, name
+def playSeed kind, name, sender
 	throw new PandoraError('kind must be artist or genre.', null, 0, 'client') unless SEED_KINDS.includes(kind)
-	throw new PandoraError('Leave the room before starting a private Pandora station.', null, 0, 'room') if room.id
+	throw new PandoraError('Leave the room before starting a private Pandora station.', null, 0, 'room') if room.id and !roomIsDj()
 	const text = String(name or '').trim().slice(0, 128)
 	throw new PandoraError('name is required.', null, 0, 'client') unless text
 	throw new PandoraError('Not signed in.', null, 0, 'auth') unless state.client.loggedIn
@@ -977,7 +977,7 @@ def playSeed kind, name
 		station = stations.find(do(s) s.token === made.token) or made
 		created = yes
 	note("play-seed {kind}: {created ? 'new station' : 'existing station'}")
-	await playerCommand({action: 'play', station: {token: station.token, name: station.name or ''}})
+	await playerCommand({action: 'play', station: {token: station.token, name: station.name or ''}}, sender)
 	{station: {token: station.token, name: station.name or ''}, created, state: playerView()}
 
 # A message from this extension's content script in a top-frame tab of
@@ -1520,7 +1520,7 @@ def playerView
 		const paused = !!(play and play.paused_at) or !!(room.audio and room.audio.paused)
 		const audible = ['listening', 'broadcasting'].includes(String(room.audio and room.audio.state or '')) and !paused
 		const track = meta ? {title: meta.track_name or '', artist: meta.artist_name or '', album: meta.release_name or '', coverArt: meta.additional_info and meta.additional_info.art_url or '', duration: durationMs / 1000, kind: 'room'} : null
-		Object.assign(view, {status: audible ? 'playing' : (paused ? 'paused' : (room.audio and room.audio.state === 'connecting' ? 'loading' : 'idle')), station: {name: "Room · {room.state and room.state.name or 'Listening room'}", token: ''}, track, position: Math.max(0, Math.min(durationMs / 1000, position)), duration: durationMs / 1000, volume: room.audio and Number.isFinite(room.audio.volume) ? room.audio.volume : player.volume, queueLength: 0, queue: [], error: room.audio and room.audio.message or '', last: null, stations: []})
+		Object.assign(view, {status: audible ? 'playing' : (paused ? 'paused' : (room.audio and room.audio.state === 'connecting' ? 'loading' : 'idle')), station: {name: "Room · {room.state and room.state.name or 'Listening room'}", token: ''}, track, position: Math.max(0, Math.min(durationMs / 1000, position)), duration: durationMs / 1000, volume: room.audio and Number.isFinite(room.audio.volume) ? room.audio.volume : player.volume, queueLength: 0, queue: [], error: room.audio and room.audio.message or '', last: null, stations: roomIsDj() ? (state and state.saved.stations or []) : [], pendingStation: roomIsDj() ? player.pendingStation : null})
 	view
 
 # Save the engine's "last playing" record (at most every 2 s; pause, stop and
@@ -1773,6 +1773,7 @@ def engineCall op, args = []
 			when 'room-leave' then await localRoomEngine.leave(args[0] or {})
 			when 'room-command' then return await localRoomEngine.command(args[1])
 			when 'room-audio' then return await localRoomEngine.audioCommand(args[1], args[2])
+			when 'room-select-station' then return await localRoomEngine.selectStation(args[0])
 			when 'room-end' then return await localRoomEngine.endTurn()
 			when 'room-scrobbling' then localRoomEngine.setScrobbling(args[0] !== no)
 			when 'state' then null
@@ -1857,6 +1858,12 @@ def playerCommand msg, sender
 	if room.id
 		await restoreRoomSession() unless roomEngineReady
 		if roomBroadcastActive()
+			if action === 'play' and (msg.station or msg.stationToken)
+				throw new PandoraError('not allowed', null, 0, 'room') unless roomCaller(sender)
+				throw new PandoraError('Not signed in.', null, 0, 'auth') unless state.client.loggedIn
+				const st = stationByToken(msg.stationToken or msg.station.token) or msg.station or {token: msg.stationToken, name: ''}
+				await engineCall('room-select-station', [st])
+				return {state: playerView()}
 			return await roomPlayerCommand(msg, sender)
 		elif !roomIsDj()
 			return await roomPlayerCommand(msg, sender)
@@ -2294,7 +2301,7 @@ def handle msg, sender
 			{opened: await listenTab(msg.uri, sender.tab.id)}
 		when 'play-seed'
 			throw new PandoraError('not allowed', null, 0, 'bridge') unless melodicaPageSender(sender) or extensionPage(sender)
-			await playSeed(String(msg.kind or ''), msg.name)
+			await playSeed(String(msg.kind or ''), msg.name, sender)
 		when 'engine-hello'
 			# The offscreen document (re)started: give it what the last one knew.
 			note(TAB_ENGINE ? 'player tab engine up; hydrating' : 'offscreen document up; hydrating')

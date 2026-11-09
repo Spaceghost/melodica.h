@@ -212,6 +212,12 @@ export class RoomEngine extends EventTarget {
     this.emit('clock', { play_id: playId, position_ms: positionMs, server_time: serverTime });
   }
 
+  async selectStation(station) {
+    if (!this.session || !this.isDj()) throw new Error('Only the broadcasting DJ can select the room station.');
+    this.engine.queueStation(station);
+    return this.state();
+  }
+
   async startTurn() {
     const generation = this.turnGeneration;
     const before = this.engine.snapshot.track?.trackToken;

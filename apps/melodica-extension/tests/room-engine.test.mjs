@@ -173,3 +173,14 @@ test('stepping down cancels a source that is still loading', async () => {
   room.session={getState:()=>state};
   await assert.rejects(room.startTurn(),{code:'dj_turn_ended'});
 });
+
+test('DJ station selection queues the next turn without touching the live broadcast', async()=>{
+  let selected;
+  const engine={queueStation(station){selected=station;},play(){throw new Error('The live song must not restart');}};
+  const rooms=new RoomEngine({engine,send:async()=>({}),loadMedia:async()=>({})});
+  let state={you:'dj',current_dj:'dj',you_broadcasting:true,play:{id:'current',dj:'dj'}};
+  rooms.session={getState:()=>state};
+  await rooms.selectStation({token:'mobile-station',name:'Mobile radio'});
+  assert.equal(selected.token,'mobile-station');assert.equal(rooms.state().state.play.id,'current');
+  state={...state,you_broadcasting:false};await assert.rejects(rooms.selectStation({token:'secondary'}));
+});

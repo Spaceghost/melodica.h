@@ -1218,6 +1218,8 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     // The access check carries the account's bearer.
     await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'access-check' }));
     expect(acct.requests[acct.requests.length - 1].bearer, 'the access check sent the account token').toBe(true);
+    // A fully open app may already be subscribed and receive sign-out immediately.
+    await page.evaluate(() => { window.__acctOut = 0; addEventListener('message', ev => { if (ev.source === window && ev.data?.melodica === 1 && ev.data.type === 'account-signout' && !ev.data.id) window.__acctOut += 1; }); });
     const out = await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'account-signout' }));
     expect(out.account.signedIn).toBe(false);
     expect(acct.tokens.revoked, 'sign-out revoked the refresh token').toBeGreaterThan(0);
@@ -1235,7 +1237,7 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
       window.postMessage({ melodica: 1, ...m, id }, 'https://spacegho.st');
       setTimeout(() => ok({ timeout: true }), 15000);
     }), msg);
-    await page.evaluate(() => { window.__sessions = []; window.__acctOut = 0; addEventListener('message', (ev) => { if (ev.source === window && ev.data && ev.data.melodica === 1 && ev.data.type === 'session' && !ev.data.id) window.__sessions.push(ev.data); if (ev.source === window && ev.data && ev.data.melodica === 1 && ev.data.type === 'account-signout' && !ev.data.id) window.__acctOut += 1; }); });
+    await page.evaluate(() => { window.__sessions = []; addEventListener('message', (ev) => { if (ev.source === window && ev.data && ev.data.melodica === 1 && ev.data.type === 'session' && !ev.data.id) window.__sessions.push(ev.data); }); });
     const sready = await page.evaluate(() => new Promise((ok) => { const on = (ev) => { if (ev.data && ev.data.type === 'ready') { removeEventListener('message', on); ok(ev.data); } }; addEventListener('message', on); window.postMessage({ melodica: 1, type: 'hello' }, 'https://spacegho.st'); }));
     expect(sready.session, 'ready says session: 1').toBe(1);
     expect(sready.rooms, 'ready advertises native room support').toBe(1);
@@ -1244,8 +1246,7 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     expect(got.session.email).toBe(tuner.user);
     expect(got.session.partner.authToken && got.session.user.authToken && Number.isInteger(got.session.syncOffset), 'the Pandora session').toBeTruthy();
     expect(got.credential, 'the remembered credential').toEqual({ email: tuner.user, password: tuner.password });
-    // The spacegho.st sign-out above happened with no page asking: the first session-get
-    // is followed by account-signout (BRIDGE.md 4.6), once.
+    // Sign-out is delivered once, immediately to an open subscriber or on the first session-get.
     await page.waitForFunction(() => window.__acctOut === 1, null, { timeout: 5_000 });
     expect((await dump(ctl)).includes('accountSignoutPending'), 'the pending flag is cleared').toBe(false);
     const acctOut = await bridgeAsk({ type: 'account-signout' });
@@ -1342,7 +1343,7 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     // The fake account server has no live WebSocket: the shared UI's live channel (opened
     // by the player tab's deployment toast) falls back to polling after Chrome logs the 404.
     const consoleErrors = evidence.console.filter((l) => /:error\]/.test(l) && !/relay|HTTP 4|melodica\/api/.test(l) && !/WebSocket connection to 'wss:\/\/spacegho\.st\/scrobble\/api\/live' failed/.test(l));
-    expect(consoleErrors, 'console errors (extension pages)').toEqual(consoleErrors.filter((l) => l.startsWith('[web:')));
+    expect(consoleErrors, 'console errors (extension pages)').toEqual(consoleErrors.filter((l) => /\[web:error\]/.test(l)));
 
     report.ok = true;
     report.summary = `melodica-extension ${report.extension.version} (unpacked, ${report.browser}${report.engine && report.engine !== report.browser ? `, ${report.engine}` : ''}) pointed at melodica-tuner ${tuner.version} ` +
