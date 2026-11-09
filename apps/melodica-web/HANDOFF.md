@@ -3,11 +3,10 @@
 <!-- extension-publication:start -->
 ## Extension catalog publication
 
-- v0.9.6 is published at https://spacegho.st/extensions/#melodica-extension and https://spacegho.st/melodica/extension/.
+- v0.9.7 is published at https://spacegho.st/extensions/#melodica-extension and https://spacegho.st/melodica/extension/.
 - Mozilla unlisted signing is preserved. Both browser update feeds and eight public installable downloads passed checksum verification.
-- Both catalogs passed browser checks at 390 and 1280 pixels; the Melodica catalog contains only its browser extension and keeps the player bar pinned.
-- The Worker release manifests were updated in R2; all other Melodica projects were preserved. No player or Worker code was deployed by this publication.
-- Evidence: https://github.com/Spaceghost/melodica-extension/actions/runs/42629074465.
+- Both catalogs passed browser checks at 390 and 1280 pixels, without overflow or browser errors.
+- Evidence: https://github.com/Spaceghost/melodica-extension/actions/runs/42631500171.
 <!-- extension-publication:end -->
 
 Updated 2026-11-09 PT. Production is web 0.13.3 (GET verified), source/tag
@@ -130,3 +129,9 @@ supersedes their pending-work and version statements.
 - Integrate with the queue/immediacy/protocol/deployment branches, then build and run the combined candidate. Shared UI pin, Worker authorization, publication and final history cleanup remain separate work in the root task.
 - melodica-scrobble moved to Spaceghost/spaceghost-scrobble.
 - Two tuner insert tests (smoke-playback 281 and 1280) fail on bak even on 0.11.0; investigate.
+
+## Room lifecycle correction and current production
+
+Web 0.13.6 (3def66a6197fe7c11147420a5aca65af896baaea) is live with shared pin 92145388e550904a. Room/session shutdown now returns the pending authenticated Leave attempt before sign-out discards credentials, while stopping local transport immediately. Connection/session checks passed 18/18. Extension 0.9.7 passed the focused native restart/sign-out proof twice: actual CDP stopped/running states, same retained offscreen document and no duplicate room join. Native evidence is tracked in the extension repository.
+
+The actual Cloudflare SFU provider check passed with the shipped adapter/gateway/SQLite authority and a disposable app: one source and three audible receivers, with median source delays 113/132/127 ms. The temporary app and credentials were deleted. Physical devices were not measured. App CSS remains byte-identical to v0.12.1 (SHA256 79ab46d34d468595cc15dc04ba60223f0de1ca6b4dc0d242fae65ac02d34ea59).
