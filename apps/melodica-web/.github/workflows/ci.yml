@@ -23,6 +23,14 @@ jobs:
           node-version: 22
       - name: Fetch the shared Scrobbles UI (pinned, sha256-checked)
         run: scripts/fetch-scrobble-ui.sh
+      - name: The shared UI pin is at most one release behind live
+        # Exit 1 (more than one release behind) fails; exit 2 (latest.json unreachable) warns.
+        run: |
+          rc=0
+          curl -fsS --retry 3 -A melodica-ci https://spacegho.st/scrobble/assets/ui/latest.json -o latest.json || rc=2
+          [ "$rc" = 0 ] && { node scripts/check-ui-pin.mjs web/vendor/scrobble-ui/scrobble-ui.js latest.json || rc=$?; }
+          if [ "$rc" = 2 ]; then echo "::warning::latest.json unreachable; ui pin not checked"; exit 0; fi
+          exit $rc
       - name: Build dist/
         run: scripts/build.sh
       - name: Static checks

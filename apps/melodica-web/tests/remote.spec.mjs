@@ -50,8 +50,10 @@ const SHELL_PATHS = new Set(['/melodica/', '/melodica/listens/', '/melodica/lead
 
 // Chromium logs "Failed to load resource" for the expected 503 from /auth/me.
 function expectedResourceError(msg) {
+  // The panels' live channel, refused without a sign-in (the panel then shows Sign in).
+  if (msg.type() === 'error' && /WebSocket connection to '[^']*\/scrobble\/api\/live' failed/.test(msg.text())) return true;
   if (msg.type() !== 'error' || !/Failed to load resource/.test(msg.text())) return false;
-  return /\/melodica\/auth\//.test((msg.location() && msg.location().url) || '');
+  return /\/melodica\/auth\/|\/scrobble\/api\//.test((msg.location() && msg.location().url) || '');
 }
 
 test.beforeAll(async () => {
@@ -559,8 +561,11 @@ test.describe.serial('remote mode in the app shell', () => {
     await expect(page.locator('#mini-title')).toHaveText('Slow Light');
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: width > 760 ? 800 : 844 });
-      // No Map link: this listener is not a crew viewer.
-      await expect(page.locator('#site-nav a[data-k="map"]')).toBeHidden();
+      // The Map link: hidden only once Scrobbles says this listener is not crew. Here it
+      // cannot say (no Scrobbles), so the link shows and the map says how to sign in.
+      await expect(page.locator('#site-nav a[data-k="map"]')).toBeVisible();
+      await page.click('#site-nav a[data-k="map"]');
+      await expect(page.locator('#route-view .route-notice a', { hasText: 'Sign in with GitHub' })).toBeVisible({ timeout: 15_000 });
       for (const k of ['home', 'listens', 'leaderboard', 'account', 'extension', 'app']) {
         await page.click(`#site-nav a[data-k="${k}"]`);
         await expect(page.locator('#app')).toHaveAttribute('data-route', k);

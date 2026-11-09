@@ -28,7 +28,7 @@ export function makeScrobbles({ who }) {
   const auth = [];     // the Authorization header of each request
   const events = [];
   const sockets = new Set(); // live WebSockets: {key, sock}
-  const self = { handle, posts, requests, auth, events, emit(key, ev) { const e = { at: Date.now(), ...ev }; events.push({ key, ev: e }); for (const c of sockets) if (c.key === key) wsSend(c.sock, e); }, accounts, seedCount: 0, defaultOn: true, crewViewers: new Set(), reset() { accounts.clear(); posts.length = 0; requests.length = 0; auth.length = 0; events.length = 0; self.crewViewers.clear(); self.seedCount = 0; } };
+  const self = { handle, posts, requests, auth, events, emit(key, ev) { const e = { at: Date.now(), ...ev }; events.push({ key, ev: e }); for (const c of sockets) if (c.key === key) wsSend(c.sock, e); }, accounts, seedCount: 0, defaultOn: true, crewViewers: new Set(), cookies: new Map(), reset() { self.cookies.clear(); accounts.clear(); posts.length = 0; requests.length = 0; auth.length = 0; events.length = 0; self.crewViewers.clear(); self.seedCount = 0; } };
   const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
   const id = (l) => createHash('sha256').update(`${l.listened_at}|${l.artist}|${l.title}`).digest('hex');
 
@@ -62,7 +62,9 @@ export function makeScrobbles({ who }) {
     const p = url.pathname;
     const m = req.method;
     const auth_ = req.headers.get('authorization') || '';
-    const key = auth_.startsWith('Bearer ') ? who(auth_.slice(7)) : '';
+    // Without a bearer, the spacegho.st session cookie (as the shared panels read with token null).
+    const ck = (/(?:^|;\s*)scrobble_session=([^;]+)/.exec(req.headers.get('cookie') || '') || [])[1] || '';
+    const key = auth_.startsWith('Bearer ') ? who(auth_.slice(7)) : (self.cookies.get(ck) || '');
     requests.push(`${m} ${p}${url.search}`);
     auth.push(auth_);
     if (!p.startsWith('/scrobble/api/')) return json({ error: 'not_found' }, 404);

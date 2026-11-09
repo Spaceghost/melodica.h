@@ -117,6 +117,10 @@ export class Scrobbles {
     if (before) q.set('before', before);
     return this.call(`me/listens?${q}`);
   }
+  // Other Conquest calls (melodica-scrobble docs/CLIENTS.md): game/skip, game/station.
+  game(path, body) {
+    return this.call(`game/${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  }
   // A crew thumb on the map's town for this artist (melodica-scrobble Conquest v2).
   thumb(direction, song) {
     const body = { direction, artist_name: String(song.artist || '') };

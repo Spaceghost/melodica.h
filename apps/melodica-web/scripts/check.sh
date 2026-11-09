@@ -21,6 +21,7 @@ fi
 if grep -nE ' on[a-z]+="' dist/index.html; then
     echo "index.html contains inline event handlers" >&2; exit 1
 fi
+node scripts/lint-edges.mjs web/app.css site/public/melodica/site.css
 for f in index.html app.js piano.js bridge.js account.js vault.js scrobble.js lastplay.js app.css melodica.js melodica.wasm vendor/scrobble-ui/scrobble-ui.js vendor/scrobble-ui/scrobble-ui.css LICENSE LICENSE.libpiano THIRD_PARTY_NOTICES.md; do
     test -s "dist/$f" || { echo "missing dist/$f" >&2; exit 1; }
 done

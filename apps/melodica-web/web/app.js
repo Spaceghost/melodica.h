@@ -40,6 +40,40 @@ function artUrl(song) {
   return location.protocol === 'https:' ? u.replace(/^http:\/\//i, 'https://') : u;
 }
 
+// Scrobbles keeps a copy of every album art URL it is sent (melodica-scrobble
+// docs/CLIENTS.md "Album art"): /scrobble/art/<sha256 hex of the URL as Pandora gave it>.
+const artCopies = new Map();
+function artCachedUrl(song) {
+  const u = (song && song.coverArt) || '';
+  if (!u || !/^https?:\/\//i.test(u) || !crypto.subtle) return Promise.resolve('');
+  if (!artCopies.has(u)) {
+    artCopies.set(u, crypto.subtle.digest('SHA-256', new TextEncoder().encode(u))
+      .then((d) => `${location.origin}/scrobble/art/${[...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('')}`, () => ''));
+  }
+  return artCopies.get(u);
+}
+
+// The shared ui's cover(src, cls, cached) behaviour on an existing <img>: the art, then
+// Scrobbles' cached copy on an error or when it has not loaded in 1.5 s (Pandora's http
+// art has no https twin on some hosts), then the fallback.
+const ART_TIMEOUT_MS = 1500;
+function showArt(img, song, fallback, onFinal) {
+  const src = artUrl(song);
+  const gen = (img.__artGen = (img.__artGen || 0) + 1);
+  img.onerror = null;
+  img.src = src || fallback;
+  if (!src) return;
+  let stage = 0;
+  const toFinal = () => { if (img.__artGen !== gen || stage === 2) return; stage = 2; img.src = fallback; if (onFinal) onFinal(); };
+  const toCached = () => {
+    if (img.__artGen !== gen || stage !== 0) return;
+    stage = 1;
+    artCachedUrl(song).then((c) => { if (img.__artGen !== gen) return; if (c && c !== src) img.src = c; else toFinal(); });
+  };
+  img.onerror = () => (stage === 0 ? toCached() : toFinal());
+  setTimeout(() => { if (!(img.complete && img.naturalWidth > 0)) toCached(); }, ART_TIMEOUT_MS);
+}
+
 // Fallback cover: a gold record on ink, used whenever Pandora sends no art.
 const FALLBACK_COVER = 'data:image/svg+xml;utf8,' + encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">' +
@@ -148,6 +182,7 @@ const state = {
   resume: null,       // the last-playing record shown paused with Resume, or null
   resuming: false,    // Resume is trying the song's link, then its copy
   blobUrl: '',        // a copy being played (revoked when the song changes)
+  tap: null,          // a one-tap play prompt (autoplay blocked): {label, run}
 };
 
 // ---------------------------------------------------------------- helpers
@@ -356,11 +391,11 @@ async function deleteStation(st) {
 
 // ---------------------------------------------------------------- now playing display
 
-function setCover(url) {
-  el.cover.src = url || FALLBACK_COVER;
-  el.barCover.src = url || FALLBACK_COVER;
-  el.wash.src = url || 'data:,';
-  if (url) el.cover.addEventListener('error', () => { el.cover.src = FALLBACK_COVER; el.wash.src = 'data:,'; }, { once: true });
+function setCover(song) {
+  showArt(el.cover, song, FALLBACK_COVER, () => { el.wash.src = 'data:,'; });
+  showArt(el.barCover, song, FALLBACK_COVER);
+  el.wash.src = artUrl(song) || 'data:,';
+  el.cover.onload = () => { if (el.cover.src !== FALLBACK_COVER && el.wash.src !== el.cover.src) el.wash.src = el.cover.src; };
 }
 
 function setPlayIcon(playing) {
@@ -468,8 +503,7 @@ function renderHistory() {
     img.className = 'hist-cover';
     img.alt = '';
     img.loading = 'lazy';
-    img.src = artUrl(song) || FALLBACK_COVER;
-    img.addEventListener('error', () => { img.src = FALLBACK_COVER; }, { once: true });
+    showArt(img, song, FALLBACK_COVER);
     const meta = document.createElement('div');
     meta.className = 'hist-meta';
     const t = document.createElement('span');
@@ -680,6 +714,8 @@ function playSong(song) {
     p.catch((err) => {
       if (err && err.name === 'NotAllowedError') {
         playerMessage('Press play to start (the browser blocks autoplay).', 'info', 0);
+        state.tap = { label: `Play ${state.station ? state.station.name : 'the station'}`, run: () => el.audio.play().catch(() => {}) };
+        updateResumeUi();
         setPlayIcon(false);
         if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
       }
@@ -700,7 +736,7 @@ function displaySong(song, { shown = false } = {}) {
   el.station.textContent = state.station ? `on ${state.station.name}` : '';
   el.miniTitle.textContent = song.title || '';
   el.miniArtist.textContent = song.artist || '';
-  setCover(artUrl(song));
+  setCover(song);
   el.cover.alt = song.coverArt && song.album ? `Cover of ${song.album}` : '';
   lastLen = -1;
   setProgress(0, song.duration || 0);
@@ -733,6 +769,7 @@ function skip(reason) {
   if (state.remote) { remoteCommand('next'); return; }
   if (state.song && state.song.isInsert) return; // plays through
   if (reason) { playerMessage(reason); state.keepMessage = true; }
+  if (state.song && !reason) crewGame('skip', { artist_name: String(state.song.artist || ''), track_name: String(state.song.title || '') });
   el.audio.pause();
   nextSong();
 }
@@ -1051,6 +1088,7 @@ function renderRemote(rs) {
   const onLast = t && t === rs.last;
   setProgress(Number(onLast ? rs.last.position : rs.position) || 0, len);
   updateResumeUi();
+  if (pendingSeed && rs.loggedIn === true) playSeed(pendingSeed);
   if (rs.notice && rs.notice !== remoteNotice) playerMessage(rs.notice);
   remoteNotice = rs.notice || '';
 
@@ -1155,6 +1193,21 @@ async function setupAccount() {
   if (back.done && !back.error) store.remove(STORAGE.accountSignout); // signed in again: nothing to deliver
   // login_required answers a silent sign-in (prompt=none) when there is no spacegho.st session.
   if (back.error && back.error !== 'login_required') loginMessage(`spacegho.st sign-in did not complete (${back.error}).`, 'error');
+  // Back from a round trip started on a panel route: return there (the redirect URI is the player).
+  const ret = a.session.get(RETURN_KEY);
+  if (ret !== null && back.done) {
+    a.session.remove(RETURN_KEY);
+    if (ret.startsWith(SHELL_BASE) && ret !== location.pathname) { history.replaceState(history.state, '', ret); renderRoute(routeOf(ret)); }
+  }
+  // A panel route without any sign-in: a silent spacegho.st sign-in (prompt=none), once per
+  // browser session, so a GitHub-signed-in visitor sees the map with no click. When there is
+  // no session the answer is login_required and the panel shows Sign in with GitHub.
+  if (!back.done && !a.signedIn && PANES[routeOf(location.pathname)] && a.session.get(SILENT_KEY) !== '1') await state.savedReady;
+  if (!back.done && !a.signedIn && PANES[routeOf(location.pathname)] && !state.saved && !state.remote && a.session.get(SILENT_KEY) !== '1') {
+    a.session.set(SILENT_KEY, '1');
+    a.session.set(RETURN_KEY, location.pathname);
+    try { location.assign(await a.startUrl({ prompt: 'none' })); return; } catch (_) { a.session.remove(RETURN_KEY); }
+  }
   await refreshPolicy();
   if (a.signedIn) await a.profile();
   updateAccountLine();
@@ -1498,6 +1551,7 @@ async function applyExtensionSession(m, initial, force = false) {
 // spacegho.st: the extension signed in and this page not -> a silent sign-in (prompt=none,
 // once per browser session); the extension signed out after being signed in -> sign out.
 const SILENT_KEY = 'melodica.account.silent';
+const RETURN_KEY = 'melodica.account.return'; // the shell route a round trip started on
 function applyExtensionAccount(acc) {
   const a = state.account;
   if (!acc || !a || !a.config) return;
@@ -1562,6 +1616,7 @@ async function enterPlayer() {
   visibleStationButton()?.focus();
   refreshMe({ prompt: true }); // not awaited: the username never holds up playback
   loadScrobbles();
+  if (pendingSeed) { playSeed(pendingSeed); return; }
   await offerResume();
 }
 
@@ -1621,7 +1676,8 @@ function renderScrobbleSettings() {
   const sc = state.scrobble;
   el.scrobbleSettings.hidden = !(sc && sc.loaded);
   el.listensPanel.hidden = !(sc && sc.loaded);
-  el.siteNav.querySelector('a[data-k="map"]').hidden = !(sc && sc.loaded && sc.crew);
+  el.siteNav.querySelector('a[data-k="map"]').hidden = !!(sc && sc.loaded && !sc.crew);
+  remountOnAuth();
   if (!sc || !sc.loaded) return;
   const links = state.scrobbles.links; // on this page's origin
   $('scrobble-dashboard').href = links.dashboard;
@@ -1908,7 +1964,7 @@ function showPane(name, focus = true) {
     const opts = { client: ui.client, live: ui.live };
     if (name === 'listens') { opts.pageSize = 25; opts.scrollRoot = host; } // scrolls inside its own box (0.9.1)
     if (name === 'leaderboard') opts.window = '7d';
-    if (name === 'map') opts.onStation = stationFromSeeds;
+    if (name === 'map') { opts.onStation = stationFromSeeds; opts.onPlay = playSeed; }
     ui.views[name] = ui.mod[PANES[name]](host, opts);
   } catch (err) {
     console.debug('[scrobble-ui]', describeError(err));
@@ -2176,6 +2232,14 @@ async function loadGenome(song) {
   }
 }
 
+// game/skip and game/station: the same rules as thumbs (crew only, never blocking).
+function crewGame(path, body) {
+  if (state.remote || !state.scrobbles || !state.scrobble || !state.scrobble.crew) return;
+  state.scrobbles.game(path, body).catch((err) => {
+    if (![403, 404, 429].includes(err && err.status)) console.debug('[game]', path, describeError(err));
+  });
+}
+
 function crewThumb(direction, song) {
   if (state.remote || !state.scrobbles || !state.scrobble || !state.scrobble.crew || !song || song.isInsert) return;
   state.scrobbles.thumb(direction, song).catch((err) => {
@@ -2209,6 +2273,66 @@ async function stationFromSeeds(station) {
     return { name: station.name || '' };
   }
   throw new Error('Pandora found none of this town\'s seeds.');
+}
+
+// ---------------------------------------------------------------- Play in melodica (0.11.1)
+// The map's ▶ Play (onPlay / sui:play) and its link fallback /melodica/app/?seed=
+// <artist|genre>:<name>&autoplay=1: a station from that artist or genre, reused when
+// one already exists, then played. In remote mode the extension does it.
+let pendingSeed = null;
+function seedFromUrl() {
+  const q = new URLSearchParams(location.search);
+  const raw = q.get('seed');
+  if (!raw) return null;
+  q.delete('seed');
+  q.delete('autoplay');
+  history.replaceState(history.state, '', location.pathname + (q.toString() ? `?${q}` : '') + location.hash);
+  const m = /^(artist|genre):(.{1,200})$/s.exec(raw);
+  return m ? { kind: m[1], name: m[2].trim() } : null;
+}
+
+function playSeed(seed) {
+  if (!seed || !seed.name || !['artist', 'genre', 'track'].includes(seed.kind)) return Promise.resolve(false);
+  if (route !== 'app') go('app');
+  if (state.remote) {
+    if (!state.remoteState || state.remoteState.loggedIn !== true) { pendingSeed = seed; return Promise.resolve(false); }
+    pendingSeed = null;
+    playerMessage(`Starting a ${seed.name} station…`, 'info', 0);
+    const kind = seed.kind === 'track' ? 'artist' : seed.kind; // the bridge knows artist and genre
+    const name = seed.kind === 'track' ? (seed.artist_name || seed.name) : seed.name;
+    return remoteCommand('seed', { seed: { kind, name: name.slice(0, 128) } }).then((r) => {
+      if (r && r.ok) { playerMessage(''); return true; }
+      playerMessage(`The extension could not start a ${seed.name} station${r && r.error ? `: ${r.error}` : ''}.`, 'error');
+      return false;
+    });
+  }
+  if (!state.client || !state.client.session() || el.app.dataset.view !== 'player') { pendingSeed = seed; return Promise.resolve(false); }
+  pendingSeed = null;
+  crewGame('station', seed.kind === 'track' ? { kind: 'track', name: seed.name, artist_name: seed.artist_name || '' } : { kind: seed.kind, name: seed.name });
+  return seedStation(seed).then(() => true, (err) => { playerMessage(describeError(err), 'error'); return false; });
+}
+
+async function seedStation(seed) {
+  const low = (v) => String(v || '').trim().toLowerCase();
+  const name = low(seed.name);
+  clearResume();
+  const have = state.stations.find((x) => !x.isQuickMix && (low(x.name) === name || low(x.name) === `${name} radio`));
+  if (have) { await playStation(have); return have; }
+  playerMessage(`Starting a ${seed.name} station…`, 'info', 0);
+  const r = await state.client.search(seed.kind === 'track' && seed.artist_name ? `${seed.name} ${seed.artist_name}` : seed.name);
+  const artists = (r.artists || []).filter((x) => x && x.musicId);
+  const songs = (r.songs || []).filter((x) => x && x.musicId);
+  const pick = (seed.kind === 'track' && (songs.find((x) => low(x.title) === name && (!seed.artist_name || low(x.artist) === low(seed.artist_name))) || songs[0]))
+    || (seed.kind === 'artist' ? artists.find((x) => low(x.name) === name) || artists[0] : artists.find((x) => low(x.name) === name))
+    || artists[0] || songs[0];
+  if (!pick) throw new Error(`Pandora found nothing for ${seed.name}.`);
+  const before = new Set(state.stations.map((x) => x.id));
+  state.stations = await state.client.createStation(pick.musicId);
+  buildStations();
+  const created = state.stations.find((x) => !before.has(x.id)) || state.stations.find((x) => low(x.name).startsWith(low(pick.name || pick.title)));
+  if (!created) throw new Error(`The ${seed.name} station was not created.`);
+  await playStation(created);
+  return created;
 }
 
 // ---------------------------------------------------------------- resume (0.11.0)
@@ -2256,9 +2380,10 @@ function remoteResumable() {
 function updateResumeUi() {
   const rs = state.remoteState;
   const pos = state.remote ? (remoteResumable() ? Number(rs.last.position) || 0 : -1) : (state.resume ? state.resume.position : -1);
-  const on = pos >= 0;
+  const on = pos >= 0 || !!state.tap;
   el.barResume.hidden = !on;
-  el.barResumeAt.textContent = on && pos >= 1 ? ` at ${fmtTime(pos)}` : '';
+  el.barResume.firstChild.textContent = state.tap && pos < 0 ? state.tap.label : 'Resume';
+  el.barResumeAt.textContent = pos >= 1 ? ` at ${fmtTime(pos)}` : '';
   if (on) el.app.dataset.resume = 'true'; else delete el.app.dataset.resume;
 }
 
@@ -2367,6 +2492,8 @@ async function resumeLast() {
 }
 
 function installResume() {
+  document.addEventListener('sui:play', (ev) => { const d = ev.detail; if (d) playSeed({ kind: d.kind, name: d.name, artist_name: d.artist_name }); });
+  pendingSeed = seedFromUrl();
   state.copies = new AudioCopies({
     relayRequest: (u) => {
       let host = '';
@@ -2386,7 +2513,11 @@ function installResume() {
     const rec = lastRecord({ station: state.station, song: state.song, position: el.audio.currentTime, queue: state.queue });
     if (rec) { state.resume = rec; setPlayIcon(false); updateResumeUi(); }
   });
-  el.barResume.addEventListener('click', () => { if (state.remote) remoteCommand('resume'); else resumeLast(); });
+  el.barResume.addEventListener('click', () => {
+    if (state.tap && !state.resume && !remoteResumable()) { const t = state.tap; state.tap = null; updateResumeUi(); t.run(); return; }
+    if (state.remote) remoteCommand('resume'); else resumeLast();
+  });
+  el.audio.addEventListener('playing', () => { if (state.tap) { state.tap = null; updateResumeUi(); } });
 }
 
 // ---------------------------------------------------------------- the shell (0.11.0)
@@ -2436,35 +2567,76 @@ function routeHeading(text) {
 async function mountRouteUi(name, host, gen) {
   let mod;
   try { mod = await import(UI_MODULE); } catch (err) {
-    host.textContent = 'The listens could not be loaded.';
     console.debug('[scrobble-ui]', describeError(err));
+    if (gen === routeGen) routeNotice(host, name, 'not_loaded');
     return;
   }
   if (gen !== routeGen) return;
-  // Without a token the panels would only be refused: say how to get one instead.
-  let token = null;
-  try { token = await uiToken(); } catch (_) { token = null; }
-  if (gen !== routeGen) return;
-  if (!token) {
-    const p = document.createElement('p');
-    p.className = 'muted route-signin';
-    const a = document.createElement('a');
-    a.href = ROUTE_PATH.app;
-    a.textContent = 'Sign in to the player';
-    p.append(a, document.createTextNode(state.remote ? ' or to spacegho.st in the extension to see this.' : ' to see this.'));
-    host.replaceChildren(p);
-    return;
-  }
   const client = mod.createClient({ base: location.origin, token: uiToken });
   const live = client.live();
   const opts = { client, live };
   if (name === 'listens') { opts.pageSize = 25; opts.scrollRoot = host; }
   if (name === 'leaderboard') opts.window = '7d';
-  if (name === 'map') opts.onStation = stationFromSeeds;
+  if (name === 'map') { opts.onStation = stationFromSeeds; opts.onPlay = playSeed; }
+  // Never a blank panel: whatever the panel could not show, say so with a way on. A
+  // visitor with only the spacegho.st cookie (no player sign-in) reads with the cookie
+  // (token null); without that, or outside the crew, the notice offers GitHub sign-in.
+  host.addEventListener('sui:error', (ev) => {
+    const code = ev.detail && (ev.detail.code || ev.detail.status);
+    console.debug('[scrobble-ui]', name, code);
+    if (gen === routeGen) routeNotice(host, name, code);
+  });
   let view = null;
   try { view = mod[PANES[name]](host, opts); } catch (err) { console.debug('[scrobble-ui]', describeError(err)); }
   routeUi = { live, view };
-  host.addEventListener('sui:error', (ev) => console.debug('[scrobble-ui]', name, ev.detail && ev.detail.code));
+  if (!view) routeNotice(host, name, 'mount_failed');
+  // The map's own "for the crew" line (it reads me first, without an error event): add the way on.
+  if (name === 'map' && view && typeof MutationObserver === 'function') {
+    const mo = new MutationObserver(() => {
+      if (gen !== routeGen) { mo.disconnect(); return; }
+      if (host.querySelector('.crew-only')) { mo.disconnect(); routeNotice(host, name, 'crew_only'); }
+    });
+    mo.observe(host, { subtree: true, attributes: true, attributeFilter: ['class'], childList: true });
+  }
+}
+
+// The panels read with whatever sign-in there is when they mount; when that changes (a
+// player session resuming, an account sign-in, the extension appearing) mount them again.
+let authKey = '';
+function remountOnAuth() {
+  const sc = state.scrobble, a = state.account;
+  const k = `${!!(sc && sc.loaded)}|${!!(sc && sc.crew)}|${!!(a && a.signedIn)}|${!!state.remote}`;
+  if (k === authKey) return;
+  const first = !authKey;
+  authKey = k;
+  if (first || !route || !PANES[route]) return;
+  remountRoute();
+}
+function remountRoute() { const r = route; leaveRoute(); route = ''; renderRoute(r); }
+
+const SIGNIN_GITHUB = (next) => `/scrobble/auth/start?next=${encodeURIComponent(next)}`;
+function routeNotice(host, name, code) {
+  const box = host.parentNode;
+  if (!box) return;
+  let n = box.querySelector(':scope > .route-notice');
+  if (!n) { n = document.createElement('div'); n.className = 'route-notice card'; box.insertBefore(n, host); }
+  const signin = ['unauthorized', 'no_session', 'no_token', 'unauthenticated', 401, '401', 'login_required', 'http_401', 'invalid_token', 'sign_in_required'].includes(code);
+  const crew = ['forbidden', 'not_crew', 'crew_only', 'not_member', 403, '403', 'http_403'].includes(code);
+  const p = document.createElement('p');
+  const what = name === 'map' ? 'the crew map' : name === 'leaderboard' ? 'the leaderboard' : 'your listens';
+  p.textContent = signin ? `Sign in to see ${what}.`
+    : crew ? 'The crew map is invite-only. Signed in with another GitHub account? Sign in again with the one the crew knows.'
+    : `This panel could not load${code ? ` (${code})` : ''}.`;
+  const a = document.createElement('a');
+  a.className = 'button';
+  a.href = SIGNIN_GITHUB(ROUTE_PATH[name] || ROUTE_PATH.home);
+  a.textContent = `Sign in with GitHub to see ${what}`;
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.className = 'link';
+  retry.textContent = 'Try again';
+  retry.addEventListener('click', remountRoute);
+  n.replaceChildren(p, a, retry);
 }
 
 function fragment(path) {
@@ -2584,7 +2756,7 @@ async function main() {
     remove(k) { try { sessionStorage.removeItem(k); } catch (_) { /* unavailable */ } },
   };
   state.account = new Account({ origin: location.origin, store, session, log: (m) => console.debug('[account]', m) });
-  state.accountReady = setupAccount().catch((err) => console.debug('[account]', describeError(err)));
+  state.accountReady = setupAccount().catch((err) => console.debug('[account]', describeError(err))).then(() => remountOnAuth());
   // The melodica extension: say hello now (and again for a few seconds) so its content
   // script can answer while the wasm loads; it may also appear later, and the page
   // then switches to remote mode (onBridgeChange). An explicit ?api= means the relay

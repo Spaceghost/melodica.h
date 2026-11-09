@@ -1,7 +1,9 @@
 #!/bin/sh
 # Fetch the shared Scrobbles UI (melodica-scrobble ui/dist, contract v1 in its
 # docs/CLIENTS.md) into web/vendor/scrobble-ui/, pinned by scrobble-ui.pin:
-#   commit=<full sha>  js_sha256=<hex>  css_sha256=<hex>
+#   hash=<16 hex content hash>  commit=<full sha>  js_sha256=<hex>  css_sha256=<hex>
+# With a hash, the immutable public build /scrobble/assets/ui/h/<hash>/ is fetched (the
+# hash is the first 16 hex of sha256(js || css); see .../ui/latest.json for the newest).
 # The files are not in this repository (melodica-scrobble is private; the same files
 # are served publicly at https://spacegho.st/scrobble/assets/ui/<commit>/). With gh signed in to
 # a GitHub account that can read the repository, the pinned commit is fetched; otherwise
@@ -10,12 +12,17 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 . ./scrobble-ui.pin
+hash=${hash:-}
 OUT=web/vendor/scrobble-ui
 mkdir -p "$OUT"
 GH=${GH:-$(command -v gh || echo /home/linuxbrew/.linuxbrew/bin/gh)}
 fetch() { # name expected-sha256
   tmp="$OUT/.$1.part"
-  if [ -x "$GH" ] && "$GH" api -H 'Accept: application/vnd.github.raw' "repos/Spaceghost/melodica-scrobble/contents/ui/dist/$1?ref=$commit" > "$tmp" 2>/dev/null; then
+  if [ -n "$hash" ]; then
+    url="${SCROBBLE_UI_BASE:-https://spacegho.st/scrobble/assets/ui}/h/$hash/$1"
+    curl -fsSL --retry 3 "$url" -o "$tmp"
+    src="$url"
+  elif [ -x "$GH" ] && "$GH" api -H 'Accept: application/vnd.github.raw' "repos/Spaceghost/melodica-scrobble/contents/ui/dist/$1?ref=$commit" > "$tmp" 2>/dev/null; then
     src="Spaceghost/melodica-scrobble@$commit"
   else
     # The immutable copy of the pinned build (every commit's ui/dist is kept there).

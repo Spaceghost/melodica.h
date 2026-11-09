@@ -42,7 +42,7 @@
 // smoke-web-insert.png (an insert in the now-playing card), smoke-web-not-listed.png,
 // username-pick.png, username-change.png.
 
-import { test, expect } from '@playwright/test';
+import { test, expect, devices } from '@playwright/test';
 // The playback flag as the client reads it (web/account.js).
 const flagsOf = (b) => !b.playback.plus;
 import http from 'node:http';
@@ -775,7 +775,22 @@ test.describe.serial('the app shell', () => {
         await expect(page.locator(`#site-nav a[data-k="${k}"]`)).toHaveAttribute('aria-current', 'page');
         if (k === 'home') await expect(page.locator('#route-body')).toContainText('Launch the player', { timeout: 10_000 });
         if (k === 'extension') await expect(page.locator('#route-body h1, #route-body h2').first()).toBeVisible({ timeout: 10_000 });
-        if (k === 'listens') await expect(page.locator('#route-body li.hist').first()).toBeVisible({ timeout: 10_000 });
+        if (k === 'listens') {
+          await expect(page.locator('#route-body li.hist').first()).toBeVisible({ timeout: 10_000 });
+          // The shared rows as ui/ draws them: cover | title and artist next to it, left-aligned | time on the right.
+          const g = await page.evaluate(() => {
+            const row = document.querySelector('#route-body .sui li.hist');
+            const box = (sel) => { const e = row.querySelector(sel); return e ? e.getBoundingClientRect() : null; };
+            const r = row.getBoundingClientRect();
+            const cover = row.querySelector('img') ? row.querySelector('img').getBoundingClientRect() : null;
+            return { row: { x: r.x, right: r.right, w: r.width }, cover: cover && { x: cover.x, right: cover.right }, title: box('.hist-title'), when: box('.hist-when'), align: getComputedStyle(row.querySelector('.hist-meta')).textAlign, list: row.parentElement.getBoundingClientRect().width };
+          });
+          expect(g.title.x - g.cover.right, `${width}: title next to the cover`).toBeLessThanOrEqual(24);
+          expect(g.title.x - g.cover.right).toBeGreaterThanOrEqual(0);
+          expect(['left', 'start']).toContain(g.align);
+          expect(g.row.right - g.when.right, `${width}: time in the right column`).toBeLessThanOrEqual(16);
+          expect(g.row.w, `${width}: rows fill the list`).toBeGreaterThanOrEqual(g.list - 2);
+        }
         if (k === 'leaderboard') await expect(page.locator('#route-body')).toContainText('Slow Light', { timeout: 10_000 });
         if (k === 'map') await expect(page.locator('#route-body svg').first()).toBeVisible({ timeout: 10_000 });
         if (k === 'account') await expect(page.locator('#route-body .account-menu')).toBeVisible();
@@ -821,6 +836,42 @@ test.describe.serial('the app shell', () => {
       }
       await page.screenshot({ path: resolve(ARTIFACTS, `shell-signedout-${width}.png`) });
     }
+  });
+});
+
+// ---------------------------------------------------------------- the map on a phone (0.11.1)
+// knewter's report: Android Chrome, crew, signed in on spacegho.st with GitHub, no map at all.
+test.describe('the map on a phone', () => {
+  const { defaultBrowserType: _d, ...pixel } = devices['Pixel 7'];
+  test.use({ ...pixel, viewport: { width: 412, height: 839 } });
+  test('412 wide: signed out it offers Sign in with GitHub back to the map; with only the spacegho.st cookie a crew member sees the map', async ({ page, context }) => {
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e)));
+    page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource|WebSocket connection to '[^']*\/scrobble\/api\/live' failed/.test(m.text())) errors.push(m.text()); });
+    await page.goto(`${origin}/melodica/map/`);
+    await expect(page.locator('#app')).toHaveAttribute('data-route', 'map');
+    await expect(page.locator('#site-nav a[data-k="map"]')).toBeVisible();
+    const signin = page.locator('#route-view .route-notice a', { hasText: 'Sign in with GitHub to see the crew map' });
+    await expect(signin).toBeVisible({ timeout: 15_000 });
+    expect(await signin.getAttribute('href')).toBe('/scrobble/auth/start?next=%2Fmelodica%2Fmap%2F');
+    await page.screenshot({ path: resolve(ARTIFACTS, 'map-phone-signedout-412.png') });
+    // Signed in on spacegho.st (the cookie), never in the player: the map itself.
+    const k = 'u:knewter-test';
+    scrobbles.crewViewers.add(k);
+    scrobbles.cookies.set('crew-cookie', k);
+    await context.addCookies([{ name: 'scrobble_session', value: 'crew-cookie', url: origin }]);
+    await page.reload();
+    await expect(page.locator('#route-body svg').first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('#route-view .route-notice')).toHaveCount(0);
+    await page.screenshot({ path: resolve(ARTIFACTS, 'map-phone-crew-412.png') });
+    // Signed in but not crew: told so, with the button, never blank.
+    scrobbles.crewViewers.delete(k);
+    await page.reload();
+    await expect(page.locator('#route-view .route-notice')).toContainText('invite-only', { timeout: 15_000 });
+    await expect(signin).toBeVisible();
+    expect(errors, 'console errors').toEqual([]);
+    await context.clearCookies();
   });
 });
 
@@ -914,9 +965,13 @@ test.describe.serial('Resume: the last song on this device', () => {
     await page.goto(`${tuner.http}/`); // another site
     await page.goBack();
     await expect(page.locator('#mini-title')).toHaveText(title, { timeout: 30_000 });
+    // Where it was when the page went away (it played on while the test navigated).
+    const left = await page.evaluate(() => { try { return JSON.parse(sessionStorage.getItem('melodica.lastPosition')).p; } catch (_) { return null; } });
+    expect(left, 'the position at pagehide').not.toBeNull();
+    expect(left).toBeGreaterThanOrEqual(at);
     await expect(page.locator('#app')).toHaveAttribute('data-view', 'player');
     expect((await audioTime(page)).paused, 'shown paused').toBe(true);
-    await expectResumedAt(page, at, 'back');
+    await expectResumedAt(page, left, 'back');
     await expect(page.locator('#np-title')).toHaveText(title);
   });
 
@@ -926,9 +981,11 @@ test.describe.serial('Resume: the last song on this device', () => {
     await longAudio(page);
     await begin(page, { every: 0 });
     const title = (await page.locator('#np-title').textContent()).trim();
-    const at = await playTo(page, 83);
+    await playTo(page, 83);
     await page.reload();
     await expect(page.locator('#mini-title')).toHaveText(title, { timeout: 30_000 });
+    const at = await page.evaluate(() => JSON.parse(sessionStorage.getItem('melodica.lastPosition')).p);
+    expect(at).toBeGreaterThanOrEqual(83);
     await expect(page.locator('#time-cur')).toHaveText(fmt(at));
     await page.waitForTimeout(1500);
     expect((await audioTime(page)).paused, 'nothing plays before Resume').toBe(true);
@@ -982,6 +1039,24 @@ test.describe.serial('Resume: the last song on this device', () => {
     await expect(page.locator('#np-title')).not.toHaveText(title, { timeout: 30_000 });
     await expect.poll(async () => (await audioTime(page)).paused, { timeout: 20_000 }).toBe(false);
   });
+});
+
+// ---------------------------------------------------------------- Play in melodica (0.11.1)
+test("?seed=artist:<name>&autoplay=1 (the map's ▶ Play fallback): a station from that artist plays", async ({ page }) => {
+  test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+  test.setTimeout(120_000);
+  await begin(page, { every: 0 });
+  const artist = (await page.locator('#np-artist').textContent()).trim();
+  expect(artist).not.toBe('');
+  const before = await page.locator('#station-list li').count();
+  await page.goto(`${appUrl}&seed=${encodeURIComponent(`artist:${artist}`)}&autoplay=1`);
+  await expect(page.locator('#station-list li')).not.toHaveCount(0, { timeout: 30_000 });
+  await expect.poll(async () => page.locator('#station-list li').count(), { timeout: 30_000 }).toBeGreaterThanOrEqual(before);
+  await expect(page.locator('#np-station')).toContainText(artist, { timeout: 30_000 });
+  await expect.poll(async () => (await audioTime(page)).paused, { timeout: 20_000 }).toBe(false);
+  expect(new URL(page.url()).searchParams.has('seed'), 'the seed is taken off the address').toBe(false);
+  await expect(page.locator('#bar-resume')).toBeHidden();
+  await page.screenshot({ path: resolve(ARTIFACTS, 'seed-artist.png') });
 });
 
 // ---------------------------------------------------------------- Sign in with GitHub (0.11.0)
