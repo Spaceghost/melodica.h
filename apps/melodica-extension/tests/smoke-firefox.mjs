@@ -163,7 +163,7 @@ async function diagnostics(driver, ext) {
 // spacegho.st:443 there (everything else, e.g. tuner.pandora.com, goes direct).
 const WEB_HOST = 'spacegho.st';
 const APP_PAGE = `<!doctype html><meta charset="utf-8"><title>melodica (smoke page)</title>
-<script>window.__ext=[];addEventListener('message',function(ev){var d=ev.data;if(ev.source===window&&d&&d.melodica===1&&['present','ready','state','result'].indexOf(d.type)>=0)window.__ext.push({type:d.type,id:d.id,ok:d.ok,error:d.error,state:d.state,at:performance.now()});});</script>
+<script>window.__ext=[];addEventListener('message',function(ev){var d=ev.data;if(ev.source===window&&d&&d.melodica===1&&['present','ready','state','result'].indexOf(d.type)>=0)window.__ext.push({type:d.type,id:d.id,ok:d.ok,error:d.error,rooms:d.rooms,state:d.state,at:performance.now()});});</script>
 <p>smoke page</p>`;
 const web = { server: null, proxy: null, port: 0, proxyPort: 0, dir: null };
 async function startWeb() {
@@ -479,6 +479,21 @@ try {
   const foot = await driver.executeScript(() => document.querySelector('.foot')?.textContent || '');
   check(!/github/i.test(foot), 'the account line names no provider');
   await screenshot(driver, 'account');
+  const roomId = 'firefoxRoomProbe12345';
+  fakeAuth.setRoom(roomId, {
+    id: roomId, name: 'Firefox native room', kind: 'public', mode: 'rotation', host: 'host-ci',
+    you: 'listener-ci', current_dj: 'host-ci', ready_at: 1, seq: 1, spots: 1, skip_fraction: 0.5,
+    scrobble: true, play: null,
+    members: [{ account: 'listener-ci', name: 'Firefox listener', role: 'listener', joined_at: 1730000000 }],
+    djs: [], waiting: [], requests: [], past: [],
+  });
+  const joinedRoom = await ask(driver, { type: 'room-join', roomId });
+  check(joinedRoom.ok === true && joinedRoom.room?.state?.id === roomId, `Firefox local background Engine joins the room (${JSON.stringify(joinedRoom)})`);
+  check(joinedRoom.room.state.members[0].joined_at === 1730000000, 'Firefox room snapshot preserves numeric member joined_at');
+  check(fakeAuth.roomCalls.some((call) => call.id === roomId && call.method === 'POST' && call.action === 'join'), 'Firefox RoomEngine joined through its authenticated local backend adapter');
+  const leftRoom = await ask(driver, { type: 'room-leave', roomId });
+  check(leftRoom.room?.id === null, 'Firefox RoomEngine leaves cleanly');
+  report.rooms = { joined: true, left: true, joinedAt: 1730000000, calls: fakeAuth.roomCalls.filter((call) => call.id === roomId) };
   const out = await ask(driver, { type: 'account-signout' });
   check(out.account.signedIn === false && fakeAuth.tokens.revoked > 0, 'signed out; refresh token revoked');
   report.account = { label: fin.account.label, revoked: fakeAuth.tokens.revoked };
@@ -496,6 +511,8 @@ try {
   const coldRound = async (label) => {
     await driver.get(`https://${WEB_HOST}/melodica/app/`);
     const seen = await waitFor(driver, async () => driver.executeScript(() => { const m = window.__ext.find((x) => x.type === 'present' || x.type === 'ready'); return m ? Math.round(m.at) : null; }), `${label}: present/ready`, 5_000, 50);
+    const roomCapability = await driver.executeScript(() => window.__ext.find((x) => x.type === 'ready')?.rooms || 0);
+    check(roomCapability === 1, `${label}: ready advertises Firefox native Rooms`);
     await driver.executeScript(() => window.postMessage({ melodica: 1, type: 'subscribe' }, location.origin));
     const signed = await waitFor(driver, async () => driver.executeScript(() => { const m = window.__ext.find((x) => x.type === 'state' && x.state && x.state.loggedIn && (x.state.stations || []).length > 0); return m ? { at: Math.round(m.at), stations: m.state.stations.length, first: m.state.stations[0] } : null; }), `${label}: signed-in state with stations`, 20_000, 100);
     const cmd = async (cid, action, extra = {}) => {
@@ -508,7 +525,7 @@ try {
     const pause = await cmd(`${label}-pause`, 'pause');
     check(pause.ok, `${label}: pause over the bridge (${pause.error || ''})`);
     const handles = await driver.getAllWindowHandles();
-    const r = { detectedMs: seen, signedInMs: signed.at, stations: signed.stations, played: true, paused: true, windows: handles.length, extensionPages: [] };
+    const r = { detectedMs: seen, signedInMs: signed.at, stations: signed.stations, played: true, paused: true, roomsCapability: roomCapability, windows: handles.length, extensionPages: [] };
     console.log(`cold start ${label}: ${JSON.stringify(r)}`);
     check(seen < 1000, `${label}: the page saw present/ready within 1 s (${seen} ms)`);
     await driver.get('about:blank');

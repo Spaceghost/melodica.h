@@ -8,4 +8,5 @@ SHA256SUMS
 RELEASE_BODY.md
 *.pem
 release/
+!/scripts/release/
 vendor/

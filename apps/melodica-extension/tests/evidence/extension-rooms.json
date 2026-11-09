@@ -1,0 +1,19 @@
+{
+  "date": "2026-11-09",
+  "browser": "Chromium native extension",
+  "test": "rooms: an extension-owned room session keeps live audio through page unmount and honors room scrobble opt-out",
+  "result": "passed",
+  "roomId": "nativeRoomProbe12345",
+  "transport": "relay",
+  "roomReceipt": {
+    "viewer": "listener-ci",
+    "play_id": "room-play-1",
+    "listened_ms": 1629
+  },
+  "optOutBlockedSecondReceipt": true,
+  "pageUnmountPreservedRoom": true,
+  "offscreenTarget": "chrome-extension://jblmliddjdebnnjighdgomgoppeiehhn/offscreen.html",
+  "noPandoraRPC": true,
+  "noPandoraMedia": true,
+  "playwright": "focused local tuner and synthetic OAuth/room API, isolated ports 20443/20080"
+}

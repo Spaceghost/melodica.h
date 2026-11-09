@@ -1,15 +1,24 @@
 # Handoff (melodica-extension)
 
-Updated 2026-11-09. GitHub 0.8.8 published; full self-hosted release cycle pending.
+<!-- extension-publication:start -->
+## Extension catalog publication
+
+- v0.8.8 is published at https://spacegho.st/extensions/#melodica-extension and https://spacegho.st/melodica/extension/.
+- Mozilla unlisted signing is preserved. Both browser update feeds and eight public installable downloads passed checksum verification.
+- Both catalogs passed browser checks at 390 and 1280 pixels; the Melodica catalog contains only its browser extension and keeps the player bar pinned.
+- The Worker release manifests were updated in R2; all other Melodica projects were preserved. No player or Worker code was deployed by this publication.
+- Evidence: https://github.com/Spaceghost/melodica-extension/actions/runs/42613509249.
+<!-- extension-publication:end -->
+
+Updated 2026-11-09. Self-hosted 0.8.8 published and verified; automatic CI rollout in validation.
 
 ## Full release cycle checkpoint
 
-- Jack confirmed preserving Mozilla unlisted signing plus self-hosted distribution. `/extensions/` and `/melodica/extension/` updates are required parts of every release; GitHub alone is not completion. The retired melodica-site repo must never be deployed.
-- New `node scripts/check-release-sites.mjs 0.8.8` verifies both public catalog manifests, eight actual public package downloads against GitHub SHA256SUMS, both browser feed versions/URLs, the Firefox hash/signature marker and Melodica-only extension cards. All eight regression checks pass. Running it on production correctly fails: `/extensions/` still advertises v0.8.7.
-- Offline paired syncs prepared v0.8.8 without uploads: 65 browser-store assets, 66 Melodica-store assets, both feed versions 0.8.8, exact signed-XPI feed hash; all 11 other Melodica projects are unchanged. Evidence: `~/workspaces/crew-e2e-fedora/extension-cycle-dry-validation.json`.
-- Fedora Cloudflare login is still absent. After `npx -y wrangler@4.135.0 login`, run the normal extension sync from extensions-site, then melodica-web/site, with no SYNC_LIVE_MANIFEST override; run the new public checker, inspect both pages at mobile/desktop widths and refresh the public snapshot. `docs/STORES.md` now records this complete required sequence.
+- 0.8.8 is now live in both R2 manifests, both browser update feeds, `/extensions/#melodica-extension` and `/melodica/extension/`. Eight public package downloads match GitHub SHA256SUMS; browser checks passed at 390 and 1280 pixels with the player pinned and no page errors or horizontal overflow. All 11 other Melodica projects were preserved. Evidence: `~/workspaces/crew-e2e-fedora/extension-sites-0.8.8-live.json` and `extension-pages-0.8.8/report.json`.
+- Mozilla unlisted signing is preserved. The signed XPI was installed permanently in normal Firefox 154.0 with signatures required and stayed active after a browser restart; its report is a published 0.8.8 asset. No public Mozilla listing was created.
+- `publish.yml` and `scripts/release/` implement automatic post-CI publication, late iOS resync, scheduled catch-up, batched uploads, cached downloads, public verification, handoff updates and the public app snapshot. See docs/RELEASING.md. Local regression tests: 29 passed. A real 0.8.8 dry run validated all 133 mirrored files and needed zero asset uploads. Live CI repair validation is next.
 
-## Fedora extension integration candidate
+## Earlier Fedora integration checkpoints
 
 - Branch `wip/fedora-extension-integration` in `~/Projects/melodica-extension-integration` combines transfer/copy commits 28109d6 and 3d9a428 with current master e0851c4. Merged to master and tagged v0.8.8 after CI 42591268373 passed build, Chromium, Brave and Firefox. Release run 42593828496 passed build and Chromium/Brave/Firefox, then failed publication because the self-hosted release job had no Node. The exact tagged artifacts and all three proof reports were downloaded; the unchanged tag release-proof script passed locally and every checksum verified. GitHub v0.8.8 was then published with 61 assets from those artifacts. iOS run 42593828451 built the IPA and installed/launched it in the simulator, but Safari never detected the running extension; popup, bridge and playback were not verified. Its attachment uploaded the IPA/proof/checksums, then failed to update notes because Node was absent. The notes were corrected manually with those limits. All 66 published assets were downloaded again and every listed checksum verified; the 60 original package/proof assets match CI byte for byte. Feed sync is pending. No Worker/R2 deployment from Fedora. User explicitly permits Fedora builds/tests, overriding older workstation restrictions below.
 - Private engine transfer and bounded cached-audio copying are unchanged from the tested handoff branch. CI now runs the seven transfer/copy unit cases, installs Chromium system libraries on self-hosted runners, and requires successful UI freshness verification. Generated release access text now reflects Pandora sign-in and optional spacegho.st sign-in.
@@ -55,6 +64,41 @@ The CI smokes (fake spacegho.st) cover detection, remote control, resume after a
 When finished, tell the scrobble agent so it erases u_e2eext00001. Do not erase it yourself.
 
 ## Queue
+
+- Native Chrome extension re-enable into an already-open web player is fixed on
+  `wip/fedora-extension-enable`: the background scans eligible existing tabs on
+  startup and reinjects the bridge on activation/completed navigation. The
+  manifest adds only `scripting`; existing static match routes bound injection
+  to `/melodica/` and `/listen/` on the approved origin. Playback transfer
+  carries validated genome traits and a same-SID/token listen marker, including
+  numeric listened seconds and sent state. The extension resumes from its exact
+  cached blob and keeps one engine. Focused native Chromium proof on 2026-11-09
+  passed against the integration web dist: exact title and monotonic position,
+  one offscreen audio target, page audio paused/empty, zero Pandora JSON/media
+  refetches, and no page relay or auth-policy requests. Evidence is tracked in
+  `tests/evidence/extension-reenable.json`; the Playwright log artifact remains
+  ignored in `tests/artifacts/extension-reenable.json`.
+  Transfer/copy unit tests pass 8/8. Firefox re-enable was not tested.
+
+- Native Rooms support is implemented on `wip/fedora-extension-enable` as an
+  extension full-tab view backed by the offscreen player engine and the shared
+  Rooms session/transport. Eligible Melodica tabs can hand off a room ID and
+  paused state; room pause/resume/skip/volume and commands route to that same
+  offscreen session. Room state exposes only the bounded public room/audio
+  snapshot. The bridge keeps OAuth/account checks and active-room ID gates, and
+  joining or listening does not fetch Pandora playlists, songs, or media. DJ
+  track metadata uses `additional_info.duration_ms` with the room server's
+  one-second-to-one-hour limit. Focused native Chromium proof on 2026-11-09
+  passed with a synthetic OAuth/Rooms API and a second browser DJ sending a
+  real oscillator through MediaRecorder and the production relay/MSE transport:
+  the offscreen listener submitted one 1,629 ms receipt; the room opt-out blocked
+  the next receipt; closing the Rooms page left the offscreen room listening;
+  the tuner saw zero Pandora JSON/media calls. Evidence is tracked in
+  `tests/evidence/extension-rooms.json`. P2P fell back to relay in this proof;
+  the extension pins the exact shared Scrobbles UI/media bundles from commit
+  `ada9607f945f5ee789adae87a141b1ada6bc8f1a` and asset hash
+  `a1a0f286c9b5e27c`. The SFU path was not exercised in this browser proof. No
+  release or deployment was performed.
 
 - Fedora candidate `wip/fedora-engine-handoff` adds private `playback-export` /
   `playback-import` and bounded `playback-copy` commands for the web client's engine handoff. It is

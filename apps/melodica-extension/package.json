@@ -12,6 +12,7 @@
     "test:scrobble": "node tests/scrobble.test.mjs",
     "test:update": "node tests/update.test.mjs",
     "test:release-sites": "node --test tests/release-sites.test.mjs",
+    "test:ui-pin": "node --test tests/scrobble-ui-pin.test.mjs",
     "test:transfer": "node --test tests/playback-transfer.test.mjs tests/playback-copy.test.mjs",
     "test:smoke": "playwright test",
     "lint:firefox": "web-ext lint --source-dir dist/firefox --self-hosted",

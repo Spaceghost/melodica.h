@@ -1,0 +1,21 @@
+{
+  "result": "passed",
+  "browser": "Mozilla Firefox 154.0",
+  "geckodriver": "0.37.1",
+  "extension": "0.8.10",
+  "test": "tests/smoke-firefox.mjs",
+  "fixture": "local fake OAuth and room API; local melodica-tuner; MELODICA_SKIP_REAL=1",
+  "room": {
+    "id": "firefoxRoomProbe12345",
+    "authenticatedJoinAction": "join",
+    "authenticatedJoinMethod": "POST",
+    "authenticatedJoinPath": "/scrobble/api/rooms/firefoxRoomProbe12345",
+    "numericJoinedAt": 1730000000,
+    "leave": "RoomEngine leave completed and background room state cleared"
+  },
+  "bridge": {
+    "readyRooms": 1,
+    "coldRounds": ["addon-reload", "background-stopped"]
+  },
+  "limits": ["The fixture room had no active play, so RTC room audio was not exercised.", "The real Pandora probe was skipped."]
+}

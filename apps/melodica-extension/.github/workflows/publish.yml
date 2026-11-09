@@ -1,0 +1,96 @@
+name: Publish self-hosted release
+on:
+  workflow_run:
+    workflows: [ci, ios]
+    types: [completed]
+  release:
+    types: [published, edited]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable release (empty means latest)
+        required: false
+        default: ''
+      force_files:
+        description: Re-upload the verified release files
+        type: boolean
+        default: false
+  schedule:
+    - cron: '17 * * * *'
+  push:
+    paths:
+      - scripts/release/**
+      - tests/release-publisher.test.mjs
+      - .github/workflows/publish.yml
+  pull_request:
+    paths:
+      - scripts/release/**
+      - tests/release-publisher.test.mjs
+      - .github/workflows/publish.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: melodica-self-hosted-publication
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    outputs:
+      publish: ${{ steps.event.outputs.publish }}
+      tag: ${{ steps.event.outputs.tag }}
+      force: ${{ steps.event.outputs.force }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && github.sha || github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --test tests/release-publisher.test.mjs tests/release-sites.test.mjs
+      - id: event
+        run: node scripts/release/event.mjs
+
+  publish:
+    needs: checks
+    if: needs.checks.outputs.publish == 'true' && contains(fromJSON('["workflow_run","workflow_dispatch","schedule","release"]'), github.event_name)
+    runs-on: [self-hosted, Linux, X64, fedora-release]
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --prefix scripts/release --no-audit --no-fund
+      - run: node scripts/release/node_modules/playwright/cli.js install chromium
+      - name: Publish catalogs, feeds, evidence and snapshot
+        env:
+          RELEASE_TAG: ${{ needs.checks.outputs.tag }}
+          FORCE_FILES: ${{ needs.checks.outputs.force }}
+        run: |
+          args=()
+          [[ -n "$RELEASE_TAG" ]] && args+=("$RELEASE_TAG")
+          [[ "$FORCE_FILES" == true ]] && args+=(--force-files)
+          node scripts/release/publish.mjs "${args[@]}"
+      - name: Publication summary
+        if: always()
+        run: |
+          node --input-type=module - <<'JS'
+          import {readFileSync,appendFileSync} from 'node:fs';
+          try {
+            const r=JSON.parse(readFileSync('tests/artifacts/publication/report.json'));
+            appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Release ${r.tag}: **${r.status}**\n\n[Browser catalog](https://spacegho.st/extensions/#melodica-extension) · [Melodica install page](https://spacegho.st/melodica/extension/)\n\nPublication: ${r.publicationSeconds ?? 'unchanged'} seconds.\n`);
+          } catch { appendFileSync(process.env.GITHUB_STEP_SUMMARY,'The publisher stopped before producing a completion report.\n'); }
+          JS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-publication-${{ github.run_id }}
+          path: tests/artifacts/publication/
+          if-no-files-found: warn

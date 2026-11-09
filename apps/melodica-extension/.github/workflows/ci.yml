@@ -3,6 +3,11 @@ on:
   push:
     branches: ['**']
     tags: ['v*']
+    paths-ignore:
+      - '**/*.md'
+      - scripts/release/**
+      - tests/release-publisher.test.mjs
+      - .github/workflows/publish.yml
   workflow_dispatch:
 
 permissions:
@@ -63,6 +68,10 @@ jobs:
         run: npm run test:release-sites
       - name: Playback transfer and byte-copy validation
         run: npm run test:transfer
+      - name: Native Rooms engine and public-state contracts
+        run: node --test tests/room-engine.test.mjs tests/room-state.test.mjs
+      - name: Shared UI pin updater validation
+        run: npm run test:ui-pin
       - name: listen:// parser test (melodica-scrobble's reference test, unchanged)
         run: node --test tests/listen-uri.test.mjs
       - name: Shared Scrobbles UI pin at most one release behind live (melodica-scrobble check-ui-pin)

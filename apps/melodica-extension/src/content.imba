@@ -8,7 +8,7 @@
 # Protocol (window.postMessage, same window, same origin, data.melodica === 1):
 #   ext  -> {melodica:1, type:'present', name, version}   (once, at injection)
 #   page -> {melodica:1, type:'hello'}
-#   ext  -> {melodica:1, type:'ready', name:'melodica-extension', version, player:true}
+#   ext  -> {melodica:1, type:'ready', name:'melodica-extension', version, player:true, rooms:1 on supported engines}
 #   page -> {melodica:1, type:'request', id, search:'?method=…', body:Uint8Array}
 #   ext  -> {melodica:1, type:'response', id, ok, status, body:Uint8Array, error}
 #   page -> {melodica:1, type:'subscribe'} | {type:'unsubscribe'}
@@ -23,6 +23,7 @@ import { browser, toBase64, fromBase64 } from './shared.imba'
 
 const NAME = 'melodica-extension'
 const VERSION = browser.runtime.getManifest().version
+const NATIVE_ROOMS = (browser.runtime.getManifest().background or {}).persistent !== false
 const METHOD = /^[a-z]+\.[A-Za-z]+$/
 # melodica-web docs/BRIDGE.md section 1: messages go to and come from this exact
 # origin only, under /melodica/.
@@ -37,6 +38,7 @@ if location.pathname.startsWith('/listen/')
 let subscribed = no
 let invalidated = no
 let runtimeWatch = null
+let activeRoomId = null
 
 # An unanswered request can be a sleeping background; it says nothing about
 # whether audio still plays. Only the browser invalidating this extension
@@ -59,7 +61,9 @@ runtimeWatch = setInterval((do runtimeGone()), 500)
 
 def announce
 	return if runtimeGone()
-	window.postMessage({melodica: 1, type: 'ready', name: NAME, version: VERSION, player: yes, session: 1}, ORIGIN)
+	const ready = {melodica: 1, type: 'ready', name: NAME, version: VERSION, player: yes, session: 1}
+	ready.rooms = 1 if NATIVE_ROOMS
+	window.postMessage(ready, ORIGIN)
 
 # The page never sees audio URLs (the track's or the play log's).
 def strip song
@@ -112,6 +116,23 @@ def handleCommand data
 			r = await browser.runtime.sendMessage({type: action, playback: data.playback, trackToken: data.trackToken, offset: data.offset, limit: data.limit})
 			return reply({ok: no, error: r and r.error or 'the extension did not answer'}) unless r and r.ok
 			return reply({ok: yes, playback: r.playback, copy: r.copy, state: publicState(r.state)})
+		elif ['room-get', 'room-join', 'room-leave'].includes(action)
+			r = await browser.runtime.sendMessage({type: action, roomId: data.roomId or data.id or activeRoomId, paused: data.paused === yes})
+			return reply({ok: no, error: r and r.error or 'the extension did not answer'}) unless r and r.ok
+			return reply({ok: yes, room: r.room, state: publicState(r.state)})
+		elif action === 'room-command'
+			r = await browser.runtime.sendMessage({type: action, roomId: data.roomId or data.id or activeRoomId, command: data.command or data.body})
+			return reply({ok: no, error: r and r.error or 'the extension did not answer'}) unless r and r.ok
+			return reply({ok: yes, room: r.room, state: publicState(r.state)})
+		elif action === 'room-audio-command'
+			r = await browser.runtime.sendMessage({type: action, roomId: data.roomId or data.id or activeRoomId, action: data.roomAction, value: data.value})
+			return reply({ok: no, error: r and r.error or 'the extension did not answer'}) unless r and r.ok
+			return reply({ok: yes, room: r.room, state: publicState(r.state)})
+		elif ['room-pause', 'room-resume', 'room-skip', 'room-volume'].includes(action)
+			const roomAction = {'room-pause': 'pause', 'room-resume': 'resume', 'room-skip': 'skip', 'room-volume': 'volume'}[action]
+			r = await browser.runtime.sendMessage({type: 'room-audio-command', roomId: data.id or data.roomId or activeRoomId, action: roomAction, value: data.value})
+			return reply({ok: no, error: r and r.error or 'the extension did not answer'}) unless r and r.ok
+			return reply({ok: yes, room: r.room, state: publicState(r.state)})
 		elif action === 'openLogin' or action === 'open-login'
 			const o = await browser.runtime.sendMessage({type: 'open-login'})
 			return reply({ok: no, error: o and o.error or 'the extension did not answer'}) unless o and o.ok
@@ -153,8 +174,13 @@ def handleCommand data
 # message port closed"), which used to drop this tab from the subscribers until its
 # next subscribe, up to a second later.
 browser.runtime.onMessage.addListener do(msg, sender, sendResponse)
+	if msg and msg.type === 'bridge-ping'
+		sendResponse({ok: yes})
+		return no
 	return no unless msg and (msg.type === 'player-state' or msg.type === 'session-state' or msg.type === 'session-account-signout')
-	pushState(msg.state) if subscribed and msg.type === 'player-state'
+	if msg.type === 'player-state'
+		activeRoomId = msg.state and msg.state.room and msg.state.room.id or null
+		pushState(msg.state) if subscribed
 	postSession(msg.view) if sessionAsked and msg.type === 'session-state' and msg.view
 	window.postMessage({melodica: 1, type: 'account-signout'}, ORIGIN) if sessionAsked and msg.type === 'session-account-signout'
 	sendResponse({ok: yes, subscribed})

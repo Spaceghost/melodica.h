@@ -57,7 +57,7 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
 const EXT = resolve(process.env.MELODICA_EXT_DIST || resolve(root, 'dist/chrome'));
-const WEB_DIST = resolve(here, 'fixtures/melodica-web-dist');
+const WEB_DIST = resolve(process.env.MELODICA_WEB_DIST || resolve(here, 'fixtures/melodica-web-dist'));
 const ARTIFACTS = resolve(here, 'artifacts');
 const TUNER_DIR = process.env.MELODICA_TUNER_DIR || resolve(root, '..', 'melodica-tuner');
 const APP_PATH = '/melodica/app/';
@@ -94,6 +94,55 @@ const haveTuner = !!tuner.https || existsSync(join(TUNER_DIR, 'tuner', '__main__
 
 const report = { steps: [], summary: '', ok: false, access: null, account: null, spots: null, update: null, bridge: null, coldStart: null, resume: null, audio: null, browser: '', engine: '', extension: {}, blocked: [], failedRequests: [], shields: null };
 let acct = null;
+let roomProbe = null;
+const ROOM_MEDIA_BUNDLE = resolve(root, 'vendor/scrobble-ui/room-media.js');
+async function handleRoomProbe(req, res, url, raw) {
+  const match = /^\/scrobble\/api\/rooms\/([A-Za-z0-9_-]{16,64})(?:\/(signal|audio|events|ice))?$/.exec(url.pathname);
+  const json = (status, value) => { const text = JSON.stringify(value); res.writeHead(status, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(text), 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); res.end(text); };
+  if (!match || !roomProbe || match[1] !== roomProbe.id) return false;
+  const token = /^Bearer (.+)$/.exec(req.headers.authorization || '')?.[1];
+  if (!token) { json(401, { error: 'invalid_token' }); return true; }
+  const viewer = token === 'room-dj' ? 'dj-owner' : 'listener-ci';
+  const snapshot = () => ({ ...structuredClone(roomProbe.state), you: viewer });
+  const suffix = match[2] || '';
+  if (req.method === 'GET' && suffix === 'ice') { json(200, { iceServers: [], sfuConfigured: false }); return true; }
+  if (req.method === 'GET' && suffix === 'events') {
+    const since = Number(url.searchParams.get('since') || -1);
+    json(200, { cursor: roomProbe.cursor, state: snapshot(), signals: roomProbe.signals.filter((s) => s.to === viewer && s.cursor > since) });
+    return true;
+  }
+  if (suffix === 'audio' && req.method === 'GET') {
+    const playId = url.searchParams.get('play_id') || '';
+    const after = Number(url.searchParams.get('after') || -1);
+    const chunks = roomProbe.state.play?.id === playId ? roomProbe.chunks.filter((chunk) => chunk.play_id === playId && chunk.seq > after).slice(0, 12) : [];
+    json(200, { play_id: playId, chunks, next: roomProbe.chunks.at(-1)?.seq ?? -1, state: snapshot() });
+    return true;
+  }
+  if (suffix === 'audio' && req.method === 'POST') {
+    let body = null; try { body = JSON.parse(raw || 'null'); } catch {}
+    if (!body || body.type !== 'media' || body.play_id !== roomProbe.state.play?.id || typeof body.data !== 'string') { json(400, { error: 'invalid_media' }); return true; }
+    const chunk = { ...body, seq: roomProbe.nextChunk++ };
+    delete chunk.request_id;
+    roomProbe.chunks.push(chunk);
+    json(200, { ok: true, seq: chunk.seq });
+    return true;
+  }
+  if (req.method === 'POST' && suffix === 'signal') {
+    let body = null; try { body = JSON.parse(raw || 'null'); } catch {}
+    if (!body || typeof body.to !== 'string' || !body.data) { json(400, { error: 'invalid_signal' }); return true; }
+    roomProbe.signals.push({ from: viewer, to: body.to, play_id: body.play_id, data: body.data, cursor: ++roomProbe.cursor });
+    json(200, { ok: true }); return true;
+  }
+  if (req.method === 'POST' && !suffix) {
+    let body = null; try { body = JSON.parse(raw || 'null'); } catch {}
+    if (!body || typeof body.action !== 'string') { json(400, { error: 'invalid_command' }); return true; }
+    roomProbe.commands.push({ viewer, action: body.action, play_id: body.play_id, listened_ms: body.listened_ms });
+    if (body.action === 'scrobble') { roomProbe.state.scrobble = body.enabled; roomProbe.state.seq++; }
+    if (body.action === 'heard') { roomProbe.heard.push({ viewer, play_id: body.play_id, listened_ms: body.listened_ms }); roomProbe.state.seq++; }
+    json(200, snapshot()); return true;
+  }
+  json(404, { error: 'not_found' }); return true;
+}
 // The fake store feeds (extensions-site's shapes) naming a version every build is older than.
 const FAKE_VERSION = '99.0.0';
 const FEEDS = {
@@ -133,7 +182,7 @@ async function startTuner() {
   const ready = join(tuner.dir, 'ready');
   const args = ['-m', 'tuner', '--bind', '127.0.0.1', '--https-port', process.env.MELODICA_TEST_HTTPS_PORT || '8443', '--http-port', process.env.MELODICA_TEST_HTTP_PORT || '8080',
     '--tls-auto', join(tuner.dir, 'certs'), '--user', tuner.user, '--password', tuner.password,
-    '--ready-file', ready, '--log-level', 'info', '--ads', LIVE ? '0' : '1', '--audio-https',
+    '--ready-file', ready, '--log-level', 'info', '--ads', process.env.MELODICA_TEST_ADS || (LIVE ? '0' : '1'), '--audio-https',
     ...(process.env.TUNER_FIXTURE ? ['--fixture', process.env.TUNER_FIXTURE] : []),
     ...(process.env.TUNER_AUDIO_DIR ? ['--audio-dir', process.env.TUNER_AUDIO_DIR] : [])];
   const out = [];
@@ -163,7 +212,7 @@ const MIME = {
 };
 // The site worker's CSP for the page (its relay origin is irrelevant here).
 const CSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; " +
-  "img-src 'self' data: https: http:; media-src https: http:; connect-src 'self'; font-src 'self'; " +
+  "img-src 'self' data: https: http:; media-src https: http: blob:; connect-src 'self'; font-src 'self'; " +
   "base-uri 'none'; form-action 'none'; frame-ancestors 'none'; worker-src 'self'";
 
 let web = { server: null, port: 0, dir: null };
@@ -190,6 +239,9 @@ test.beforeAll(async () => {
       try { await liveForward(req, res, url, await readBody(req)); } catch (e) { res.writeHead(502); res.end(String(e && e.message)); }
       return;
     }
+    if (url.pathname.startsWith('/scrobble/api/rooms/')) {
+      if (await handleRoomProbe(req, res, url, await readBody(req))) return;
+    }
     if (url.pathname.startsWith('/oauth') || url.pathname.startsWith('/scrobble/') || url.pathname.startsWith('/__fake-github')) {
       try { await acct.handle(req, res, await readBody(req)); } catch (e) { res.writeHead(500); res.end(String(e)); }
       return;
@@ -203,6 +255,19 @@ test.beforeAll(async () => {
     }
     if (!url.pathname.startsWith(APP_PATH)) { res.writeHead(404); res.end('not found'); return; }
     if (url.pathname === APP_PATH + 'handoff-test.html') { res.writeHead(200, { 'content-type': 'text/html' }); res.end('<!doctype html><title>Engine handoff bridge</title><p>Bridge test</p>'); return; }
+    if (url.pathname === APP_PATH + 'room-dj.html') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': CSP });
+      res.end('<!doctype html><meta charset="utf-8"><title>Room DJ fixture</title><button id="start" type="button">Start fixture DJ</button><script type="module" src="room-dj.js"></script>');
+      return;
+    }
+    if (url.pathname === APP_PATH + 'room-dj.js') {
+      const body = await readFile(resolve(here, 'fixtures/room-extension-dj.js'));
+      res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'content-length': body.length }); res.end(body); return;
+    }
+    if (url.pathname === APP_PATH + 'room-media.js') {
+      const body = await readFile(ROOM_MEDIA_BUNDLE);
+      res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'content-length': body.length }); res.end(body); return;
+    }
     let rel = url.pathname.slice(APP_PATH.length);
     if (rel === '' || rel.endsWith('/')) rel += 'index.html';
     if (rel.split('/').some((p) => !p || p === '.' || p === '..')) { res.writeHead(404); res.end(); return; }
@@ -217,6 +282,7 @@ test.beforeAll(async () => {
       res.writeHead(404); res.end('not found');
     }
   });
+  web.server.on('upgrade', (_req, socket) => { socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n'); });
   await new Promise((ok) => web.server.listen(0, '127.0.0.1', ok));
   web.port = web.server.address().port;
 
@@ -357,6 +423,32 @@ function bridgeAsk(page, message) {
     addEventListener('message', listener);
     window.postMessage({ melodica: 1, ...m, id }, location.origin);
   }), message);
+}
+
+async function evaluateTarget(cdp, targetId, expression) {
+  const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: false });
+  const id = Math.floor(Math.random() * 1_000_000_000);
+  let listener;
+  const answer = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('CDP target evaluation timed out')), 5000);
+    listener = (event) => {
+      if (event.sessionId !== sessionId) return;
+      let message;
+      try { message = JSON.parse(event.message); } catch { return; }
+      if (message.id !== id) return;
+      clearTimeout(timer);
+      resolve(message.result?.result?.value);
+    };
+    cdp.on('Target.receivedMessageFromTarget', listener);
+  });
+  try {
+    await cdp.send('Target.sendMessageToTarget', { sessionId,
+      message: JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, returnByValue: true } }) });
+    return await answer;
+  } finally {
+    if (listener) cdp.off('Target.receivedMessageFromTarget', listener);
+    await cdp.send('Target.detachFromTarget', { sessionId }).catch(() => {});
+  }
 }
 
 test('signs in through the popup, plays a station with no tab, bridges the web app', async ({}, info) => {
@@ -1104,6 +1196,7 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     await page.evaluate(() => { window.__sessions = []; window.__acctOut = 0; addEventListener('message', (ev) => { if (ev.source === window && ev.data && ev.data.melodica === 1 && ev.data.type === 'session' && !ev.data.id) window.__sessions.push(ev.data); if (ev.source === window && ev.data && ev.data.melodica === 1 && ev.data.type === 'account-signout' && !ev.data.id) window.__acctOut += 1; }); });
     const sready = await page.evaluate(() => new Promise((ok) => { const on = (ev) => { if (ev.data && ev.data.type === 'ready') { removeEventListener('message', on); ok(ev.data); } }; addEventListener('message', on); window.postMessage({ melodica: 1, type: 'hello' }, 'https://spacegho.st'); }));
     expect(sready.session, 'ready says session: 1').toBe(1);
+    expect(sready.rooms, 'ready advertises native room support').toBe(1);
     const got = await bridgeAsk({ type: 'session-get' });
     expect(got.session && got.session.sid && got.session.sid.length >= 16, 'a session with a sid').toBe(true);
     expect(got.session.email).toBe(tuner.user);
@@ -1650,6 +1743,310 @@ test('disable: invalidated runtime signals gone only after the extension audio t
   await writeFile(resolve(ARTIFACTS, 'runtime-invalidated.json'), JSON.stringify({ ok: true, sleepingWorkerDoesNotSignalGone: true, browserDisable: true, goneSignal: 'runtime-invalidated', offscreenTargetClosed: true, backgroundWorkerClosed: true }, null, 2) + '\n');
   await manager.locator('extensions-detail-view #enableToggle').click();
   await cdp.detach(); await manager.close(); await page.close(); await ctl.close();
+});
+
+test('disable and re-enable: an open web player returns to the extension without refetching playback', async () => {
+  test.skip(LIVE || !haveTuner, 'requires the local tuner');
+  test.skip(!existsSync(join(WEB_DIST, 'tabs.js')), 'set MELODICA_WEB_DIST to the melodica-web build with tab playback');
+  test.setTimeout(150_000);
+  const id = await extensionId();
+  const ctl = await context.newPage();
+  await ctl.goto(`chrome-extension://${id}/options.html`);
+  await useTuner(ctl);
+  const send = (message) => ctl.evaluate((m) => chrome.runtime.sendMessage(m), message);
+  acct.allow(tuner.user);
+  await send({ type: 'logout' });
+  expect((await send({ type: 'login', email: tuner.user, password: tuner.password, remember: true })).ok).toBe(true);
+  const stations = (await send({ type: 'stations' })).stations;
+  const station = stations.find((s) => !s.isQuickMix) || stations[0];
+  await send({ type: 'player', action: 'play', station });
+  await expect.poll(async () => (await send({ type: 'player-get' })).state.status).toBe('playing');
+  await expect.poll(async () => (await send({ type: 'player-get' })).state.position).toBeGreaterThan(0.5);
+  await send({ type: 'player', action: 'pause' });
+  await expect.poll(async () => (await send({ type: 'player-get' })).state.status).toBe('paused');
+  const held = (await send({ type: 'player-get' })).state;
+  const token = held.track.trackToken;
+  const songTitle = held.track.title;
+  let initialPrivate;
+  await expect.poll(async () => {
+    initialPrivate = await send({ type: 'playback-export' });
+    return !!initialPrivate.playback?.song;
+  }, { timeout: 5_000 }).toBe(true);
+  console.log('initial private transfer', JSON.stringify({
+    keys: Object.keys(initialPrivate || {}), ok: initialPrivate?.ok, error: initialPrivate?.error,
+    sid: initialPrivate?.playback?.sid, track: initialPrivate?.playback?.song?.trackToken,
+    genome: initialPrivate?.playback?.song?.genome,
+    tracker: initialPrivate?.playback?.song?.melodicaPlay,
+    log: await ctl.evaluate(async () => (await chrome.storage.session.get('log')).log || []),
+  }));
+  expect(Array.isArray(initialPrivate.playback.song.genome), 'trait metadata was loaded before handoff').toBe(true);
+  expect(initialPrivate.playback.song.melodicaPlay, 'listen tracker exists before handoff').toBeTruthy();
+  const hashInExtension = await ctl.evaluate(async (token) => {
+    const cache = await caches.open('melodica-audio');
+    const response = await cache.match(`https://melodica.invalid/audio/${encodeURIComponent(token)}`);
+    return [...new Uint8Array(await crypto.subtle.digest('SHA-256', await response.arrayBuffer()))].map((b) => b.toString(16).padStart(2, '0')).join('');
+  }, token);
+  const page = await context.newPage();
+  const requests = [];
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(String(error)));
+  page.on('console', (message) => { if (message.type() === 'error') pageErrors.push(message.text()); });
+  page.on('request', (request) => requests.push(request.url()));
+  await page.goto(`https://${WEB_HOST}${APP_PATH}`);
+  await expect(page.locator('#app')).toHaveAttribute('data-mode', 'remote');
+  await expect(page.locator('#np-title')).toHaveText(songTitle);
+  await expect.poll(() => page.evaluate(async (token) => {
+    const cache = await caches.open('melodica-audio-v1');
+    const response = await cache.match(`${location.origin}/melodica/__audio/${encodeURIComponent(token)}`);
+    return response ? [...new Uint8Array(await crypto.subtle.digest('SHA-256', await response.arrayBuffer()))].map((b) => b.toString(16).padStart(2, '0')).join('') : '';
+  }, token), { timeout: 20_000 }).toBe(hashInExtension);
+  await expect.poll(() => page.evaluate(async () => {
+    const { Vault } = await import('./vault.js');
+    return (await new Vault().read('last'))?.song?.trackToken || '';
+  })).toBe(token);
+  await send({ type: 'test-expire-last', dropCopy: false });
+  await expect.poll(() => page.evaluate(async () => {
+    const { Vault } = await import('./vault.js');
+    const p = await new Vault().read('tab-engine-v1');
+    return !!p?.song && Number(p.song.fetchedAt) < Date.now() - 60 * 60 * 1000;
+  })).toBe(true);
+
+  const manager = await context.newPage();
+  await manager.goto(`chrome://extensions/?id=${id}`);
+  const cdp = await context.newCDPSession(manager);
+  const offscreen = `chrome-extension://${id}/offscreen.html`;
+  expect((await cdp.send('Target.getTargets')).targetInfos.some((t) => t.url === offscreen)).toBe(true);
+  await manager.locator('extensions-detail-view #enableToggle').click();
+  await expect.poll(() => page.locator('#app').getAttribute('data-mode')).toBe('local');
+  await expect.poll(async () => (await cdp.send('Target.getTargets')).targetInfos.some((t) => t.url === offscreen)).toBe(false);
+  await expect(page.locator('#np-title')).toHaveText(songTitle);
+  await expect(page.locator('#bar-resume')).toBeVisible({ timeout: 10_000 });
+  await page.click('#bar-resume');
+  try {
+    await expect.poll(() => page.locator('#audio').evaluate((audio) => !audio.paused && audio.currentSrc.startsWith('blob:'))).toBe(true);
+  } catch (error) {
+    console.log('web resume failed', JSON.stringify({ pageErrors,
+      state: await page.evaluate(async () => ({ mode: document.querySelector('#app')?.dataset.mode,
+        message: document.querySelector('#player-message')?.textContent, status: document.querySelector('#status')?.textContent,
+        button: document.querySelector('#bar-resume')?.outerHTML,
+        audio: { paused: document.querySelector('#audio')?.paused, src: document.querySelector('#audio')?.getAttribute('src'), currentSrc: document.querySelector('#audio')?.currentSrc,
+          error: document.querySelector('#audio')?.error && { code: document.querySelector('#audio').error.code, message: document.querySelector('#audio').error.message } },
+        copyCache: await (async () => { const c = await caches.open('melodica-audio-v1'); const r = await c.match(`${location.origin}/melodica/__audio/${encodeURIComponent(document.querySelector('#np-title')?.dataset?.token || '')}`); return !!r; })() })) }));
+    throw error;
+  }
+  await expect.poll(() => page.locator('#audio').evaluate((audio) => audio.currentTime)).toBeGreaterThanOrEqual(held.position - 0.5);
+  await page.waitForTimeout(500);
+  const localBeforeEnable = await page.evaluate(async () => {
+    const { Vault } = await import('./vault.js');
+    const vault = new Vault();
+    return { status: document.querySelector('#status')?.textContent,
+      resume: document.querySelector('#bar-resume')?.outerHTML,
+      audio: { paused: document.querySelector('#audio')?.paused, src: document.querySelector('#audio')?.getAttribute('src'), currentSrc: document.querySelector('#audio')?.currentSrc, currentTime: document.querySelector('#audio')?.currentTime },
+      tab: await vault.read('tab-engine-v1'), last: await vault.read('last') };
+  });
+  console.log('local playback before re-enable', JSON.stringify({ ...localBeforeEnable,
+    tab: localBeforeEnable.tab && { song: localBeforeEnable.tab.song?.title, position: localBeforeEnable.tab.position, playing: localBeforeEnable.tab.playing, fetchedAt: localBeforeEnable.tab.song?.fetchedAt },
+    last: localBeforeEnable.last && { song: localBeforeEnable.last.song?.title, position: localBeforeEnable.last.position } }));
+  expect(localBeforeEnable.tab?.song?.title).toBe(songTitle);
+  expect(localBeforeEnable.tab.song.genome, 'the validated trait metadata crosses the web engine').toBeDefined();
+  expect(localBeforeEnable.tab.song.melodicaPlay, 'the private listen tracker crosses the web engine').toMatchObject({
+    sid: initialPrivate.playback.sid, trackToken: token,
+    startedAt: initialPrivate.playback.song.melodicaPlay.startedAt,
+    sent: initialPrivate.playback.song.melodicaPlay.sent,
+  });
+  expect(Number(localBeforeEnable.tab?.position)).toBeGreaterThanOrEqual(held.position - 0.5);
+  expect(localBeforeEnable.audio.paused).toBe(false);
+  expect(localBeforeEnable.audio.currentSrc).toMatch(/^blob:/);
+
+  const managerLogs = await getJson(`${tuner.http}/__tuner/log`);
+  const apiBeforeEnable = managerLogs.filter((row) => row.protocol === 'json').length;
+  const mediaBeforeEnable = managerLogs.filter((row) => row.protocol === 'audio').length;
+  const localTime = Number(localBeforeEnable.audio.currentTime || localBeforeEnable.tab?.position || localBeforeEnable.last?.position || held.position);
+  await manager.locator('extensions-detail-view #enableToggle').click();
+  await page.bringToFront();
+  // Chrome may recreate the extension service worker after the manager toggles it.
+  await expect.poll(() => page.locator('#app').getAttribute('data-mode'), { timeout: 15_000 }).toBe('remote');
+  await expect(page.locator('#np-title')).toHaveText(songTitle);
+  const reenabledCtl = await context.newPage();
+  await reenabledCtl.goto(`chrome-extension://${id}/options.html`);
+  const sendAgain = (message) => reenabledCtl.evaluate((m) => chrome.runtime.sendMessage(m), message);
+  await expect.poll(async () => (await sendAgain({ type: 'player-get' })).state.status).toBe('playing');
+  await expect.poll(() => page.locator('#audio').evaluate((audio) => audio.paused && !audio.getAttribute('src'))).toBe(true);
+  const offscreenTargets = () => cdp.send('Target.getTargets').then((r) => r.targetInfos.filter((t) => t.url === offscreen));
+  await expect.poll(async () => (await offscreenTargets()).length).toBe(1);
+  await expect.poll(async () => {
+    const current = (await sendAgain({ type: 'player-get' })).state;
+    return current.track?.trackToken === token && current.position >= localTime - 1.5;
+  }).toBe(true);
+  const returned = (await sendAgain({ type: 'player-get' })).state;
+  expect(returned.track.title).toBe(songTitle);
+  const returnedPrivate = await bridgeAsk(page, { type: 'command', action: 'playback-export' });
+  expect(returnedPrivate.playback.song.genome).toEqual(initialPrivate.playback.song.genome);
+  expect(returnedPrivate.playback.song.melodicaPlay).toMatchObject({
+    sid: initialPrivate.playback.song.melodicaPlay.sid,
+    trackToken: initialPrivate.playback.song.melodicaPlay.trackToken,
+    startedAt: initialPrivate.playback.song.melodicaPlay.startedAt,
+    sent: initialPrivate.playback.song.melodicaPlay.sent,
+  });
+  expect(returnedPrivate.playback.song.melodicaPlay.played).toBeGreaterThanOrEqual(initialPrivate.playback.song.melodicaPlay.played);
+  const offscreenAudio = await evaluateTarget(cdp, (await offscreenTargets())[0].targetId,
+    `(() => { const a = document.querySelector('#audio'); return a && { paused: a.paused, currentSrc: a.currentSrc, currentTime: a.currentTime }; })()`);
+  expect(offscreenAudio && !offscreenAudio.paused).toBe(true);
+  expect(offscreenAudio.currentSrc).toMatch(/^blob:/);
+  expect(offscreenAudio.currentTime).toBeGreaterThanOrEqual(localTime - 1.5);
+  const tunerLogAfterEnable = await getJson(`${tuner.http}/__tuner/log`);
+  const apiDelta = tunerLogAfterEnable.filter((row) => row.protocol === 'json').slice(apiBeforeEnable);
+  const mediaAfterEnable = tunerLogAfterEnable.filter((row) => row.protocol === 'audio').length;
+  console.log('Pandora methods during re-enable', JSON.stringify(apiDelta.map((row) => row.method)));
+  expect(apiDelta, 're-enabling transfers the same validated session without any Pandora RPC').toEqual([]);
+  expect(mediaAfterEnable, 're-enabling resumes from the exact cached audio bytes').toBe(mediaBeforeEnable);
+  expect(requests.filter((url) => url.includes('/melodica/api/')), 'the page makes no relay calls').toEqual([]);
+  expect(requests.filter((url) => /\/oauth\/melodica\/(?:me|policy)(?:\?|$)/.test(new URL(url).pathname)), 'the page makes no /me or /policy request').toEqual([]);
+  expect(requests.filter((url) => /\/audio\//.test(url) || /\.(mp3|m4a|aac|wav)(?:\?|$)/.test(url)), 'the page makes no media refetch').toEqual([]);
+  await writeFile(resolve(ARTIFACTS, 'extension-reenable.json'), JSON.stringify({ ok: true, sameSong: true,
+    positionAtDisable: held.position, positionAtEnable: returned.position, pageAudioPaused: true,
+    extensionAudioTarget: true, extensionAudioBlob: true, pandoraMethods: apiDelta.map((row) => row.method),
+    noPandoraRPC: true, noRelay: true, noMeOrPolicy: true, noMediaRefetch: true,
+    pageRequestUrls: requests }, null, 2) + '\n');
+  await cdp.detach();
+  await reenabledCtl.close();
+  await manager.close();
+  await page.close();
+  await ctl.close();
+});
+
+test('rooms: an extension-owned room session keeps live audio through page unmount and honors room scrobble opt-out', async () => {
+  test.skip(LIVE || !haveTuner || !existsSync(ROOM_MEDIA_BUNDLE), 'requires the local tuner and current shared room media bundle');
+  test.setTimeout(120_000);
+  const id = await extensionId();
+  const roomId = 'nativeRoomProbe12345';
+  const metadata = { track_name: 'Room oscillator', artist_name: 'Native extension fixture', release_name: 'Local', additional_info: { duration_ms: 2000 } };
+  roomProbe = { id: roomId, cursor: 0, nextChunk: 0, chunks: [], signals: [], commands: [], heard: [], state: {
+    id: roomId, name: 'Native extension room', kind: 'public', mode: 'rotation', host: 'dj-owner',
+    you: 'listener-ci', current_dj: 'dj-owner', ready_at: 1, seq: 1, spots: 1, skip_fraction: 0.5,
+    scrobble: true, closed_at: null, djs: ['dj-owner'], waiting: [], requests: [], past: [],
+    members: [{ account: 'dj-owner', name: 'Fixture DJ', role: 'dj' }, { account: 'listener-ci', name: 'Fixture listener', role: 'listener' }],
+    play: { id: 'room-play-1', dj: 'dj-owner', started_at: Date.now(), paused_at: null, duration_ms: 2000,
+      track_metadata: metadata, likes: 0, dislikes: 0, skip_threshold: 1, reaction: null },
+  } };
+  const ctl = await context.newPage();
+  const pageErrors = [];
+  let roomPage = null, djPage = null;
+  try {
+    await ctl.goto(`chrome-extension://${id}/options.html`);
+    await useTuner(ctl);
+    const send = (message) => ctl.evaluate((m) => chrome.runtime.sendMessage(m), message);
+    const redirects = [];
+    await context.route('https://*.chromiumapp.org/**', (route) => { redirects.push(route.request().url()); route.fulfill({ status: 200, contentType: 'text/plain', body: 'ok' }); });
+    const begin = await send({ type: 'account-begin' });
+    expect(begin.ok, `account-begin (${begin.error})`).toBe(true);
+    const auth = await context.newPage();
+    await auth.goto(begin.url);
+    await auth.click('#sg-github');
+    await auth.click('#gh-octo-ci');
+    await expect.poll(() => redirects.length, { timeout: 20_000 }).toBeGreaterThan(0);
+    const finish = await send({ type: 'account-finish', url: redirects.at(-1) });
+    expect(finish.ok && finish.account.signedIn).toBe(true);
+    await auth.close();
+
+    const tunerBefore = await getJson(`${tuner.http}/__tuner/log`);
+    const jsonBefore = tunerBefore.filter((row) => row.protocol === 'json').length;
+    const mediaBefore = tunerBefore.filter((row) => row.protocol === 'audio').length;
+    roomPage = await context.newPage();
+    roomPage.on('pageerror', (e) => pageErrors.push(String(e)));
+    roomPage.on('console', (m) => { if (m.type() === 'error') pageErrors.push(m.text()); });
+    await roomPage.goto(`chrome-extension://${id}/rooms.html?room=${roomId}`);
+    await expect(roomPage.locator('.sui-room-track h2')).toHaveText(metadata.track_name, { timeout: 30_000 });
+    const initialRoom = await send({ type: 'room-get' });
+    expect(initialRoom.room?.audio?.state).not.toBe('listening');
+    expect(roomProbe.signals.some((signal) => signal.data?.request === true), 'the offscreen listener asks the DJ for a peer stream').toBe(true);
+    await roomPage.getByRole('button', { name: 'Connect room audio' }).click();
+    await expect.poll(async () => (await send({ type: 'room-get' })).room?.audio?.state).toBe('connecting');
+    const beforeAudio = await send({ type: 'player-get' });
+    expect(beforeAudio.state.track, 'room listening does not start or replace a Pandora song').toBe(null);
+    expect(beforeAudio.state.status).toBe('idle');
+
+    djPage = await context.newPage();
+    await djPage.goto(`https://${WEB_HOST}${APP_PATH}room-dj.html?id=${roomId}`);
+    await djPage.click('#start');
+    try {
+      await expect.poll(async () => (await send({ type: 'room-get' })).room?.audio?.state, { timeout: 35_000 }).toBe('listening');
+    } catch (error) {
+      const extensionState = await send({ type: 'room-get' });
+      console.log('native room peer diagnostics', JSON.stringify({ extensionState, commands: roomProbe.commands,
+        signals: roomProbe.signals.map((s) => ({ from: s.from, to: s.to, data: Object.keys(s.data || {}), request: s.data?.request,
+          description: s.data?.description && { type: s.data.description.type, sdpLength: s.data.description.sdp?.length }, candidate: !!s.data?.candidate })),
+        dj: await djPage.evaluate(() => ({ state: window.roomState, audio: window.roomAudioState, error: window.roomError })),
+        listenerErrors: pageErrors,
+      }));
+      throw error;
+    }
+    const offscreenTarget = async () => {
+      const manager = await context.newPage();
+      try {
+        await manager.goto('chrome://extensions');
+        const cdp = await context.newCDPSession(manager);
+        try { return (await cdp.send('Target.getTargets')).targetInfos.find((t) => t.url === `chrome-extension://${id}/offscreen.html`); }
+        finally { await cdp.detach(); }
+      } finally { await manager.close(); }
+    };
+    const liveOffscreen = await offscreenTarget();
+    expect(liveOffscreen, 'offscreen owns the active room transport').toBeTruthy();
+    try { await expect.poll(() => roomProbe.heard.length, { timeout: 8_000 }).toBe(1); }
+    catch (error) {
+      console.log('native room receipt diagnostics', JSON.stringify({ extensionState: await send({ type: 'room-get' }),
+        commands: roomProbe.commands, signals: roomProbe.signals.map((s) => ({ from: s.from, to: s.to, request: s.data?.request,
+          description: s.data?.description && s.data.description.type, candidate: !!s.data?.candidate })), heard: roomProbe.heard,
+        dj: await djPage.evaluate(() => ({ state: window.roomState, audio: window.roomAudioState, error: window.roomError })) }));
+      throw error;
+    }
+    expect(roomProbe.heard[0]).toMatchObject({ viewer: 'listener-ci', play_id: 'room-play-1' });
+    expect(roomProbe.heard[0].listened_ms).toBeGreaterThanOrEqual(1000);
+
+    const paused = await send({ type: 'room-audio-command', roomId, action: 'pause' });
+    expect(paused.ok, paused.error).toBe(true);
+    await expect.poll(async () => (await send({ type: 'room-get' })).room?.audio?.paused).toBe(true);
+    const resumed = await send({ type: 'room-audio-command', roomId, action: 'resume' });
+    expect(resumed.ok, resumed.error).toBe(true);
+    await expect.poll(async () => (await send({ type: 'room-get' })).room?.audio?.paused).toBe(false);
+    const volume = await send({ type: 'room-audio-command', roomId, action: 'volume', value: 37 });
+    expect(volume.ok, volume.error).toBe(true);
+
+    const optOut = await send({ type: 'room-command', roomId, command: { action: 'scrobble', enabled: false } });
+    expect(optOut.ok, optOut.error).toBe(true);
+    await expect.poll(async () => (await send({ type: 'room-get' })).room?.state?.scrobble).toBe(false);
+    roomProbe.state.play = { ...roomProbe.state.play, id: 'room-play-2', started_at: Date.now() };
+    roomProbe.state.seq++;
+    await expect.poll(async () => (await send({ type: 'room-get' })).room?.state?.play?.id).toBe('room-play-2');
+    await expect.poll(async () => (await send({ type: 'room-get' })).room?.audio?.state, { timeout: 20_000 }).toBe('listening');
+    await roomPage.close();
+    roomPage = null;
+    await expect.poll(async () => (await send({ type: 'room-get' })).room?.id).toBe(roomId);
+    await expect.poll(async () => (await send({ type: 'room-get' })).room?.audio?.state).toBe('listening');
+    await new Promise((resolve) => setTimeout(resolve, 1400));
+    expect(roomProbe.heard, 'room opt-out suppresses the next real audio receipt').toHaveLength(1);
+    const tunerAfter = await getJson(`${tuner.http}/__tuner/log`);
+    expect(tunerAfter.filter((row) => row.protocol === 'json').length, 'room transfer performs no Pandora JSON RPC').toBe(jsonBefore);
+    expect(tunerAfter.filter((row) => row.protocol === 'audio').length, 'room transfer fetches no Pandora media').toBe(mediaBefore);
+    expect(pageErrors).toEqual([]);
+    const liveRoom = await send({ type: 'room-get' });
+    const leave = await send({ type: 'room-leave', roomId });
+    expect(leave.ok, leave.error).toBe(true);
+    const evidence = { date: new Date().toISOString().slice(0, 10), browser: 'Chromium native extension',
+      test: 'rooms: an extension-owned room session keeps live audio through page unmount and honors room scrobble opt-out',
+      result: 'passed', roomId, transport: liveRoom.room?.audio?.transport || null,
+      roomReceipt: roomProbe.heard[0], optOutBlockedSecondReceipt: roomProbe.heard.length === 1,
+      pageUnmountPreservedRoom: true, offscreenTarget: liveOffscreen.url,
+      noPandoraRPC: true, noPandoraMedia: true,
+      playwright: 'focused local tuner and synthetic OAuth/room API, isolated ports 20443/20080, handle 16251' };
+    await writeFile(resolve(here, 'evidence/extension-rooms.json'), JSON.stringify(evidence, null, 2) + '\n');
+    console.log('native extension room proof', JSON.stringify(evidence));
+  } finally {
+    roomProbe = null;
+    if (djPage) await djPage.close().catch(() => {});
+    if (roomPage) await roomPage.close().catch(() => {});
+    await ctl.close().catch(() => {});
+  }
 });
 
 

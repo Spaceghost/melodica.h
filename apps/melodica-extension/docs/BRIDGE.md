@@ -12,7 +12,7 @@ The page sends its own Pandora calls through the extension instead of its relay.
 | --- | --- |
 | ext → page | `{melodica:1, type:'present', name:'melodica-extension', version}` (since 0.8.2: once, as soon as the content script is injected, before the background has answered; "extension present, state pending") |
 | page → ext | `{melodica:1, type:'hello'}` |
-| ext → page | `{melodica:1, type:'ready', name:'melodica-extension', version, player: true}` (also sent unasked at `document_start`, `DOMContentLoaded` and `load`; `player: true` since 0.3.0 says layer 2 exists) |
+| ext → page | `{melodica:1, type:'ready', name:'melodica-extension', version, player: true, rooms: 1}` on engines with native Rooms (also sent unasked at `document_start`, `DOMContentLoaded` and `load`; `player: true` since 0.3.0 says layer 2 exists; `rooms: 1` says native room join/leave/control messages are supported) |
 | page → ext | `{melodica:1, type:'request', id, search:'?method=…', body: Uint8Array}` |
 | ext → page | `{melodica:1, type:'response', id, ok, status, body: Uint8Array, error}` |
 
@@ -24,6 +24,12 @@ The content script answers `hello` itself, without the background. Since 0.8.2 i
 wakes the background on load, which restores a remembered Pandora session and its
 station list with no extension page open; no popup or player tab is needed after a
 browser start or after the service worker was stopped.
+
+Pages that need extension-owned Rooms support must wait for `ready.rooms === 1` before
+sending `room-join`, `room-leave`, `room-command` or `room-audio-command`. Older extension
+versions omit `rooms`; the page can then keep using its own room engine. This capability
+flag keeps room handoff compatible with already-installed extensions during rollout.
+Engines without the native RoomEngine host omit it.
 
 ## 2. Remote control (since 0.3.0)
 

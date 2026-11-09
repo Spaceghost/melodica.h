@@ -7,6 +7,7 @@
 
 import { browser, send } from './shared.imba'
 import { Engine } from './engine.imba'
+import { RoomEngine } from './room-engine.js'
 
 const engine = new Engine({
 	api: {
@@ -22,11 +23,24 @@ const engine = new Engine({
 		console.debug("melodica offscreen {line}")
 		browser.runtime.sendMessage({type: 'engine-log', line: String(line).slice(0, 300)}).catch(do(e) null)
 })
+const roomEngine = new RoomEngine({
+	engine
+	send: do(message)
+		const reply = await browser.runtime.sendMessage(message)
+		throw new Error('The background script did not answer.') unless reply
+		unless reply.ok
+			const error = new Error(reply.error or 'Room request failed.')
+			error.code = reply.code
+			error.status = reply.status
+			throw error
+		reply
+	loadMedia: do import(browser.runtime.getURL('room-media.js'))
+})
 
 # Commands from the background: {type: 'engine', op, args}.
 browser.runtime.onMessage.addListener do(msg, sender, sendResponse)
 	return no unless msg and msg.type === 'engine' and typeof msg.op === 'string'
-	const done = do(result) sendResponse({ok: yes, state: engine.snapshot, playback: msg.op === 'export-playback' ? result : undefined})
+	const done = do(result) sendResponse({ok: yes, state: engine.snapshot, playback: msg.op === 'export-playback' ? result : undefined, result: msg.op.startsWith('room-') ? result : undefined})
 	const failed = do(e) sendResponse({ok: no, error: String(e and e.message or e), state: engine.snapshot})
 	run(msg.op, msg.args or []).then(done, failed)
 	yes
@@ -48,6 +62,12 @@ def run op, args
 		when 'volume' then engine.setVolume(args[0])
 		when 'quality' then engine.setQuality(args[0])
 		when 'hydrate' then engine.hydrate(args[0])
+		when 'room-join'
+			return await roomEngine.join(args[0].id, args[0])
+		when 'room-leave' then await roomEngine.leave(args[0] or {})
+		when 'room-command' then await roomEngine.command(args[1])
+		when 'room-audio' then await roomEngine.audioCommand(args[1], args[2])
+		when 'room-scrobbling' then roomEngine.setScrobbling(args[0] !== no)
 		when 'state' then null
 		else throw new Error("unknown engine op {op}")
 

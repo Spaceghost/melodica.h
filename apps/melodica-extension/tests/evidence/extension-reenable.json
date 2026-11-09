@@ -1,0 +1,24 @@
+{
+  "date": "2026-11-09",
+  "browser": "Chromium native extension manager",
+  "result": "passed",
+  "test": "disable and re-enable: an open web player returns to the extension without refetching playback",
+  "webDist": "melodica-web-checklist-integration dist with ListenTracker transfer marker",
+  "checks": {
+    "sameSong": true,
+    "positionPreserved": true,
+    "listenTrackerSidTokenStartedAtAndSentPreserved": true,
+    "listenedSecondsMonotonic": true,
+    "cachedBlobAudioResumed": true,
+    "singleOffscreenAudioTarget": true,
+    "webAudioPausedAndEmpty": true,
+    "pandoraJsonMethodsDuringEnable": [],
+    "pandoraMediaRefetches": 0,
+    "relayMeOrPolicyRequests": 0,
+    "pageMediaRefetches": 0
+  },
+  "positionAtDisable": 1.800634,
+  "positionAtEnable": 2.67788,
+  "playwright": "focused local tuner run, isolated ports 20443/20080, handle 15013",
+  "limitations": ["Firefox re-enable was not tested"]
+}

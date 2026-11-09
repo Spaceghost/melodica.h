@@ -23,6 +23,14 @@ export function validatePlayback(input, sid, endpoint = 'https://tuner.pandora.c
       if (typeof t[key] === 'string') out[key] = t[key].slice(0, key === 'coverArt' ? 4096 : 512);
     }
     for (const key of ['duration', 'gain', 'rating', 'fetchedAt']) if (Number.isFinite(Number(t[key]))) out[key] = Number(t[key]);
+    if (t.genome === null) out.genome = null;
+    else if (Array.isArray(t.genome)) out.genome = t.genome.filter((v) => typeof v === 'string' && v.length <= 64).slice(0, 12);
+    const play = t.melodicaPlay;
+    const startedAt = Number(play?.startedAt), played = Number(play?.played);
+    const duration = Number(t.duration);
+    if (play && play.sid === sid && play.trackToken === t.trackToken && Number.isFinite(startedAt) && startedAt > 0 && startedAt <= Date.now() / 1000 + 60 && typeof play.sent === 'boolean' && Number.isFinite(played) && played >= 0 && played <= (Number.isFinite(duration) && duration > 0 ? duration + 5 : 86405)) {
+      out.melodicaPlay = { sid, trackToken: t.trackToken, startedAt, sent: play.sent, played };
+    }
     return out;
   };
   const current = song(input.song);
@@ -30,6 +38,7 @@ export function validatePlayback(input, sid, endpoint = 'https://tuner.pandora.c
   const queue = Array.isArray(input.queue) ? input.queue.slice(0, 20).map(song).filter(Boolean) : [];
   return { v: 1, sid, at, station: { id, name: String(input.station.name || '').slice(0, 512) },
     song: current, queue, position, duration: Math.max(0, Math.min(86400, Number(input.duration) || current.duration || 0)),
-    status: input.status, quality: ['high', 'medium', 'low'].includes(input.quality) ? input.quality : 'high',
+    status: input.status, played: Number(current.melodicaPlay?.played) > 0,
+    quality: ['high', 'medium', 'low'].includes(input.quality) ? input.quality : 'high',
     volume: Number.isFinite(Number(input.volume)) ? Math.max(0, Math.min(100, Number(input.volume))) : 80 };
 }

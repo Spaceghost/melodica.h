@@ -27,6 +27,27 @@ test('private transfer validation binds fresh playback to the current session', 
   assert.ok(validatePlayback(playback({ song: { ...song(), audioUrl: 'http://127.0.0.1:8443/test.m4a' } }), sid, 'https://127.0.0.1:8443/services/json/'));
 });
 
+test('validated handoffs preserve bounded genome and same-session listen provenance only', () => {
+  const marker = { sid, trackToken: 'T1', startedAt: Math.floor(Date.now() / 1000) - 30, sent: true, played: 12.5 };
+  const validated = validatePlayback(playback({ song: { ...song(), genome: ['minor key', 'guitar'], melodicaPlay: marker } }), sid);
+  assert.deepEqual(validated.song.genome, ['minor key', 'guitar']);
+  assert.deepEqual(validated.song.melodicaPlay, marker);
+  assert.equal(validated.played, true);
+  assert.equal(validatePlayback(playback({ song: { ...song(), genome: ['x'.repeat(65)], melodicaPlay: marker } }), sid).song.genome.length, 0);
+  for (const forged of [
+    { ...marker, sid: 'another-session' },
+    { ...marker, trackToken: 'T2' },
+    { ...marker, startedAt: Date.now() / 1000 + 301 },
+    { ...marker, sent: 'yes' },
+    { ...marker, played: -1 },
+    { ...marker, played: 206 },
+  ]) {
+    const result = validatePlayback(playback({ played: true, song: { ...song(), melodicaPlay: forged } }), sid);
+    assert.equal(result.song.melodicaPlay, undefined);
+    assert.equal(result.played, false, 'unvalidated provenance cannot assert that audio was heard');
+  }
+});
+
 class Audio extends EventTarget {
   paused = true; ended = false; readyState = 1; currentTime = 0; duration = 200; src = '';
   async play() { this.paused = false; this.dispatchEvent(new Event('play')); }
@@ -100,6 +121,12 @@ test('heard provenance survives paused engine recreation and cannot be forged by
   const heard = engine();
   await heard.e.hydrate({ ...e.snapshot, last: saves.at(-1) });
   assert.equal(heard.e.exportPlayback().played, true);
+  const trustedTransfer = engine();
+  const trusted = validatePlayback(playback({ status: 'paused', song: { ...song(), melodicaPlay: {
+    sid, trackToken: 'T1', startedAt: Math.floor(Date.now() / 1000) - 30, sent: true, played: 12.5,
+  } } }), sid);
+  await trustedTransfer.e.importPlayback(trusted);
+  assert.equal(trustedTransfer.e.exportPlayback().played, true);
 });
 
 test('a late play event cannot undo a held pause and reports have a strict order', async () => {

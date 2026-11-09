@@ -135,6 +135,13 @@ tag Options
 		accountBusy = no
 		imba.commit()
 
+	def openRooms
+		try
+			await send({type: 'open-rooms'})
+		catch e
+			message = String(e.message or e)
+			kind = 'error'
+
 	get origin
 		try
 			new URL(normalizeEndpoint(endpoint)).origin
@@ -249,6 +256,9 @@ tag Options
 									if accountBase !== ACCOUNT_BASE
 										<p.fine#options-accountbase> "Account server overridden (storage key accountBase): {accountBase}. Default: {ACCOUNT_BASE}"
 									<AccountLine account=account busy=accountBusy @signin=accountAction('account-signin') @signout=accountAction('account-signout')>
+					if account and account.signedIn
+						<div.ext-actions>
+							<button#open-rooms type="button" @click=openRooms> "Open listening rooms"
 									if user and user.username
 										<p.fine#options-username> "Your melodica username: {user.username}"
 										<UsernameChange user=user>

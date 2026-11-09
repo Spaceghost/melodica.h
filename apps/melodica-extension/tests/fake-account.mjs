@@ -57,6 +57,8 @@ export function createAccountServer({ issuer = 'https://spacegho.st', accessTtl 
   let scrobbleFail = null;
   const seededListens = [];
   const scrobbleUiCalls = [];
+  const roomStates = new Map();
+  const roomCalls = [];
   const userOf = (email) => {
     if (!users.has(email)) users.set(email, { username: `listener-${sha(email).slice(0, 6).toLowerCase().replace(/[^a-z0-9]/g, '0')}`, chosen: false, suggested: '' });
     return users.get(email);
@@ -227,6 +229,18 @@ export function createAccountServer({ issuer = 'https://spacegho.st', accessTtl 
     }
     if (p === '/scrobble/api/live/poll') { scrobbleUiCalls.push(p); return json(res, 200, { events: [], now: Date.now() }); }
     if (p === '/scrobble/api/live') return json(res, 404, { error: 'not_found' });
+    const roomRoute = /^\/scrobble\/api\/rooms\/([A-Za-z0-9_-]{16,64})(?:\/(events|signal|audio|ice))?$/.exec(p);
+    if (roomRoute) {
+      if (!bearer(req)) return json(res, 401, { error: 'invalid_token' });
+      const [, id, suffix = ''] = roomRoute;
+      const state = roomStates.get(id);
+      let action = null;
+      try { action = JSON.parse(body || '{}').action || null; } catch { /* recorded as null */ }
+      roomCalls.push({ method: req.method, id, suffix, action });
+      if (!state) return json(res, 404, { error: 'room_not_found' });
+      if (suffix === 'events') return json(res, 200, { state, signals: [], cursor: 0, epoch: 'fixture-1' });
+      return json(res, 200, state);
+    }
     if (p === '/scrobble/api/me' || p.startsWith('/scrobble/api/me/')) {
       const m = /^Bearer (.+)$/.exec(req.headers.authorization || '');
       const email = m && melodicaTokens.get(m[1]);
@@ -272,10 +286,11 @@ export function createAccountServer({ issuer = 'https://spacegho.st', accessTtl 
   }
 
   return {
-    issuer, accounts, calls, tokens, requests, handle, users, loginOks, usernameCalls, listens, scrobbleRefused, scrobbleSettings, scrobbleUiCalls,
+    issuer, accounts, calls, tokens, requests, handle, users, loginOks, usernameCalls, listens, scrobbleRefused, scrobbleSettings, scrobbleUiCalls, roomCalls,
     scrobbleOffline(down) { scrobbleDown = !!down; },
     scrobbleFailWith(status, error) { scrobbleFail = status ? { status, error } : null; },
     seedListen(l) { seededListens.unshift(l); },
+    setRoom(id, state) { roomStates.set(id, structuredClone(state)); },
     allow(email, { spots = true } = {}) { allowList.set(String(email).trim().toLowerCase(), { spots: !!spots }); },
     disallow(email) { allowList.delete(String(email).trim().toLowerCase()); },
     setSpots(which, on) { accounts[which].spots = !!on; },

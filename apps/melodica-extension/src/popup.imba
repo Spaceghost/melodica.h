@@ -173,6 +173,9 @@ tag Popup
 	def openPlayer
 		await send({type: 'open-player'})
 
+	def openRooms
+		await send({type: 'open-rooms'})
+
 	def openOptions
 		browser.runtime.openOptionsPage()
 
@@ -201,6 +204,7 @@ tag Popup
 			<Top label="extension">
 				<nav.ext-nav>
 					<button#open-player.pill type="button" title="Open the full-size player tab (optional; the music plays without it)" @click=openPlayer> "Player"
+					<button#open-rooms.pill type="button" title="Open the shared listening rooms" @click=openRooms> "Rooms"
 					<button#open-options.pill type="button" title="Options" @click=openOptions> "Options"
 			<main#app.app data-view=view data-status=(player and player.status or '')>
 				<div.view>

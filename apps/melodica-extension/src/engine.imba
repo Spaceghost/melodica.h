@@ -171,11 +171,11 @@ export class Engine
 		held = yes
 		audio.pause()
 		releaseCopyUrl()
-		transferredPending = yes
 		restored = {cacheTried: no}
 		state.station = {token: p.station.id, name: p.station.name}
 		state.track = p.song
-		state.played = no
+		state.played = p.played === yes
+		transferredPending = !state.played
 		state.position = p.position
 		state.duration = p.duration
 		state.quality = p.quality
@@ -184,7 +184,8 @@ export class Engine
 		state.error = ''
 		queue = p.queue.slice()
 		applyVolume()
-		audio.src = p.song.audioUrl
+		copyUrl = await copyOf(p.song.trackToken)
+		audio.src = copyUrl or p.song.audioUrl
 		seekWhenReady(p.position)
 		emit()
 		await resume() if p.status === 'playing'
