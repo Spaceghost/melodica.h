@@ -10,4 +10,14 @@
         <item>mp3</item>
         <item>mp3-hifi</item>
     </string-array>
+    <string-array name="scrobble_server_text">
+        <item>spacegho.st</item>
+        <item>ListenBrainz</item>
+        <item>Other server (below)</item>
+    </string-array>
+    <string-array name="scrobble_server_values">
+        <item>https://spacegho.st/scrobble</item>
+        <item>https://api.listenbrainz.org</item>
+        <item>custom</item>
+    </string-array>
 </resources>

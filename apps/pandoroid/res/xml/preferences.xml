@@ -27,8 +27,14 @@
         <CheckBoxPreference android:key="behave_nextOnBan" android:summary='Skip to the next song when you "thumb down" a song.' android:title="Next track on ban" android:defaultValue="true"></CheckBoxPreference>
         <CheckBoxPreference android:key="behave_resumeOnHangup" android:summary="Resume playback automatically when a call is ended." android:title="Resume on Hangup" android:defaultValue="true"></CheckBoxPreference>
         
+ 
     </PreferenceCategory>
-                
-    
+    <PreferenceCategory android:title="Scrobbling">
+        <CheckBoxPreference android:key="scrobble_enabled" android:title="Scrobble listens" android:summary="Report what you play to a ListenBrainz-compatible server." android:defaultValue="true"/>
+        <ListPreference android:key="scrobble_server" android:title="Scrobble server" android:summary="spacegho.st, ListenBrainz, or another ListenBrainz-compatible server." android:entries="@array/scrobble_server_text" android:entryValues="@array/scrobble_server_values" android:defaultValue="https://spacegho.st/scrobble"/>
+        <EditTextPreference android:key="scrobble_server_custom" android:title="Other server URL" android:dialogTitle="ListenBrainz-compatible API base" android:summary="Used when the server is Other, e.g. https://example.org (the app adds /1/submit-listens)." android:inputType="textUri"/>
+        <EditTextPreference android:key="scrobble_token" android:title="Scrobble token" android:dialogTitle="User token" android:password="true" android:inputType="textPassword" android:summary="For spacegho.st, create one at spacegho.st/melodica/account/."/>
+    </PreferenceCategory>
+
     
 </PreferenceScreen>

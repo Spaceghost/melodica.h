@@ -26,6 +26,8 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             "platforms;android-34" "build-tools;34.0.0" "ndk;27.2.12479018" >/dev/null
           echo "$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_PATH"
+      - name: Scrobbler tests (plain JVM, fake ListenBrainz server)
+        run: tools/test-scrobble.sh
       - name: Build
         run: tools/build-release.sh
       - uses: actions/upload-artifact@v4

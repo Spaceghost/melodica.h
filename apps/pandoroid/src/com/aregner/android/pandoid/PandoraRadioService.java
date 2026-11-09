@@ -18,6 +18,7 @@
 package com.aregner.android.pandoid;
 
 
+import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -25,6 +26,9 @@ import java.util.HashMap;
 import com.aregner.pandora.PandoraRadio;
 import com.aregner.pandora.Song;
 import com.aregner.pandora.Station;
+import org.melodica.scrobble.Listen;
+import org.melodica.scrobble.ListenBrainzClient;
+import org.melodica.scrobble.Scrobbler;
 
 import android.app.Notification;
 import android.app.NotificationManager;
@@ -40,6 +44,9 @@ import android.media.MediaPlayer;
 import android.media.MediaPlayer.OnCompletionListener;
 import android.media.MediaPlayer.OnPreparedListener;
 import android.os.AsyncTask;
+import android.os.Handler;
+import android.os.Looper;
+import android.widget.Toast;
 import android.os.IBinder;
 import android.preference.PreferenceManager;
 import android.telephony.PhoneStateListener;
@@ -65,6 +72,21 @@ public class PandoraRadioService extends Service {
 	private HashMap<Class<?>,Object> listeners = new HashMap<Class<?>,Object>();
 
 	protected PandoraDB db;
+
+	// ListenBrainz-compatible scrobbling (spacegho.st by default); see Settings > Scrobbling
+	private Scrobbler scrobbler;
+	private final Handler mainHandler = new Handler(Looper.getMainLooper());
+	private final Runnable scrobbleTick = new Runnable() {
+		public void run() {
+			reportProgress();
+			mainHandler.postDelayed(this, 5000L);
+		}
+	};
+	private final SharedPreferences.OnSharedPreferenceChangeListener scrobblePrefs = new SharedPreferences.OnSharedPreferenceChangeListener() {
+		public void onSharedPreferenceChanged(SharedPreferences p, String key) {
+			if(key != null && key.startsWith("scrobble_")) configureScrobbler();
+		}
+	};
 
 	
 	// static usefullness
@@ -111,6 +133,13 @@ public class PandoraRadioService extends Service {
 			notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
 			telephonyManager = (TelephonyManager) getSystemService(Context.TELEPHONY_SERVICE);
 			prefs = PreferenceManager.getDefaultSharedPreferences(getBaseContext());
+			String version = "0";
+			try { version = getPackageManager().getPackageInfo(getPackageName(), 0).versionName; } catch(Exception e) { /* keep "0" */ }
+			scrobbler = new Scrobbler(new File(getFilesDir(), "listenbrainz-queue.jsonl"), "Pandoroid", version);
+			configureScrobbler();
+			prefs.registerOnSharedPreferenceChangeListener(scrobblePrefs);
+			scrobbler.retry();
+			mainHandler.postDelayed(scrobbleTick, 5000L);
 
 			// Register the listener with the telephony manager
 			telephonyManager.listen(new PhoneStateListener() {
@@ -187,12 +216,16 @@ public class PandoraRadioService extends Service {
 		pandora.connect(username, password);
 	}
 	public void signOut() {
+		reportProgress();
 		if(media != null) {
 			if(isPlaying())
 				media.stop();
 			media.release();
 			media = null;
 		}
+
+		mainHandler.removeCallbacks(scrobbleTick);
+		if(prefs != null) prefs.unregisterOnSharedPreferenceChangeListener(scrobblePrefs);
 
 		if(pandora != null) {
 			pandora.disconnect();
@@ -293,6 +326,7 @@ public class PandoraRadioService extends Service {
 	public Song play(int i) {
 		media.start();
 		setNotification();
+		scrobbleStarted(currentPlaylist[i]);
 		return currentPlaylist[i];
 	}
 	public void pause() {
@@ -306,6 +340,7 @@ public class PandoraRadioService extends Service {
 		}
 	}
 	public Song next() {
+		reportProgress(); // the song that just ended or was skipped
 		// play the next song in the current list
 		if(++currentSongIndex < currentPlaylist.length) {
 			prepare(currentSongIndex);
@@ -331,6 +366,40 @@ public class PandoraRadioService extends Service {
 			return play();
 		}
 	}
+	/** Reads Settings > Scrobbling. The token is never logged or shown. */
+	private void configureScrobbler() {
+		if(scrobbler == null) return;
+		boolean on = prefs.getBoolean("scrobble_enabled", true);
+		String server = prefs.getString("scrobble_server", ListenBrainzClient.SPACEGHOST);
+		if("custom".equals(server)) server = prefs.getString("scrobble_server_custom", "");
+		scrobbler.configure(server, on ? prefs.getString("scrobble_token", "") : "", new Scrobbler.Status() {
+			public void report(final String message) {
+				mainHandler.post(new Runnable() { public void run() {
+					Toast.makeText(getApplicationContext(), message, Toast.LENGTH_LONG).show();
+				}});
+			}
+		});
+	}
+
+	private void scrobbleStarted(Song song) {
+		if(scrobbler == null || song == null) return;
+		long length = 0;
+		try { length = Math.max(0, media.getDuration()); } catch(IllegalStateException e) { /* unknown */ }
+		String station = currentStation != null ? currentStation.getName() : null;
+		scrobbler.started(new Listen(song.getArtist(), song.getTitle(), song.getAlbum(), song.getAlbumCoverUrl(),
+				station, length, System.currentTimeMillis() / 1000L));
+	}
+
+	/** Pandora cannot seek, so the position is how long the song has played. */
+	private void reportProgress() {
+		if(scrobbler == null || media == null) return;
+		try {
+			scrobbler.progress(media.getCurrentPosition(), Math.max(0, media.getDuration()));
+		} catch(IllegalStateException e) {
+			// not prepared yet
+		}
+	}
+
 	public void rate(String rating) {
 		if(rating == PandoidPlayer.RATING_NONE) {
 			// cannot set rating to none
