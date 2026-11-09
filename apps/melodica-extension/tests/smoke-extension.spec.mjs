@@ -95,7 +95,9 @@ const haveTuner = !!tuner.https || existsSync(join(TUNER_DIR, 'tuner', '__main__
 const report = { steps: [], summary: '', ok: false, access: null, account: null, spots: null, update: null, bridge: null, coldStart: null, resume: null, audio: null, browser: '', engine: '', extension: {}, blocked: [], failedRequests: [], shields: null };
 let acct = null;
 let roomProbe = null;
-const ROOM_MEDIA_BUNDLE = resolve(root, 'vendor/scrobble-ui/room-media.js');
+// Browser CI downloads dist without the build job's untracked vendor cache.
+const ROOM_MEDIA_BUNDLE = existsSync(resolve(EXT, 'room-media.js'))
+  ? resolve(EXT, 'room-media.js') : resolve(root, 'vendor/scrobble-ui/room-media.js');
 async function handleRoomProbe(req, res, url, raw) {
   const match = /^\/scrobble\/api\/rooms\/([A-Za-z0-9_-]{16,64})(?:\/(signal|audio|events|ice))?$/.exec(url.pathname);
   const list = url.pathname === '/scrobble/api/rooms';
@@ -2065,8 +2067,11 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
     expect(initialRoom.room?.audio?.state).not.toBe('listening');
     expect(roomProbe.signals.some((signal) => signal.data?.request === true || signal.data?.request === 'relay'),
       'the offscreen listener requests either a peer stream or the room relay transport').toBe(true);
-    await roomPage.getByRole('button', { name: 'Connect room audio' }).click();
     await expect.poll(async () => (await send({ type: 'room-get' })).room?.audio?.state).toBe('connecting');
+    // Updated views show the owner's in-progress connection without a second action.
+    const connect = roomPage.getByRole('button', { name: 'Connect room audio' });
+    if (await connect.count()) await connect.click();
+    await expect(roomPage.locator('.sui-room-audio')).toContainText(/Connecting room audio/);
     const beforeAudio = await send({ type: 'player-get' });
     expect(beforeAudio.state.track).toMatchObject({ kind: 'room', title: metadata.track_name, artist: metadata.artist_name });
     expect(beforeAudio.state.track.trackToken, 'room snapshots do not expose Pandora tokens').toBeUndefined();
@@ -2142,6 +2147,13 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
     expect(protectedJoin.ok).toBe(false);
     expect(protectedJoin.error).toMatch(/Leave your DJ room/);
     expect((await send({ type: 'room-get' })).room.id).toBe(roomId);
+    const webHasRooms = await bridgePage.locator('a[data-k="rooms"]').count() > 0;
+    if (webHasRooms) {
+      await bridgePage.locator('a[data-k="rooms"]').click();
+      await bridgePage.locator('.sui-room-open').click();
+      await expect(bridgePage.locator('.sui-room-track h2')).toHaveText(metadata.track_name);
+      await expect(bridgePage.getByRole('button', { name: 'Stop DJing', exact: true })).toBeVisible();
+    }
     const djPopup = await context.newPage();
     await djPopup.goto(`chrome-extension://${id}/popup.html`);
     await expect(djPopup.locator('#current-room-stop-dj')).toBeVisible();
@@ -2156,6 +2168,10 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
     expect(roomProbe.commands.some(command => command.viewer === 'listener-ci' && command.action === 'leave-dj')).toBe(true);
     await expect(djPopup.locator('#current-room-stop-dj')).toHaveCount(0);
     await expect(djPopup.locator('#current-room-request-dj')).toBeVisible();
+    if (webHasRooms) {
+      await expect(bridgePage.getByRole('button', { name: 'Stop DJing', exact: true })).toHaveCount(0);
+      await expect(bridgePage.getByRole('button', { name: 'Request to DJ', exact: true })).toBeVisible();
+    }
     await djPopup.close();
     roomProbe.state.current_dj = 'dj-owner';
     roomProbe.state.play = { ...beforeSteppingDown, started_at: Date.now() };

@@ -8,7 +8,7 @@
   "roomReceipt": {
     "viewer": "listener-ci",
     "play_id": "room-play-1",
-    "listened_ms": 1166
+    "listened_ms": 1103
   },
   "optOutBlockedSecondReceipt": true,
   "pageUnmountPreservedRoom": true,
@@ -20,6 +20,6 @@
   "noPandoraRPC": true,
   "noPandoraMedia": true,
   "workerLifecycle": null,
-  "extensionVersion": "0.9.10",
+  "extensionVersion": "0.9.11",
   "playwright": "focused local tuner and synthetic OAuth/room API, isolated ports 8443/8080"
 }
