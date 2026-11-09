@@ -189,6 +189,7 @@ const state = {
 
 function show(view) {
   for (const v of [el.viewLogin, el.viewPlayer, el.viewError]) v.hidden = v !== view;
+  if (view !== el.viewError && typeof mark === 'function') mark('visible');
   el.app.dataset.view = view.id.replace('view-', '');
   el.account.hidden = view !== el.viewPlayer;
   el.account.open = false;
@@ -306,6 +307,7 @@ function confirmDialog(text) {
 // Rebuild the list (after load/create/delete). Moving the highlight alone is
 // markActiveStation(), so a station click never destroys focus or scroll.
 function buildStations() {
+  if (el.app.dataset.ready === 'true') saveSnapshot();
   el.stationList.replaceChildren();
   const sorted = [...state.stations].sort((a, b) => {
     if (a.isQuickMix !== b.isQuickMix) return a.isQuickMix ? -1 : 1;
@@ -574,6 +576,13 @@ function stopPlayback(reason) {
 }
 
 async function playStation(st) {
+  if (el.app.dataset.ready !== 'true') {
+    // Pressed on the first paint: once the restore is done (as a remote or on its own).
+    playerMessage(`Loading ${st.name}…`, 'info', 0);
+    await readyPromise;
+    if (!state.remote && !(state.client && state.client.fn && state.client.session())) { playerMessage(''); return; }
+    st = state.stations.find((x) => x.id === st.id) || st;
+  }
   if (state.remote) {
     playerMessage(`Loading ${st.name}…`, 'info', 0);
     await remoteCommand('play', { station: { token: st.id, name: st.name } });
@@ -749,6 +758,7 @@ function displaySong(song, { shown = false } = {}) {
   else scheduleListensRefresh();
   if (state.keepMessage) state.keepMessage = false;
   else playerMessage('');
+  saveSnapshot();
   const label = [song.title, song.artist].filter(Boolean).join(' – ');
   document.title = label ? `${label} · melodica` : IDLE_TITLE;
 }
@@ -1050,6 +1060,8 @@ function renderRemote(rs) {
     remoteChangedAt = at;
   }
   state.remoteState = rs;
+  markReady();
+  if (rs.loggedIn === false) forgetSnapshot(); else saveSnapshot();
   // Stations: rebuilt only when the list itself changed (keeps focus and scroll).
   const stations = (Array.isArray(rs.stations) ? rs.stations : []).filter((s) => s && s.token)
     .map((s) => ({ id: s.token, name: s.name || '', isQuickMix: !!s.isQuickMix }));
@@ -1132,6 +1144,7 @@ function enterRemote() {
   try { if (state.client && state.client.fn) state.client.logout(); } catch (_) { /* not loaded yet */ }
   state.remote = true;
   el.app.dataset.mode = 'remote';
+  markReady();
   // A remote never downloads or keeps audio: the extension's engine plays (and saves) it.
   if (state.copies) state.copies.clear();
   updateBar();
@@ -1607,13 +1620,13 @@ async function login(email, password) {
 }
 
 // The player after a login or a resumed session.
-async function enterPlayer() {
-  showUsername(''); // never the Pandora email: "Signed in" until /oauth/melodica/me names the user
+async function enterPlayer({ quiet = false } = {}) {
+  if (!quiet) showUsername(''); // never the Pandora email: "Signed in" until /oauth/melodica/me names the user
   await loadStations();
   show(el.viewPlayer);
   updateHint();
   renderUpNext();
-  visibleStationButton()?.focus();
+  if (!quiet) visibleStationButton()?.focus();
   refreshMe({ prompt: true }); // not awaited: the username never holds up playback
   loadScrobbles();
   if (pendingSeed) { playSeed(pendingSeed); return; }
@@ -1622,6 +1635,7 @@ async function enterPlayer() {
 
 // Signing out here signs out the extension too (docs/BRIDGE.md 4.4).
 function logout() {
+  forgetSnapshot();
   const sid = state.sessionMeta ? state.sessionMeta.sid : (state.saved && state.saved.session ? state.saved.session.sid : '');
   if (sid) addRevoked(sid);
   state.sessionMeta = null;
@@ -1827,7 +1841,8 @@ function scrobbleStart(song) {
   sc.tracker = new ListenTracker(song, Date.now() / 1000, Number(song.duration) || 0);
   const len = el.audio.duration;
   sc.tracker.setDuration(Number.isFinite(len) ? len : 0);
-  state.scrobbles.submit('playing_now', song, sc.tracker.duration).catch((err) => {
+  sc.tracker.stationName = state.station ? String(state.station.name || '') : '';
+  state.scrobbles.submit('playing_now', song, sc.tracker.duration, undefined, sc.tracker.stationName).catch((err) => {
     if (!scrobbleRefused(err)) console.debug('[scrobble]', describeError(err));
   });
 }
@@ -1840,13 +1855,13 @@ function scrobbleTick() {
   tr.tick(el.audio.currentTime, !el.audio.paused && !el.audio.ended);
   if (!tr.due() || !scrobbleOn()) return;
   tr.sent = true;
-  sendListen({ song: tr.song, duration: tr.duration, at: tr.startedAt });
+  sendListen({ song: tr.song, duration: tr.duration, at: tr.startedAt, station: tr.stationName || '' });
 }
 
 async function sendListen(item) {
   const sc = state.scrobble;
   try {
-    await state.scrobbles.submit('single', item.song, item.duration, item.at);
+    await state.scrobbles.submit('single', item.song, item.duration, item.at, item.station || '');
     scheduleListensRefresh();
   } catch (err) {
     if (scrobbleRefused(err)) return;
@@ -2103,7 +2118,7 @@ function installEvents() {
     }
   });
 
-  el.play.addEventListener('click', togglePlay);
+  el.play.addEventListener('click', whenReady(togglePlay));
   el.next.addEventListener('click', () => skip());
   el.love.addEventListener('click', () => rate('love'));
   el.ban.addEventListener('click', () => rate('ban'));
@@ -2273,6 +2288,86 @@ async function stationFromSeeds(station) {
     return { name: station.name || '' };
   }
   throw new Error('Pandora found none of this town\'s seeds.');
+}
+
+// ---------------------------------------------------------------- first paint (0.11.2)
+// What the player showed last, kept unencrypted in localStorage so a reload paints the
+// player at once: the mode, the station list (names and ids), the station, the song
+// (title, artist, album, art, length, position) and the username. No password,
+// session, token or audio link is in it. The restore (extension, vault, wasm) runs
+// in parallel behind it and swaps the real state in; the session is checked by the
+// first request that needs it, never before the paint.
+const SNAP_KEY = 'melodica.snapshot';
+const timing = (window.__mwTiming = window.__mwTiming || {});
+function mark(name) {
+  if (timing[name] === undefined) timing[name] = performance.now();
+}
+function readSnapshot() {
+  try {
+    const v = JSON.parse(store.get(SNAP_KEY) || 'null');
+    return v && v.v === 1 && Array.isArray(v.stations) ? v : null;
+  } catch (_) { return null; }
+}
+let snapTimer = 0;
+let pageLeaving = false; // pagehide: requests failing now are the page going away
+function saveSnapshot() {
+  if (snapTimer) return;
+  snapTimer = setTimeout(() => { snapTimer = 0; writeSnapshot(); }, 400);
+}
+function writeSnapshot() {
+  const rs = state.remoteState;
+  const signedIn = state.remote ? !!(rs && rs.loggedIn === true) : !!(state.client && state.client.fn && state.client.session());
+  if (!signedIn) return;
+  const song = state.song && !state.song.isInsert ? state.song : null;
+  const snapshot = {
+    v: 1, mode: state.remote ? 'remote' : 'standalone', at: Date.now(),
+    stations: state.stations.slice(0, 250).map((x) => ({ id: x.id, name: x.name || '', isQuickMix: !!x.isQuickMix })),
+    station: state.station ? { id: state.station.id, name: state.station.name || '' } : null,
+    song: song ? { title: song.title || '', artist: song.artist || '', album: song.album || '', coverArt: song.coverArt || '', duration: Number(song.duration) || 0 } : null,
+    position: state.remote ? Number(rs && rs.position) || 0 : el.audio.currentTime || 0,
+    username: el.signedIn.textContent || '',
+  };
+  store.set(SNAP_KEY, JSON.stringify(snapshot));
+}
+function forgetSnapshot() { clearTimeout(snapTimer); snapTimer = 0; store.remove(SNAP_KEY); }
+
+// Synchronous: the player as it was, before anything is loaded. Controls work at once;
+// a press before the restore is done waits for it (whenReady).
+function paintSnapshot(snap) {
+  state.stations = snap.stations.map((x) => ({ id: x.id, name: x.name, isQuickMix: !!x.isQuickMix }));
+  buildStations();
+  if (snap.station) state.station = state.stations.find((x) => x.id === snap.station.id) || { ...snap.station };
+  markActiveStation();
+  if (snap.song) {
+    const song = snap.song;
+    el.stage.classList.remove('idle');
+    el.title.textContent = song.title;
+    el.artist.textContent = song.artist;
+    el.album.textContent = song.album;
+    el.station.textContent = state.station ? `on ${state.station.name}` : '';
+    el.miniTitle.textContent = song.title;
+    el.miniArtist.textContent = song.artist;
+    setCover(song);
+    setProgress(Number(snap.position) || 0, song.duration || 0);
+  }
+  setPlayIcon(false);
+  if (snap.username) el.signedIn.textContent = snap.username;
+  el.app.dataset.snapshot = snap.mode;
+  show(el.viewPlayer);
+  mark('visible');
+}
+
+let readyResolve;
+const readyPromise = new Promise((ok) => { readyResolve = ok; });
+function markReady() {
+  if (el.app.dataset.ready === 'true') return;
+  el.app.dataset.ready = 'true';
+  delete el.app.dataset.snapshot;
+  mark('interactive');
+  readyResolve();
+}
+function whenReady(fn) {
+  return (...args) => (el.app.dataset.ready === 'true' ? fn(...args) : readyPromise.then(() => fn(...args)));
 }
 
 // ---------------------------------------------------------------- Play in melodica (0.11.1)
@@ -2504,7 +2599,9 @@ function installResume() {
     },
     log: (m) => console.debug('[copies]', m),
   });
-  setInterval(() => { if (!el.audio.paused && !state.resuming) persistLast(); }, PERSIST_MS);
+  setInterval(() => { if (!el.audio.paused && !state.resuming) { persistLast(); saveSnapshot(); } }, PERSIST_MS);
+  addEventListener('pagehide', () => { pageLeaving = true; if (el.app.dataset.ready === 'true') writeSnapshot(); });
+  addEventListener('pageshow', () => { pageLeaving = false; });
   addEventListener('pagehide', () => persistLast({ leaving: true }));
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') persistLast({ leaving: true }); });
   // Back/forward from the page cache: the song as it was, paused, with Resume.
@@ -2722,6 +2819,8 @@ function installShell() {
 }
 
 async function main() {
+  const snap = readSnapshot();
+  if (snap) paintSnapshot(snap);
   el.volume.value = el.barVolume.value = String(state.volume);
   el.quality.value = state.quality;
   installEvents();
@@ -2768,9 +2867,21 @@ async function main() {
   updateStatus();
   // The wasm loads meanwhile, so the page on its own does not wait for the extension.
   const loading = state.client.load().then(() => null, (err) => err || new Error('load failed'));
-  // An installed extension answers within a few hundred ms; give it 1.5 s before any login shows.
-  if (state.bridge && await state.bridge.waitReady(1500)) return; // onBridgeChange entered remote mode
-  const loadErr = await loading;
+  // Painted from the snapshot: as a remote, the extension has the full hello window
+  // (a dot says "connecting" after 300 ms; nothing is blocked meanwhile); on its own,
+  // nothing waits for an extension (one that appears takes over, onBridgeChange).
+  // Without a snapshot an installed extension gets 1.5 s before any login shows.
+  if (state.bridge && snap && snap.mode === 'remote') {
+    const dot = setTimeout(() => { if (!state.remote) el.app.dataset.connecting = 'true'; }, 300);
+    const ok = await state.bridge.waitReady();
+    clearTimeout(dot);
+    delete el.app.dataset.connecting;
+    if (ok) return;
+    delete el.app.dataset.snapshot;
+  } else if (state.bridge && !snap) {
+    if (await state.bridge.waitReady(1500)) return; // onBridgeChange entered remote mode
+  }
+  const [loadErr] = await Promise.all([loading, state.savedReady]);
   if (state.remote) return;
   if (loadErr) {
     showFatal(`Could not load melodica.wasm: ${describeError(loadErr)}`);
@@ -2780,7 +2891,7 @@ async function main() {
   updateStatus();
   // An extension that said present but not yet ready is waking its background: the
   // page waits for it as a remote (up to the hello window) instead of showing a login.
-  if (state.bridge && state.bridge.present) {
+  if (state.bridge && state.bridge.present && !(snap && snap.mode === 'standalone')) {
     show(el.viewPlayer);
     playerMessage(CONNECTING, 'info', 0);
     if (await state.bridge.waitReady()) return;
@@ -2793,7 +2904,10 @@ async function main() {
   await state.savedReady;
   if (state.remote) return;
   const saved = state.saved && (state.saved.session || state.saved.credential) ? state.saved : null;
+  if (saved && saved.session && snap && snap.mode === 'standalone' && quickResume(saved)) return;
   if (!saved) {
+    forgetSnapshot();
+    markReady();
     showLogin();
     await state.accountReady;
     if (state.remote) return;
@@ -2811,8 +2925,50 @@ async function main() {
   if (saved.session) ok = await resumeSaved();
   if (!ok && !state.remote && saved.credential) ok = await login(saved.credential.email, saved.credential.password);
   showRestoring(false);
+  markReady();
   if (ok || state.remote) return;
+  forgetSnapshot();
   showLogin(); // keeps the reason in the login message
+}
+
+// The remembered session, put back without a network call: the controls are live at
+// once. The station list, the policy and the account refresh behind it; the first
+// Pandora request checks the session, and PianoClient logs in again with the remembered
+// credential when Pandora or the relay no longer honour it. Only if that fails does the
+// login card show.
+function quickResume(saved) {
+  const s = saved.session;
+  if (!state.client.restore(s)) return false;
+  state.sessionMeta = { sid: s.sid, email: s.email, createdAt: s.createdAt };
+  state.client.setCredentials(saved.credential ? { user: saved.credential.email, password: saved.credential.password } : null);
+  const fresh = saved.relay && saved.relay.token && Date.now() < relayTokenUntil(saved.relay);
+  state.client.restoreAccess(fresh ? saved.relay.token : '', fresh ? saved.relay.at : 0);
+  if (s.email) store.set(STORAGE.email, s.email);
+  updateStatus();
+  markReady();
+  (async () => {
+    if (fresh) refreshPolicy();
+    await state.accountReady;
+    if (state.remote) return;
+    updateAccountLine();
+    syncRemember();
+    try {
+      await enterPlayer({ quiet: true });
+      persistSession(); // a re-login meanwhile, or a new relay token
+    } catch (err) {
+      if (state.remote) return;
+      // Leaving the page aborts the refresh; that is not a session ending (it used to
+      // drop the snapshot here, so every other reload restored the slow way).
+      if (pageLeaving || err.name === 'AbortError' || err.status === 0) return;
+      state.client.logout();
+      state.sessionMeta = null;
+      forgetSnapshot();
+      stopPlayback();
+      showLogin();
+      loginMessage(saved.credential ? describeError(err) : 'Your Pandora session ended; sign in again.', saved.credential ? 'error' : 'info');
+    }
+  })();
+  return true;
 }
 
 const RESTORING = 'Restoring your session…';

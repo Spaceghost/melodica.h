@@ -56,6 +56,8 @@ for (const f of files) {
     const why = [];
     if (!pseudo) {
       for (const side of ['left', 'right', 'top', 'bottom']) {
+        const w = r.d[`border-${side}-width`];
+        if (w && r.d.border && !/^0/.test(w)) why.push(`border-${side}-width: ${w} (one heavier side)`);
         for (const k of [`border-${side}`, `border-${side}-color`, `border-inline-${side === 'left' ? 'start' : side === 'right' ? 'end' : ''}`.replace(/-$/, '')]) {
           const v = r.d[k];
           if (v && !noColor(v) && !(k.endsWith('-color') && !r.d[`border-${side}-width`] && !r.d[`border-${side}`] && r.d.border)) why.push(`${k}: ${v}`);

@@ -1041,6 +1041,67 @@ test.describe.serial('Resume: the last song on this device', () => {
   });
 });
 
+// ---------------------------------------------------------------- first paint (0.11.2)
+// Measured the same way for any build: "visible" is the first frame with the player
+// shown and not "Restoring…"; "interactive" the first frame with station buttons and
+// the restore done (data-ready, or for builds before 0.11.2 the player after the
+// restore). Both relative to DOMContentLoaded.
+const PAINT_PROBE = () => {
+  window.__paint = {};
+  try { window.__paint.snap = !!localStorage.getItem('melodica.snapshot'); } catch (_) { window.__paint.snap = null; }
+  const tick = () => {
+    const app = document.getElementById('app');
+    const vp = document.getElementById('view-player');
+    const p = window.__paint;
+    if (app && vp && !vp.hidden && !app.dataset.restoring && p.visible === undefined) p.visible = performance.now();
+    if (p.visible !== undefined && p.interactive === undefined && document.querySelector('#station-list button.station')
+      && (app.dataset.ready === 'true' || (app.dataset.view === 'player' && !app.dataset.restoring && !('snapshot' in app.dataset) && !('ready' in app.dataset) && !window.__mwTiming))) p.interactive = performance.now();
+    if (p.interactive === undefined) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+};
+const VISIBLE_MS = Number(process.env.MW_VISIBLE_MS || 100);
+const INTERACTIVE_MS = Number(process.env.MW_INTERACTIVE_MS || 300);
+async function paintTimes(page) {
+  await expect.poll(() => page.evaluate(() => window.__paint && window.__paint.interactive !== undefined), { timeout: 30_000 }).toBe(true);
+  return page.evaluate(() => {
+    const dcl = performance.getEntriesByType('navigation')[0].domContentLoadedEventStart;
+    const t = window.__mwTiming || {};
+    return { visible: Math.round(window.__paint.visible - dcl), interactive: Math.round(window.__paint.interactive - dcl), snap: window.__paint.snap, marks: Object.fromEntries(Object.entries(t).map(([k, v]) => [k, Math.round(v - dcl)])) };
+  });
+}
+const median = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+
+test('first paint after a reload: the player in under 100 ms of DOMContentLoaded, live in under 300 ms (1280 and 390)', async ({ page }, info) => {
+  test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+  test.setTimeout(180_000);
+  await page.addInitScript(PAINT_PROBE);
+  await begin(page, { every: 0 });
+  await page.waitForTimeout(2500); // the snapshot and the session are written
+  await page.route(/\/(melodica\/api\/|oauth\/)/, async (route) => { await new Promise((ok) => setTimeout(ok, 250)); await route.fallback(); });
+  const out = {};
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: width > 760 ? 800 : 844 });
+    const runs = [];
+    for (let i = 0; i < 5; i++) {
+      // As hosted: no ?api= (so the page also looks for the extension, which is not
+      // installed here), and 250 ms of network on every relay and account request.
+      await page.goto(`${origin}${APP_PATH}`);
+      runs.push(await paintTimes(page));
+      await expect(page.locator('#login-email')).toBeHidden();
+    }
+    out[width] = { runs, visible: median(runs.map((r) => r.visible)), interactive: median(runs.map((r) => r.interactive)) };
+  }
+  report.firstPaint = out;
+  console.log(`first paint (standalone): ${JSON.stringify(out)}`);
+  await info.attach('first-paint', { body: JSON.stringify(out, null, 2), contentType: 'application/json' });
+  await page.screenshot({ path: resolve(ARTIFACTS, 'first-paint-390.png') });
+  for (const width of [1280, 390]) {
+    expect(out[width].visible, `${width}: player visible (ms after DOMContentLoaded, median of 5)`).toBeLessThan(VISIBLE_MS);
+    expect(out[width].interactive, `${width}: controls live (ms after DOMContentLoaded, median of 5)`).toBeLessThan(INTERACTIVE_MS);
+  }
+});
+
 // ---------------------------------------------------------------- Play in melodica (0.11.1)
 test("?seed=artist:<name>&autoplay=1 (the map's ▶ Play fallback): a station from that artist plays", async ({ page }) => {
   test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');

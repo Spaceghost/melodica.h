@@ -59,6 +59,10 @@ log('tracker ok');
   assert.deepEqual(m, { artist_name: 'Band', track_name: 'Song', release_name: 'LP', additional_info: { submission_client: 'melodica-web', duration_ms: 200400, art_url: 'https://img/x.jpg' } });
   assert.equal(trackMetadata({ title: 'S', artist: 'B', coverArt: 'http://img/a.jpg' }, 0).additional_info.art_url, 'http://img/a.jpg', 'http art as Pandora gives it');
   assert.equal(trackMetadata({ title: 'S', artist: 'B', coverArt: 'data:x' }, 0).additional_info.art_url, undefined, 'only http(s) URLs');
+  const st = trackMetadata({ title: 'S', artist: 'B', trackToken: 'TT' }, 0, '  Slow Light Radio ');
+  assert.equal(st.additional_info.station_name, 'Slow Light Radio', 'the station name, as the extension sends it');
+  assert.ok(!JSON.stringify(st).includes('TT'), 'never the track token');
+  assert.equal(trackMetadata({ title: 'S', artist: 'B' }, 0, 'x'.repeat(300)).additional_info.station_name.length, 128);
 }
 log('body ok');
 

@@ -51,12 +51,15 @@ export function validGenome(list) {
 }
 
 // The ListenBrainz track_metadata for a song (no station, Pandora ids or stream URLs).
-export function trackMetadata(song, durationS) {
+export function trackMetadata(song, durationS, stationName = '') {
   const info = { submission_client: SUBMISSION_CLIENT };
   const d = Number(durationS);
   if (Number.isFinite(d) && d > 0) info.duration_ms = Math.round(d * 1000);
   // As Pandora gives it (its art is often http): Scrobbles keeps a cached copy (art_cached).
   if (typeof song.coverArt === 'string' && /^https?:\/\//i.test(song.coverArt)) info.art_url = song.coverArt;
+  // The station the song played on (as the extension sends it); never the track token.
+  const sn = typeof stationName === 'string' ? stationName.trim().slice(0, 128) : '';
+  if (sn) info.station_name = sn;
   const genome = validGenome(song.genome);
   if (genome) info.genome = genome;
   const m = { artist_name: String(song.artist || ''), track_name: String(song.title || ''), additional_info: info };
@@ -127,8 +130,8 @@ export class Scrobbles {
     if (song.title) body.track_name = String(song.title);
     return this.call('game/thumb', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   }
-  submit(listenType, song, durationS, listenedAt) {
-    const entry = { track_metadata: trackMetadata(song, durationS) };
+  submit(listenType, song, durationS, listenedAt, stationName = '') {
+    const entry = { track_metadata: trackMetadata(song, durationS, stationName) };
     if (listenType === 'single') entry.listened_at = Math.floor(listenedAt);
     return this.call('me/listens', {
       method: 'POST', headers: { 'content-type': 'application/json' },

@@ -521,9 +521,9 @@ AES-GCM under a non-extractable WebCrypto key in IndexedDB (see "Remember me
 on this device"); nothing secret is in `localStorage`. An optional
 spacegho.st sign-in (see "spacegho.st account") adds its tokens to
 `localStorage` until you sign out of it on the page. Unless you turn
-scrobbling off, the artist, title, album, length and cover URL of each song you
-listen to go to Spacegho.st Scrobbles (see "Scrobbling"); album art is cached there. Playlist inserts never do; nor do
-station names, Pandora ids or stream URLs. Nothing else leaves the browser.
+scrobbling off, the artist, title, album, length, cover URL and station name of
+each song you listen to go to Spacegho.st Scrobbles (see "Scrobbling"); album art is cached there. Playlist inserts never do; nor do
+track tokens, other Pandora ids or stream URLs. Nothing else leaves the browser.
 
 ## Remember me on this device
 

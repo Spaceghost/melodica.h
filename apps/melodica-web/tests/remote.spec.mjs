@@ -326,7 +326,8 @@ test.describe.serial('remote mode (the extension plays, the page is a view)', ()
       await expect(page.locator('#history li')).toHaveCount(3);
 
       const remote = await page.evaluate(() => window.__remote);
-      expect(remote.sent.slice(0, 2), 'hello, then subscribe').toEqual(['hello', 'subscribe']);
+      expect(remote.sent[0], 'hello first').toBe('hello');
+      expect(remote.sent.find((t) => t !== 'hello'), 'hello (repeated until the extension answers), then subscribe').toBe('subscribe');
       // While visible the page asks for the current state about once a second.
       const subs = remote.sent.filter((t) => t === 'subscribe').length;
       await page.waitForTimeout(2500);
@@ -612,4 +613,48 @@ test.describe.serial('remote mode in the app shell', () => {
     expect(await page.evaluate(async () => (await caches.keys()).length), 'Cache API stores').toBe(0);
     await finish(page, evidence, info);
   });
+});
+
+// ---------------------------------------------------------------- first paint (0.11.2)
+test('first paint as a remote after a reload: the player in under 100 ms of DOMContentLoaded, live in under 300 ms (1280 and 390)', async ({ page }, info) => {
+  await page.addInitScript(() => {
+    window.__paint = {};
+    const tick = () => {
+      const app = document.getElementById('app');
+      const vp = document.getElementById('view-player');
+      const p = window.__paint;
+      if (app && vp && !vp.hidden && !app.dataset.restoring && p.visible === undefined) p.visible = performance.now();
+      if (p.visible !== undefined && p.interactive === undefined && document.querySelector('#station-list button.station') && app.dataset.mode === 'remote'
+        && (app.dataset.ready === 'true' || !window.__mwTiming)) p.interactive = performance.now();
+      if (p.interactive === undefined) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  const evidence = await open(page);
+  await expect(page.locator('#app')).toHaveAttribute('data-mode', 'remote', { timeout: 10_000 });
+  await page.locator('#station-list button.station', { hasText: 'Aurora Fields Radio' }).click();
+  await expect(page.locator('#mini-title')).toHaveText('Slow Light');
+  await page.waitForTimeout(1500);
+  const out = {};
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: width > 760 ? 800 : 844 });
+    const runs = [];
+    for (let i = 0; i < 5; i++) {
+      await page.reload();
+      await expect.poll(() => page.evaluate(() => window.__paint && window.__paint.interactive !== undefined), { timeout: 15_000 }).toBe(true);
+      runs.push(await page.evaluate(() => {
+        const dcl = performance.getEntriesByType('navigation')[0].domContentLoadedEventStart;
+        return { visible: Math.round(window.__paint.visible - dcl), interactive: Math.round(window.__paint.interactive - dcl) };
+      }));
+    }
+    const med = (k) => [...runs.map((r) => r[k])].sort((a, b) => a - b)[2];
+    out[width] = { runs, visible: med('visible'), interactive: med('interactive') };
+  }
+  console.log(`first paint (remote): ${JSON.stringify(out)}`);
+  await info.attach('first-paint-remote', { body: JSON.stringify(out, null, 2), contentType: 'application/json' });
+  for (const width of [1280, 390]) {
+    expect(out[width].visible, `${width}: player visible`).toBeLessThan(Number(process.env.MW_VISIBLE_MS || 100));
+    expect(out[width].interactive, `${width}: controls live`).toBeLessThan(Number(process.env.MW_INTERACTIVE_MS || 300));
+  }
+  await finish(page, evidence, info);
 });

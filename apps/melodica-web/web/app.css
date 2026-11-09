@@ -61,7 +61,7 @@ p { margin: 0; }
 .fine { color: var(--muted); font-size: 0.8rem; }
 .fine code { font-family: var(--mono); font-size: 0.95em; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-kbd { font: 0.78em var(--mono); padding: 1px 6px; border: 1px solid var(--control-line); border-bottom-width: 2px; border-radius: 6px; color: var(--text); background: var(--solid); }
+kbd { font: 0.78em var(--mono); padding: 1px 6px; border: 1px solid var(--control-line); border-radius: 6px; color: var(--text); background: var(--solid); }
 .eyebrow { font: 600 0.7rem/1.4 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold); }
 
 /* ---- controls base */
@@ -284,7 +284,7 @@ button.round:disabled { opacity: 0.4; }
 .panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6rem; margin-bottom: 0.4rem; }
 .panel-head h3 { font-size: 1.15rem; color: var(--gold-2); }
 .panel-head .icon { align-self: center; margin: -6px -8px -6px 0; }
-.pull { grid-column: 1 / -1; margin: 0; padding: 0.9rem 1.2rem 0.5rem; border-left: 3px solid var(--gold); }
+.pull { grid-column: 1 / -1; margin: 0; padding: 0.9rem 1.2rem 0.5rem; border: 1px solid color-mix(in srgb, var(--gold) 55%, transparent); border-radius: var(--radius); background: color-mix(in srgb, var(--gold) 7%, transparent); }
 .pull:focus-visible { outline-offset: -2px; }
 .pull-text { font-family: var(--display); font-style: italic; font-size: 1.2rem; line-height: 1.45; }
 .pull-foot { margin-top: 0.3rem; font: 0.74rem/1.4 var(--mono); color: var(--muted); display: flex; flex-wrap: wrap; gap: 0 1rem; align-items: center; }
