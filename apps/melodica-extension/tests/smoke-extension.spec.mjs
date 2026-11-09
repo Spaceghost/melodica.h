@@ -1617,6 +1617,11 @@ test('handoff: bridge exports and imports the live song without refetching Pando
   acct.allow(tuner.user);
   const login = await send({ type: 'login', email: tuner.user, password: tuner.password, remember: true });
   expect(login.ok, login.error).toBe(true);
+  await expect(ctl.locator('#scrobble-enabled')).toBeEnabled();
+  await ctl.locator('#scrobble-enabled').uncheck();
+  await expect(ctl.locator('#scrobble-message')).toHaveText('Scrobbling is off.');
+  await ctl.locator('#scrobble-enabled').check();
+  await expect(ctl.locator('#scrobble-message')).toHaveText('Scrobbling is on.');
   const list = (await send({ type: 'stations' })).stations;
   expect(list.length).toBeGreaterThan(0);
   await send({ type: 'player', action: 'play', station: list[0] });

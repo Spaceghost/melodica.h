@@ -1,22 +1,31 @@
 # Handoff (melodica-extension)
 
+## Startup cleanup patch — 0.9.3
+
+- v0.9.3 at 500faea fixes the 0.9.2 Chromium startup cleanup regression. Engine-state reports no longer close the document; explicit room cleanup rechecks activity after awaiting engine creation.
+- Exact CI artifact 42622435195 passed build/package/unit checks and Mozilla unlisted signing. All five package SHA256 digests were verified before creating the release.
+- Focused 0.9.3 Chromium private playback/export/import test passed in 7 seconds. The complete browser suites remain separate; do not claim they are green yet.
+- Publisher 42623541080 completed successfully. Both live catalogs report extension 0.9.3; Melodica web remains 0.13.3. Existing styling is preserved.
+- Web real-extension job 129179881903 was rerun after the previous attempt used 0.9.2 and hit the same startup bug. Final result is still pending.
+
+
 <!-- extension-publication:start -->
 ## Extension catalog publication
 
-- v0.9.2 is published at https://spacegho.st/extensions/#melodica-extension and https://spacegho.st/melodica/extension/.
+- v0.9.4 is published at https://spacegho.st/extensions/#melodica-extension and https://spacegho.st/melodica/extension/.
 - Mozilla unlisted signing is preserved. Both browser update feeds and eight public installable downloads passed checksum verification.
 - Both catalogs passed browser checks at 390 and 1280 pixels; the Melodica catalog contains only its browser extension and keeps the player bar pinned.
 - The Worker release manifests were updated in R2; all other Melodica projects were preserved. No player or Worker code was deployed by this publication.
-- Evidence: https://github.com/Spaceghost/melodica-extension/actions/runs/42621298090.
+- Evidence: https://github.com/Spaceghost/melodica-extension/actions/runs/42625955613.
 <!-- extension-publication:end -->
 
-Updated 2026-11-09. Self-hosted 0.8.8 published and verified; automatic CI rollout in validation.
+Updated 2026-11-09. Self-hosted 0.9.2 published and verified; full tag browser suites remain in progress.
 
 ## Full release cycle checkpoint
 
-- 0.8.8 is now live in both R2 manifests, both browser update feeds, `/extensions/#melodica-extension` and `/melodica/extension/`. Eight public package downloads match GitHub SHA256SUMS; browser checks passed at 390 and 1280 pixels with the player pinned and no page errors or horizontal overflow. All 11 other Melodica projects were preserved. Evidence: `~/workspaces/crew-e2e-fedora/extension-sites-0.8.8-live.json` and `extension-pages-0.8.8/report.json`.
-- Mozilla unlisted signing is preserved. The signed XPI was installed permanently in normal Firefox 154.0 with signatures required and stayed active after a browser restart; its report is a published 0.8.8 asset. No public Mozilla listing was created.
-- `publish.yml` and `scripts/release/` implement automatic post-CI publication, late iOS resync, scheduled catch-up, batched uploads, cached downloads, public verification, handoff updates and the public app snapshot. See docs/RELEASING.md. Local regression tests: 29 passed. A real 0.8.8 dry run validated all 133 mirrored files and needed zero asset uploads. Live CI repair validation is next.
+- 0.9.2 is live in both R2 manifests and browser update feeds. Eight public package downloads match CI SHA256SUMS; both catalogs passed at 390 and 1280 pixels without browser errors or horizontal overflow. All 11 other Melodica projects were preserved. Evidence: publisher run 42621298090 and `/tmp/melodica-extension-v092-publication/report.json`.
+- The Firefox XPI is Mozilla-signed for the unlisted channel; no public Mozilla listing was created. Exact tagged artifacts came from successful build job 129169817053 in CI run 42620130575.
+- `publish.yml` and `scripts/release/` implement automatic post-CI publication, late iOS resync, scheduled catch-up, batched uploads, cached downloads, public verification, handoff updates and the public app snapshot. See docs/RELEASING.md. The v0.9.2 publisher completed against both catalogs; current publisher and site tests passed in the release validation run.
 
 ## Earlier Fedora integration checkpoints
 
@@ -80,7 +89,8 @@ When finished, tell the scrobble agent so it erases u_e2eext00001. Do not erase 
   ignored in `tests/artifacts/extension-reenable.json`.
   Transfer/copy unit tests pass 8/8. Firefox re-enable was not tested.
 
-- Native Rooms 0.9.1 candidate on `wip/fedora-engine-handoff` adds a full-tab
+- Native Rooms 0.9.2 is published from `wip/fedora-engine-handoff` at tag commit
+  `8fb29b508cc23cb41b248957c2d7e0df11e26cba`. It adds a full-tab
   extension Rooms view and native background/offscreen room ownership. Room
   controls route through the extension-owned shared session; the player view
   exposes sanitized room playback and locks private controls during an active
@@ -88,21 +98,24 @@ When finished, tell the scrobble agent so it erases u_e2eext00001. Do not erase 
   bounded public snapshots and per-device room publisher identity are wired
   through the extension bridge. Each install keeps a non-secret stable room
   device ID; the server snapshot distinguishes the local publisher from other
-  devices using the same account. The pinned shared UI/media assets are the
-  live `f72faab991631971` bundle (commit
-  `95135d10591a66eae05ca3c3af86c46963f0cc5f`), verified against the immutable
-  public manifest and asset digests. The full unit suite passed 56/56 and the
-  0.9.1 extension build succeeded with this pin.
-  A focused Chromium test against the local tuner and synthetic room API
-  exercised join, listening audio, page unmount, scrobble opt-out, search and
-  zero Pandora JSON/media refetches on the previous media pin. The initial
-  worker-stop/restart proof exposed an Imba compile bug in `restoreRoomSession`
-  (`async is not defined`); the async closure is fixed, but recovery has not been
-  rechecked in Chromium. A focused run against the 0.9.1 pin is pending. SFU
-  media transport is not claimed browser-verified. The 0.9.0 release is live;
-  its package/build and catalog/download checks passed, but full browser proof
-  remains pending after the Chromium/Brave username options assertion and the
-  Firefox diagnostics selector failed.
+  devices using the same account. The final shared UI/media assets are pinned
+  to `29ff42b9a043f925` (shared commit
+  `8937f0fea181310c2106abdd237418ee8d19b6f4`); all three digests match the
+  immutable public manifest. Native device identity distinguishes a room's
+  local broadcaster from another device using the same account; fresh room
+  restoration carries local pause state. Offscreen documents use
+  `AUDIO_PLAYBACK` plus `WEB_RTC`, and close explicitly when neither a room nor
+  active private playback needs them.
+  The focused local Chromium room smoke passed on the immediately previous
+  shared media pin: relay audio receipt (1082 ms), opt-out, page-unmount
+  continuity, search/recent, sign-out leave, and zero Pandora JSON/media
+  refetch. Evidence is in `tests/evidence/extension-rooms.json`; the smoke's
+  worker-stop/restart branch was disabled and remains unverified. Final bundle
+  build and 45 focused room/state/transfer/release tests passed. Shared
+  room-session recovery tests passed 8/8; backend turn/source tests passed
+  31/31. Full tag browser run 42620130575 is still in progress; its build,
+  signing, package, unit, UI pin, and lint steps passed, but do not report the
+  full Chromium/Brave/Firefox suite green until those jobs finish.
 
 - Fedora candidate `wip/fedora-engine-handoff` adds private `playback-export` /
   `playback-import` and bounded `playback-copy` commands for the web client's engine handoff. It is

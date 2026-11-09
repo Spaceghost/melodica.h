@@ -719,7 +719,7 @@ const GENOME_WAIT = 4000
 
 def scrobbleView
 	const loggedIn = !!(state and state.client.loggedIn)
-	{on: scrobble.on !== no, notice: loggedIn and scrobble.on !== no and scrobble.noticeSeen === no ? SCROBBLE_NOTICE : '', failing: loggedIn and scrobble.on !== no ? failureText(scrobble.fail, scrobble.waiting) : '', deployed: loggedIn and scrobble.deployed and Date.now() - scrobble.deployedAt < 10 * 60 * 1000 ? scrobble.deployed : '', leaderboard: LEADERBOARD_URL, history: MELODICA_PAGES.listens}
+	{on: scrobble.on !== no, known: loggedIn and scrobble.checkedAt > 0, notice: loggedIn and scrobble.on !== no and scrobble.noticeSeen === no ? SCROBBLE_NOTICE : '', failing: loggedIn and scrobble.on !== no ? failureText(scrobble.fail, scrobble.waiting) : '', deployed: loggedIn and scrobble.deployed and Date.now() - scrobble.deployedAt < 10 * 60 * 1000 ? scrobble.deployed : '', leaderboard: LEADERBOARD_URL, history: MELODICA_PAGES.listens}
 
 def noticeSeen
 	if scrobble.noticeSeen === null
@@ -1712,6 +1712,7 @@ def ensureOffscreen
 def closeIdleOffscreen
 	return if TAB_ENGINE or !browser.offscreen or room.id or ['playing', 'loading'].includes(String(player.status or ''))
 	await offscreenReady if offscreenReady
+	return if room.id or ['playing', 'loading'].includes(String(player.status or ''))
 	return await offscreenClosing if offscreenClosing
 	offscreenClosing = browser.offscreen.closeDocument().catch(do(e) null)
 	try
@@ -2321,7 +2322,6 @@ def handle msg, sender
 		when 'engine-state'
 			playerChanged(msg.state) if msg.state and typeof msg.state === 'object'
 			maybeReload('playback stopped') if !player.track
-			await closeIdleOffscreen()
 			{}
 		when 'bridge'
 			await bridge(msg)
