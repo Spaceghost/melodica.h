@@ -28,11 +28,12 @@ THE SOFTWARE.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <utf8proc.h>
 
 #include "listen_uri.h"
 
-#define MAX_INPUT 1024
-#define MAX_TEXT 200
+#define LISTEN_MAX_INPUT 1024
+#define LISTEN_MAX_TEXT 200
 
 typedef enum { SEG_TEXT, SEG_SLUG, SEG_USERNAME, SEG_STATION, SEG_TRACK } seg_t;
 
@@ -168,27 +169,14 @@ static char *decodeSeg (const char *raw, size_t n) {
 		units += cp >= 0x10000 ? 2 : 1;
 		i += k;
 	}
-	if (units > MAX_TEXT || jsSpace (first) || jsSpace (last) ||
+	if (units > LISTEN_MAX_TEXT || jsSpace (first) || jsSpace (last) ||
 			strcmp (s, ".") == 0 || strcmp (s, "..") == 0) {
 		free (s);
 		return NULL;
 	}
-	/* NFC, limited to the canonical singletons that become ASCII */
-	char *o = s;
-	for (size_t i = 0; i < len; ) {
-		const unsigned char *p = (const unsigned char *) s + i;
-		if (len - i >= 3 && p[0] == 0xe2 && p[1] == 0x84 && p[2] == 0xaa) {
-			*o++ = 'K'; i += 3; /* U+212A KELVIN SIGN */
-		} else if (len - i >= 2 && p[0] == 0xcd && p[1] == 0xbe) {
-			*o++ = ';'; i += 2; /* U+037E GREEK QUESTION MARK */
-		} else if (len - i >= 3 && p[0] == 0xe1 && p[1] == 0xbf && p[2] == 0xaf) {
-			*o++ = '`'; i += 3; /* U+1FEF GREEK VARIA */
-		} else {
-			*o++ = s[i++];
-		}
-	}
-	*o = '\0';
-	return s;
+	char * const normalized = (char *) utf8proc_NFC ((const utf8proc_uint8_t *) s);
+	free (s);
+	return normalized;
 }
 
 static bool checkSeg (seg_t rule, const char *v) {
@@ -297,7 +285,7 @@ bool BarListenUriParse (const char *input, BarListenUri_t *out) {
 	out->t = -1;
 	if (input == NULL) return false;
 	const size_t inLen = strlen (input);
-	if (len16 (input, inLen) > MAX_INPUT) return false;
+	if (len16 (input, inLen) > LISTEN_MAX_INPUT) return false;
 
 	const char *rest;
 	if (prefixCase (input, "listen://") || prefixCase (input, "web+listen://")) {

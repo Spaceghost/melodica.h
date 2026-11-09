@@ -179,6 +179,7 @@ You need the following software to build pianobar:
 - libcurl ≥ 7.32.0
 - gcrypt [1]_
 - json-c
+- utf8proc (Unicode normalization for listen links)
 - ffmpeg ≤ 5.1 [2]_
 - UTF-8 console/locale
 

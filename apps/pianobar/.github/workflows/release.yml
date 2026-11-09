@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   linux-x86_64:
-    runs-on: [self-hosted, linux, x64, bak]
+    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '"ubuntu-24.04"') }}
     outputs:
       ref: ${{ steps.ver.outputs.ref }}
       publish: ${{ steps.ver.outputs.publish }}
@@ -62,7 +62,7 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=900 install -y --no-install-recommends \
             build-essential pkg-config file \
             libao-dev libavcodec-dev libavfilter-dev libavformat-dev libavutil-dev \
-            libcurl4-gnutls-dev libgcrypt20-dev libjson-c-dev
+            libcurl4-gnutls-dev libgcrypt20-dev libjson-c-dev libutf8proc-dev
 
       - name: Source tarball
         run: |
@@ -96,7 +96,7 @@ jobs:
   smoke-linux:
     # Proves the exact tarball that gets released installs and runs: see ci/smoke-linux.py.
     needs: linux-x86_64
-    runs-on: [self-hosted, linux, x64, bak]
+    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '"ubuntu-24.04"') }}
     env:
       VERSION: ${{ needs.linux-x86_64.outputs.version }}
     steps:
@@ -114,7 +114,7 @@ jobs:
           sudo apt-get -o DPkg::Lock::Timeout=900 update
           sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=900 install -y --no-install-recommends \
             libao4 libavcodec60 libavfilter9 libavformat60 libavutil58 \
-            libcurl3t64-gnutls libgcrypt20 libjson-c5 \
+            libcurl3t64-gnutls libgcrypt20 libjson-c5 libutf8proc3 \
             python3 imagemagick fonts-dejavu-core ca-certificates
 
       - name: Verify checksum of the downloaded tarball
@@ -219,7 +219,7 @@ jobs:
             Built from this mirror of [PromyLOPh/pianobar](https://github.com/PromyLOPh/pianobar), with
             [melodica.h](https://github.com/Spaceghost/melodica.h) (`${{ needs.linux-x86_64.outputs.melodica }}`) replacing libpiano.
 
-            - `pianobar-${{ needs.linux-x86_64.outputs.version }}-linux-x86_64.tar.gz`: dynamically linked Linux x86_64 build (Ubuntu 24.04; needs libao, libav*, libcurl, libgcrypt, json-c at runtime) plus README, COPYING, ChangeLog and contrib/.
+            - `pianobar-${{ needs.linux-x86_64.outputs.version }}-linux-x86_64.tar.gz`: dynamically linked Linux x86_64 build (Ubuntu 24.04; needs libao, libav*, libcurl, libgcrypt, json-c and utf8proc at runtime) plus README, COPYING, ChangeLog and contrib/.
             - `pianobar-${{ needs.linux-x86_64.outputs.version }}-src.tar.gz`: source tree including the vendored melodica.h.
             - `SHA256SUMS`: checksums for both tarballs.
             - `smoke-linux.json`, `smoke-linux.txt`, `smoke-linux-*.png`: CI smoke proof for the Linux tarball (`ci/smoke-linux.py`): the released binary was unpacked on Ubuntu 24.04, its shared libraries resolved, and it was driven under a pseudo-terminal. `ok` in the JSON says whether login, station listing and playback were proven against a test server; the transcript shows exactly what was observed.

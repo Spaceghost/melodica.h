@@ -74,15 +74,18 @@ LIBJSONC_LDFLAGS:=$(shell $(PKG_CONFIG) --libs json-c 2>/dev/null || $(PKG_CONFI
 LIBAO_CFLAGS:=$(shell $(PKG_CONFIG) --cflags ao)
 LIBAO_LDFLAGS:=$(shell $(PKG_CONFIG) --libs ao)
 
+LIBUTF8PROC_CFLAGS:=$(shell $(PKG_CONFIG) --cflags libutf8proc)
+LIBUTF8PROC_LDFLAGS:=$(shell $(PKG_CONFIG) --libs libutf8proc)
+
 # combine all flags
 ALL_CFLAGS:=${CFLAGS} -I ${LIBPIANO_INCLUDE} \
 			${LIBAV_CFLAGS} ${LIBCURL_CFLAGS} \
 			${LIBGCRYPT_CFLAGS} ${LIBJSONC_CFLAGS} \
-			${LIBAO_CFLAGS}
+			${LIBAO_CFLAGS} ${LIBUTF8PROC_CFLAGS}
 ALL_LDFLAGS:=${LDFLAGS} -lpthread -lm \
 			${LIBAV_LDFLAGS} ${LIBCURL_LDFLAGS} \
 			${LIBGCRYPT_LDFLAGS} ${LIBJSONC_LDFLAGS} \
-			${LIBAO_LDFLAGS}
+			${LIBAO_LDFLAGS} ${LIBUTF8PROC_LDFLAGS}
 
 # Be verbose if V=1 (gnu autotools’ --disable-silent-rules)
 SILENTCMD:=@
@@ -142,7 +145,7 @@ test/listenbrainz_e2e: test/listenbrainz_e2e.c ${PIANOBAR_DIR}/listenbrainz.c ${
 
 test/listen_uri_test: test/listen_uri_test.c ${PIANOBAR_DIR}/listen_uri.c ${PIANOBAR_DIR}/listen_uri.h
 	${SILENTECHO} "  LINK  $@"
-	${SILENTCMD}${CC} ${CFLAGS} -Wall -Wextra -o $@ test/listen_uri_test.c ${PIANOBAR_DIR}/listen_uri.c
+	${SILENTCMD}${CC} ${CFLAGS} ${LIBUTF8PROC_CFLAGS} -Wall -Wextra -o $@ test/listen_uri_test.c ${PIANOBAR_DIR}/listen_uri.c ${LIBUTF8PROC_LDFLAGS}
 
 test: test/listenbrainz_test test/listenbrainz_e2e test/listen_uri_test
 	./test/listenbrainz_test

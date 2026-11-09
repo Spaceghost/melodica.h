@@ -45,6 +45,11 @@ static void parsesEveryTarget (void) {
 		{ "listen://listens", "listens", NULL, NULL, NULL, NULL, -1 },
 		{ "LISTEN://Leaderboard/", "leaderboard", NULL, NULL, NULL, NULL, -1 },
 		{ "listen://artist/Sigur%20R%C3%B3s", "artist", "name", "Sigur R\xc3\xb3s", NULL, NULL, -1 },
+		{ "listen://artist/Cafe%CC%81", "artist", "name", "Caf\xc3\xa9", NULL, NULL, -1 },
+		{ "web+listen://genre/%E1%84%80%E1%85%A1", "genre", "name", "\xea\xb0\x80", NULL, NULL, -1 },
+		{ "https://spacegho.st/listen/artist/%E2%84%AB", "artist", "name", "\xc3\x85", NULL, NULL, -1 },
+		{ "listen://artist/%CE%B1%CC%81", "artist", "name", "\xce\xac", NULL, NULL, -1 },
+		{ "listen://artist/A%CC%81%CC%A7", "artist", "name", "\xc3\x81\xcc\xa7", NULL, NULL, -1 },
 	};
 	for (size_t i = 0; i < sizeof (cases) / sizeof (*cases); i++) {
 		BarListenUri_t p, h, w;
@@ -95,6 +100,10 @@ static void rejectsAnythingNotAllowListed (void) {
 	CHECK (BarListenUriBuild ("artist", "...", NULL, -1, &p), "three dots is a name");
 	BarListenUriFree (&p);
 	CHECK (!BarListenUriBuild ("user", "NO", NULL, -1, &p), "NO");
+	char decomposed[304];
+	for (size_t i = 0; i < 101; i++) memcpy (decomposed + i * 3, "e\xcc\x81", 3);
+	decomposed[303] = '\0';
+	CHECK (!BarListenUriBuild ("artist", decomposed, NULL, -1, &p), "decoded length limit precedes normalization");
 	free (long201);
 }
 
