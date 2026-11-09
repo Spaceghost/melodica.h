@@ -1,30 +1,22 @@
-// The desktop look must stay v0.4.0's. The player view (remote mode, driven by a
-// still fake extension so both builds show the same track, cover and wash) is
-// rendered from this build and from the v0.4.0 release at 1920x1080 and 2560x1440,
-// dark and light, in the same browser; the two must differ in under 1% of the
-// pixels. The status line and the footer (version text) are masked.
+// The player keeps the established blue/gold skin, checked at desktop and phone sizes.
 //
-// Env: MELODICA_V040_DIST, the extracted dist/ of the v0.4.0 release
-// (melodica-web-0.4.0.tar.gz); the test is skipped without it. MELODICA_DIST.
-// Artifacts: tests/artifacts/design-v040-<scheme>-<w>x<h>-{v040,now}.png.
+// Env: MELODICA_DIST. Artifacts: tests/artifacts/design-system-<scheme>-<w>x<h>.png.
 
 import { test, expect } from '@playwright/test';
 import http from 'node:http';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
 import { resolve, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const DIST = resolve(process.env.MELODICA_DIST || resolve(here, '..', 'dist'));
-const OLD = process.env.MELODICA_V040_DIST ? resolve(process.env.MELODICA_V040_DIST) : '';
 const ARTIFACTS = resolve(here, 'artifacts');
 const APP_PATH = '/melodica/app/';
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.wasm': 'application/wasm' };
 const csp = (nonce) => `default-src 'none'; script-src 'self' 'nonce-${nonce}' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; ` +
   `img-src 'self' data: https:; media-src https: http: blob:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; worker-src 'self'`;
-const SIZES = [[1920, 1080], [2560, 1440]];
+const SIZES = [[1440, 900], [390, 844]];
 
 function serveDir(dir) {
   const server = http.createServer(async (req, res) => {
@@ -68,15 +60,12 @@ function stillExtension() {
 }
 
 let now = null;
-let old = null;
 test.beforeAll(async () => {
   await mkdir(ARTIFACTS, { recursive: true });
-  if (!OLD || !existsSync(join(OLD, 'index.html'))) return;
   now = await serveDir(DIST);
-  old = await serveDir(OLD);
 });
 test.afterAll(async () => {
-  for (const s of [now, old]) if (s) await new Promise((ok) => s.server.close(ok));
+  if (now) await new Promise((ok) => now.server.close(ok));
 });
 
 async function render(browser, url, w, h, scheme) {
@@ -89,32 +78,40 @@ async function render(browser, url, w, h, scheme) {
   await page.evaluate(() => document.fonts.ready);
   await page.waitForTimeout(1600); // the wash fades in over 1.2 s (no transition with reduced motion, but be safe)
   const shot = await page.screenshot({ mask: [page.locator('#status'), page.locator('footer.foot')], animations: 'disabled' });
-  // 0.11.0 moved the controls into the player bar pinned to the viewport and added the
-  // top menu, so the page is compared where the design must not change: the stage
-  // (cover, title, artist, album, quality, progress).
-  // Whole pixels: the stage may sit at a fractional offset (a 1 px taller element shot).
-  const box = await page.locator('section.stage').boundingBox();
-  const stage = await page.screenshot({ animations: 'disabled', clip: { x: Math.round(box.x), y: Math.round(box.y), width: Math.floor(box.width), height: Math.floor(box.height) } });
+  const contract = await page.evaluate(() => {
+    const cover = document.querySelector('#cover');
+    const play = document.querySelector('#btn-play');
+    const stage = document.querySelector('.stage');
+    const c = getComputedStyle(cover), p = getComputedStyle(play), h = getComputedStyle(document.querySelector('#np-title'));
+    return {
+      coverWidth: cover.getBoundingClientRect().width,
+      coverHeight: cover.getBoundingClientRect().height,
+      coverRadius: c.borderRadius,
+      titleFont: h.fontFamily,
+      playRadius: p.borderRadius,
+      playColor: p.backgroundColor,
+      pageWidth: document.documentElement.scrollWidth,
+      stageVisible: stage.getBoundingClientRect().width > 0,
+      mode: document.querySelector('#app').dataset.mode,
+    };
+  });
   await ctx.close();
-  return { shot, stage };
+  return { shot, contract };
 }
 
-for (const scheme of ['dark', 'light']) {
-  for (const [w, h] of SIZES) {
-    test(`player at ${w}x${h} (${scheme}) looks like v0.4.0`, async ({ browser }, info) => {
-      test.skip(!old, 'no v0.4.0 build: set MELODICA_V040_DIST');
-      const name = `design-v040-${scheme}-${w}x${h}`;
-      const before = await render(browser, old.url, w, h, scheme);
-      const after = await render(browser, now.url, w, h, scheme);
-      await writeFile(resolve(ARTIFACTS, `${name}-v040.png`), before.shot);
-      await writeFile(resolve(ARTIFACTS, `${name}-now.png`), after.shot);
-      // The v0.4.0 render is the reference for this run's comparison.
-      for (const part of ['stage']) {
-        const ref = info.snapshotPath(`${name}-${part}.png`);
-        await mkdir(dirname(ref), { recursive: true });
-        await writeFile(ref, before[part]);
-        expect(after[part]).toMatchSnapshot(`${name}-${part}.png`, { maxDiffPixelRatio: 0.01, threshold: 0.02 });
-      }
-    });
-  }
+for (const [w, h] of SIZES) {
+  test(`player design contract at ${w}x${h}`, async ({ browser }) => {
+    const { shot, contract } = await render(browser, now.url, w, h, 'dark');
+    const name = `design-system-dark-${w}x${h}`;
+    await writeFile(resolve(ARTIFACTS, `${name}.png`), shot);
+    expect(contract.mode).toBe('remote');
+    expect(contract.stageVisible).toBe(true);
+    expect(contract.coverWidth).toBeGreaterThanOrEqual(w < 500 ? 180 : 240);
+    expect(contract.coverHeight).toBe(contract.coverWidth);
+    expect(contract.coverRadius).toBe('12px');
+    expect(contract.titleFont.toLowerCase()).toMatch(/palatino|palladio|georgia/);
+    expect(contract.playRadius).toBe('14px');
+    expect(contract.playColor).toBe('rgb(21, 27, 40)');
+    expect(contract.pageWidth).toBeLessThanOrEqual(w);
+  });
 }

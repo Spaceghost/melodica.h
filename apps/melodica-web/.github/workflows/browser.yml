@@ -48,15 +48,12 @@ jobs:
       - name: Static checks
         run: scripts/check.sh
       - name: Install Playwright
-        # No `--with-deps`: it apt-installs only extra fonts on ubuntu-latest
-        # (every library Chromium needs is already there) and the Azure apt
-        # mirror has hung that step for 6 h (run 42105334837) and crawled at
-        # 30 kB/s (run 42277935990). The browser itself comes from
-        # Playwright's CDN.
+        # Self-hosted containers need Chromium's system libraries. Hosted Ubuntu
+        # already provides them, so avoid its extra package-mirror dependency.
         timeout-minutes: 15
         run: |
           npm install --no-audit --no-fund
-          npx playwright install chromium
+          npx playwright install ${{ runner.environment == 'self-hosted' && '--with-deps' || '' }} chromium
       - name: Browser test (local dist, live relay)
         run: npx playwright test tests/browser.spec.mjs
         env:
@@ -105,15 +102,12 @@ jobs:
       - name: Build dist/
         run: scripts/build.sh
       - name: Install Playwright
-        # No `--with-deps`: it apt-installs only extra fonts on ubuntu-latest
-        # (every library Chromium needs is already there) and the Azure apt
-        # mirror has hung that step for 6 h (run 42105334837) and crawled at
-        # 30 kB/s (run 42277935990). The browser itself comes from
-        # Playwright's CDN.
+        # Self-hosted containers need Chromium's system libraries. Hosted Ubuntu
+        # already provides them, so avoid its extra package-mirror dependency.
         timeout-minutes: 15
         run: |
           npm install --no-audit --no-fund
-          npx playwright install chromium
+          npx playwright install ${{ runner.environment == 'self-hosted' && '--with-deps' || '' }} chromium
       - uses: Spaceghost/melodica-tuner@v1
         id: tuner
         with:
@@ -140,7 +134,7 @@ jobs:
           # The tuner repository is private; use the copy the runner fetched for the action.
           cd "$RUNNER_WORKSPACE/../_actions/Spaceghost/melodica-tuner/v1"
           python3 -m tuner.report --platform web --ok --summary "melodica-web playback flags against melodica-tuner" \
-            --from-log "${{ steps.tuner.outputs.log-url }}" \
+            --from-log "file://$GITHUB_WORKSPACE/tests/artifacts/smoke-web-playback-log.json" \
             --require "ad.getAdMetadata ok" --require "ad audio fetched" --require "ad.registerAd ok" \
             --out "$GITHUB_WORKSPACE/tests/artifacts/smoke-web-playback-report.json"
           cat "$GITHUB_WORKSPACE/tests/artifacts/smoke-web-playback-report.json"
@@ -185,7 +179,7 @@ jobs:
         timeout-minutes: 15
         run: |
           npm install --no-audit --no-fund
-          npx playwright install chromium
+          npx playwright install ${{ runner.environment == 'self-hosted' && '--with-deps' || '' }} chromium
       - uses: Spaceghost/melodica-tuner@v1
         id: tuner
         with:
@@ -228,15 +222,12 @@ jobs:
         with:
           node-version: 22
       - name: Install Playwright
-        # No `--with-deps`: it apt-installs only extra fonts on ubuntu-latest
-        # (every library Chromium needs is already there) and the Azure apt
-        # mirror has hung that step for 6 h (run 42105334837) and crawled at
-        # 30 kB/s (run 42277935990). The browser itself comes from
-        # Playwright's CDN.
+        # Self-hosted containers need Chromium's system libraries. Hosted Ubuntu
+        # already provides them, so avoid its extra package-mirror dependency.
         timeout-minutes: 15
         run: |
           npm install --no-audit --no-fund
-          npx playwright install chromium
+          npx playwright install ${{ runner.environment == 'self-hosted' && '--with-deps' || '' }} chromium
       - name: Browser test (hosted page)
         run: npx playwright test tests/browser.spec.mjs
         env:

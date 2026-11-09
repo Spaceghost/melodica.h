@@ -597,6 +597,31 @@ MW_EXPORT char *mw_session(void) {
     return buf_finish(&b);
 }
 
+/* Install an already fetched station list during a same-device engine handoff.
+ * No network operation is needed to make subsequent playlist/feedback calls work. */
+static void restore_stations(const MelodicaJsonDoc *doc) {
+    size_t list = melodica_json_object_get(doc, 0, "stations");
+    if (list == MELODICA_JSON_NONE || doc->tokens[list].type != MELODICA_JSON_ARRAY) return;
+    free_stations();
+    PianoStation_t *tail = NULL;
+    for (size_t item = list + 1u; item < doc->count && doc->tokens[item].start < doc->tokens[list].end; ++item) {
+        if (doc->tokens[item].parent != list || doc->tokens[item].type != MELODICA_JSON_OBJECT) continue;
+        char *id = melodica_json_string_dup(doc, melodica_json_object_get(doc, item, "id"));
+        char *name = melodica_json_string_dup(doc, melodica_json_object_get(doc, item, "name"));
+        if (!id || !*id || !name) { free(id); free(name); continue; }
+        PianoStation_t *station = calloc(1, sizeof(*station));
+        if (!station) { free(id); free(name); break; }
+        station->id = id; station->name = name;
+        station->seedId = melodica_json_string_dup(doc, melodica_json_object_get(doc, item, "seedId"));
+        int flag = 0;
+        melodica_json_bool(doc, melodica_json_object_get(doc, item, "isCreator"), &flag); station->isCreator = flag;
+        flag = 0; melodica_json_bool(doc, melodica_json_object_get(doc, item, "isQuickMix"), &flag); station->isQuickMix = flag;
+        flag = 0; melodica_json_bool(doc, melodica_json_object_get(doc, item, "useQuickMix"), &flag); station->useQuickMix = flag;
+        if (tail) tail->head.next = &station->head; else g_ph.stations = station;
+        tail = station;
+    }
+}
+
 /* Restores a session exported by mw_session (or the extension; same partner). All five
  * fields as strings. Returns 0 on success, 1 on a missing or bad field (nothing changed). */
 MW_EXPORT int mw_restore(const char *json) {
@@ -608,7 +633,6 @@ MW_EXPORT int mw_restore(const char *json) {
     char *uat = json_field(&doc, "userAuthToken");
     char *uid = json_field(&doc, "userId");
     char *off = json_field(&doc, "syncOffset");
-    melodica_json_destroy(&doc);
     char *end = NULL;
     long id = pid ? strtol(pid, &end, 10) : -1;
     int idOk = pid && *pid && end && *end == '\0' && id >= 0;
@@ -616,6 +640,7 @@ MW_EXPORT int mw_restore(const char *json) {
     int offOk = off && *off && end && *end == '\0';
     if (!pat || !*pat || !uat || !*uat || !uid || !*uid || !idOk || !offOk) {
         free(pat); free(pid); free(uat); free(uid); free(off);
+        melodica_json_destroy(&doc);
         return 1;
     }
     clear_request_state();
@@ -625,6 +650,8 @@ MW_EXPORT int mw_restore(const char *json) {
     g_ph.partner.id = (unsigned int)id;
     g_ph.timeOffset = (int)-so;
     free(pid); free(off);
+    restore_stations(&doc);
+    melodica_json_destroy(&doc);
     return 0;
 }
 

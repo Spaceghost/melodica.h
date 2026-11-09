@@ -383,6 +383,9 @@ test.describe.serial('playback flags against melodica-tuner', () => {
     expect(reg.body.adTrackingTokens).toEqual(item.adTrackingTokens);
     expectRelayTokens();
     expect(evidence.errors).toEqual([]);
+    // Preserve this case's protocol evidence before another case resets the tuner.
+    const protocolLog = seen.log.map(({ protocol, method, status, code, ad }) => ({ protocol, method, status, code, ad }));
+    await writeFile(resolve(ARTIFACTS, 'smoke-web-playback-log.json'), JSON.stringify(protocolLog, null, 2) + '\n');
   });
 
   test('an email not on the allow-list: the login card says so and Pandora is not contacted', async ({ page }, info) => {
@@ -694,6 +697,15 @@ async function scrollListensBox(page, width) {
     await box.evaluate((b) => { b.scrollTop = b.scrollHeight; });
     await page.waitForTimeout(700);
   }
+  if (await page.locator(LISTEN_ROWS).count() !== 40) {
+    console.log('listens scroll diagnostics:', JSON.stringify(await box.evaluate((b) => ({
+      client: b.clientHeight, scroll: b.scrollHeight, top: b.scrollTop,
+      overflow: getComputedStyle(b).overflowY, box: b.getBoundingClientRect().toJSON(),
+      sentinel: b.querySelector('.sentinel')?.getBoundingClientRect().toJSON(),
+      note: b.querySelector('.loading')?.textContent,
+    }))));
+    console.log('listens page requests:', JSON.stringify(scrobbles.requests.filter((r) => /me(?:\/listens)?/.test(r))));
+  }
   await expect(page.locator(LISTEN_ROWS)).toHaveCount(40);
   expect(await box.evaluate((b) => [...b.querySelectorAll('*')].filter((e) => e !== b && /auto|scroll/.test(getComputedStyle(e).overflowY) && e.scrollHeight > e.clientHeight).length), 'no nested scrollbar').toBe(0);
   const m = await box.evaluate((b) => ({ client: b.clientHeight, scroll: b.scrollHeight, rem: parseFloat(getComputedStyle(document.documentElement).fontSize), vh: innerHeight, overflow: getComputedStyle(b).overflowY }));
@@ -769,10 +781,10 @@ test.describe.serial('the app shell', () => {
       await page.setViewportSize({ width, height: width > 760 ? 800 : 844 });
       for (const k of SHELL_ROUTES) {
         const before = await audioTime(page);
-        await page.click(`#site-nav a[data-k="${k}"]`);
+        await page.click(`.top a[data-k="${k}"]`);
         await expect(page).toHaveURL(`${origin}${shellPath(k)}`);
         await expect(page.locator('#app')).toHaveAttribute('data-route', k);
-        await expect(page.locator(`#site-nav a[data-k="${k}"]`)).toHaveAttribute('aria-current', 'page');
+        await expect(page.locator(`.top a[data-k="${k}"]`)).toHaveAttribute('aria-current', 'page');
         if (k === 'home') await expect(page.locator('#route-body')).toContainText('Launch the player', { timeout: 10_000 });
         if (k === 'extension') await expect(page.locator('#route-body h1, #route-body h2').first()).toBeVisible({ timeout: 10_000 });
         if (k === 'listens') {
@@ -828,13 +840,20 @@ test.describe.serial('the app shell', () => {
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: width > 760 ? 800 : 844 });
       for (const k of SHELL_ROUTES) {
-        await page.goto(`${origin}${shellPath(k)}`);
+        // A panel may make the silent OAuth round trip before its load event.
+        // Wait for the document and the completed account bootstrap, then keep
+        // the same route/bar assertions across the resulting navigation.
+        await page.goto(`${origin}${shellPath(k)}`, { waitUntil: 'domcontentloaded' });
+        await expect(page.locator('#app')).toHaveAttribute('data-account-ready', 'true');
         await expect(page.locator('#app')).toHaveAttribute('data-route', k);
         await expect(page.locator('#bar')).toHaveAttribute('data-state', 'signin', { timeout: 15_000 });
         await expect(page.locator('#bar-signin')).toBeVisible();
         const b = await barAt(page);
         expect(Math.abs(b.bottom - b.vh), `${k} ${width} signed out`).toBeLessThanOrEqual(0.5);
-        if (k !== 'app') await page.reload();
+        if (k !== 'app') {
+          await page.reload({ waitUntil: 'domcontentloaded' });
+          await expect(page.locator('#app')).toHaveAttribute('data-account-ready', 'true');
+        }
         await expect(page.locator('#app')).toHaveAttribute('data-route', k);
       }
       await page.screenshot({ path: resolve(ARTIFACTS, `shell-signedout-${width}.png`) });
@@ -941,6 +960,93 @@ test.describe('the map after the player (silent sign-in on the route change)', (
   }
 });
 
+test('the public hub stays on home without starting account sign-in', async ({ page }) => {
+  test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+  const authorize = [];
+  page.on('request', (req) => {
+    const url = new URL(req.url());
+    if (url.pathname === '/oauth/authorize') authorize.push(url.searchParams.get('prompt'));
+  });
+  await page.goto(`${origin}/melodica/`);
+  await expect(page.locator('#app')).toHaveAttribute('data-account-ready', 'true');
+  await expect(page.locator('[data-hub-board]')).toContainText('Sign in to Melodica');
+  await expect(page.locator('[data-hub-board] .boards')).toHaveCount(0);
+  await expect(page.locator('[data-hub-me]')).toContainText('Sign in with spacegho.st');
+  await expect(page.locator('#app')).toHaveAttribute('data-route', 'home');
+  await expect(page).toHaveURL(`${origin}/melodica/`);
+  await expect(page.locator('#bar')).toHaveAttribute('data-state', 'signin');
+  expect(authorize).toEqual([]);
+  expect(await page.evaluate(() => sessionStorage.getItem('melodica.account.return'))).toBeNull();
+});
+
+test.describe('live hub panels', () => {
+  for (const width of [390, 1280]) for (const transport of ['socket', 'poll']) {
+    test(`${width}: listening, counts and crew change without reload over ${transport}`, async ({ page, context }) => {
+      test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+      scrobbles.reset();
+      scrobbles.seedCount = 0;
+      const key = 'e:hub-fixture';
+      scrobbles.cookies.set('hub-session', key);
+      scrobbles.crewViewers.add(key);
+      await context.addCookies([{ name: 'scrobble_session', value: 'hub-session', url: origin }]);
+      await page.addInitScript(() => sessionStorage.setItem('melodica.account.panel-silent', '1'));
+      if (transport === 'poll') await page.routeWebSocket('**/scrobble/api/live', (ws) => ws.close());
+      await page.setViewportSize({ width, height: 900 });
+      const errors = [];
+      page.on('pageerror', (e) => errors.push(e.message));
+      await page.goto(`${origin}/melodica/`);
+      const me = page.locator('[data-hub-me]');
+      const crew = page.locator('[data-hub-live]');
+      await expect(me.locator('.sui-np')).toContainText('Nothing playing');
+      await expect(crew.locator('.live-strip')).toBeAttached();
+      await expect(page.locator('#site-nav a[data-k="map"]')).toBeVisible();
+      if (transport === 'poll') {
+        await expect.poll(() => scrobbles.requests.some((r) => r.includes('live/poll'))).toBe(true);
+        await page.waitForTimeout(500);
+      } else await expect.poll(() => scrobbles.requests.filter((r) => r === 'WS /scrobble/api/live').length).toBeGreaterThan(0);
+      await page.evaluate(() => { window.__hubDoc = 'same-document'; });
+      const title = `Live Hub ${width} ${transport}`;
+      const started = Date.now();
+      const track = { title, artist: 'Hub Artist', duration_ms: 200000, started_at: started };
+      scrobbles.emit(key, { type: 'playing', now_playing: track });
+      scrobbles.emit(key, { type: 'listen', listen: { id: `hub-${width}-${transport}`, title: 'Finished Hub Song', artist: 'Hub Artist', listened_at: Math.floor(started / 1000), session: Math.floor(started / 1000) } });
+      scrobbles.emit(key, { type: 'nowplaying', members: [{ github: 'hub-crew', name: 'Hub Crew', avatar: '', track }] });
+      await expect(me.locator('.sui-np b')).toHaveText(title, { timeout: 2000 });
+      await expect(me.locator('.hist-title').first()).toHaveText('Finished Hub Song', { timeout: 2000 });
+      await expect(me.locator('.sui-stats dd').first()).toHaveText('1', { timeout: 2000 });
+      await expect(crew.locator('.live-card .t')).toHaveText(title, { timeout: 2000 });
+      expect(Date.now() - started, 'all hub panels update within two seconds').toBeLessThan(2000);
+      expect(await page.evaluate(() => window.__hubDoc)).toBe('same-document');
+      expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+      const bar = await barAt(page);
+      expect(Math.abs(bar.bottom - bar.vh)).toBeLessThanOrEqual(0.5);
+      await page.screenshot({ path: resolve(ARTIFACTS, `hub-live-${width}-${transport}.png`) });
+      const stored = scrobbles.accounts.get(key);
+      stored.now = track;
+      stored.listens.push({ id: `hub-${width}-${transport}`, title: 'Finished Hub Song', artist: 'Hub Artist', listened_at: Math.floor(started / 1000), session: Math.floor(started / 1000) });
+      const socketsBefore = scrobbles.requests.filter((r) => r === 'WS /scrobble/api/live').length;
+      await page.click('#site-nav a[data-k="listens"]');
+      await expect(page.locator('#app')).toHaveAttribute('data-route', 'listens');
+      const listens = page.locator('#route-body .sui-listens');
+      await expect(listens.locator('.sui-np b')).toHaveText(title);
+      if (transport === 'poll') {
+        const before = scrobbles.requests.filter((r) => r.includes('live/poll')).length;
+        await expect.poll(() => scrobbles.requests.filter((r) => r.includes('live/poll')).length).toBeGreaterThan(before);
+        await page.waitForTimeout(500);
+      } else await expect.poll(() => scrobbles.requests.filter((r) => r === 'WS /scrobble/api/live').length).toBeGreaterThan(socketsBefore);
+      const next = Date.now();
+      scrobbles.emit(key, { type: 'playing', now_playing: { ...track, title: 'Next Hub Song' } });
+      scrobbles.emit(key, { type: 'listen', listen: { id: `next-${width}-${transport}`, title: 'Another Listen', artist: 'Hub Artist', listened_at: Math.floor(next / 1000), session: Math.floor(next / 1000) } });
+      await expect(listens.locator('.sui-np b')).toHaveText('Next Hub Song', { timeout: 2000 });
+      await expect(listens.locator('.hist-title').first()).toHaveText('Another Listen', { timeout: 2000 });
+      await expect(listens.locator('.sui-stats dd').first()).toHaveText('2');
+      expect(Date.now() - next, 'listens route updates within two seconds').toBeLessThan(2000);
+      expect(await page.evaluate(() => window.__hubDoc)).toBe('same-document');
+      expect(errors).toEqual([]);
+    });
+  }
+});
+
 // ---------------------------------------------------------------- Resume (0.11.0)
 // The tuner's tones are 10 s long; these tests stretch them (MP3 frames repeated)
 // so a song can be played to 1:23. Every audio request the page makes is recorded.
@@ -996,7 +1102,12 @@ async function longAudio(page, { refuse = () => false } = {}) {
 async function playTo(page, at) {
   await expect.poll(async () => page.evaluate(() => { const a = document.getElementById('audio'); return Number.isFinite(a.duration) ? a.duration : 0; }), { timeout: 20_000 }).toBeGreaterThan(at + 5);
   await page.evaluate((t) => { document.getElementById('audio').currentTime = t; }, at - 1.5);
-  await expect.poll(async () => (await audioTime(page)).t, { timeout: 10_000 }).toBeGreaterThanOrEqual(at);
+  try {
+    await expect.poll(async () => (await audioTime(page)).t, { timeout: 10_000 }).toBeGreaterThanOrEqual(at);
+  } catch (err) {
+    console.log('seek state', await page.locator('#audio').evaluate((a) => ({ time: a.currentTime, duration: a.duration, paused: a.paused, ended: a.ended, ready: a.readyState, network: a.networkState, error: a.error && a.error.code })));
+    throw err;
+  }
   return (await audioTime(page)).t;
 }
 
@@ -1224,6 +1335,31 @@ test('the login card: Sign in with GitHub goes to spacegho.st GitHub sign-in, th
 // (Before the scrobbling tests: the CI's tuner report reads the log the last test leaves,
 // and that one plays inserts.)
 test.describe.serial('scrobbling to spacegho.st', () => {
+  test('the submit response shows a deployment without waiting for a live event', async ({ page }) => {
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    await longAudio(page);
+    scrobbles.deploymentFor = (l) => ({ season: '2026-11', counted: 1, units: 1.5, listens: [{ listened_at: l.listened_at,
+      artist_name: l.artist, track_name: l.title, counted: true, units: 1.5, town: { key: l.artist.toLowerCase(), name: l.artist, armies: 4 },
+      provinces: [{ key: 'indie rock', land: 'Rock', units: 1.5, stronghold: { name: 'Ironhold' } }] }] });
+    try {
+      await begin(page, { every: 0, scrobble: true });
+      // The tuner metadata describes its short fixture. The extended media above
+      // lets this presentation test cross a 32 s track's real listen threshold.
+      await page.evaluate(async () => {
+        const { ListenTracker } = await import('./scrobble.js');
+        const due = ListenTracker.prototype.due;
+        ListenTracker.prototype.due = function () { this.duration = 32; return due.call(this); };
+        document.getElementById('audio').playbackRate = 4;
+      });
+      await expect(page.locator('#deploy-feedback')).toContainText('Your listen deployed 1.5 units to Ironhold');
+      expect(scrobbles.events, 'the response alone supplied the feedback').toEqual([]);
+      await expect.poll(() => scrobbles.posts.filter((p) => p.body.listen_type === 'single').length).toBe(1);
+      await page.click('#site-nav a[data-k="listens"]');
+      await expect(page.locator('#route-body .sui-dep').first()).toContainText('+1.5 ⚔ Ironhold');
+      await page.screenshot({ path: resolve(ARTIFACTS, 'listen-deployment-response.png') });
+    } finally { delete scrobbles.deploymentFor; }
+  });
+
   test('at 390 wide: the listens scroll in their own box and the footer stays reachable', async ({ page }) => {
     test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
     await page.setViewportSize({ width: 390, height: 844 });
@@ -1293,7 +1429,7 @@ test.describe.serial('scrobbling to spacegho.st', () => {
     await expect(page.locator('#site-nav a[aria-current="page"]')).toHaveAttribute('data-k', 'app');
     for (const k of ['home', 'listens', 'leaderboard', 'map', 'extension', 'account']) {
       const path = k === 'home' ? '/melodica/' : `/melodica/${k}/`;
-      await expect(page.locator(`#site-nav a[data-k="${k}"]`)).toHaveAttribute('href', `${origin}${path}`);
+      await expect(page.locator(`.top a[data-k="${k}"]`)).toHaveAttribute('href', `${origin}${path}`);
     }
     await expect(page.locator(`${LISTEN_ROWS}`).first()).toBeVisible();
     // A listen arriving over the live channel (the fake's WebSocket).
@@ -1389,5 +1525,266 @@ test.describe.serial('scrobbling to spacegho.st', () => {
     await expect(page.locator('#site-nav a[data-k="leaderboard"]')).toHaveAttribute('href', `${origin}/melodica/leaderboard/`);
     expect(evidence.errors).toEqual([]);
   });
+
+  test('signed-in non-crew account can open the standalone leaderboard', async ({ page }) => {
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    scrobbles.crewAccounts = false;
+    const evidence = await begin(page, { every: 0, scrobble: true });
+    scrobbles.crewViewers.delete(key());
+    await page.click('#site-nav a[data-k="leaderboard"]');
+    await expect(page).toHaveURL(`${origin}/melodica/leaderboard/`);
+    await expect(page.locator('#route-body')).toContainText('Slow Light', { timeout: 15_000 });
+    await expect(page.locator('#route-view .route-notice')).toHaveCount(0);
+    expect(evidence.errors, 'page errors').toEqual([]);
+    expect(scrobbles.requests.filter((r) => r.startsWith('GET /scrobble/api/me'))).not.toHaveLength(0);
+    scrobbles.crewAccounts = false;
+  });
 });
 
+
+for (const width of [1280, 390]) {
+  test(`one engine in three tabs at ${width}: remote pause/play stays in the original tab, close hands off without relay or me`, async ({ page, context }) => {
+    test.skip(!haveTuner, 'no tuner');
+    await page.setViewportSize({ width, height: 844 });
+    await longAudio(page);
+    await begin(page, { every: 0 });
+    await expect.poll(() => page.locator('#audio').evaluate((a) => !a.paused)).toBe(true);
+    const title = await page.locator('#np-title').textContent();
+    const baseline = relay.seen.length;
+    const meHits = [];
+    context.on('request', (r) => { if (/\/(me|policy)(?:\?|$)/.test(new URL(r.url()).pathname)) meHits.push(r.url()); });
+    const others = [await context.newPage(), await context.newPage()];
+    for (const p of others) {
+      await p.setViewportSize({ width, height: 844 });
+      await longAudio(p);
+      await p.goto(appUrl);
+      await expect(p.locator('#app')).toHaveAttribute('data-engine', 'remote');
+      await expect(p.locator('#np-title')).toHaveText(title);
+      expect(await p.locator('#audio').evaluate((a) => a.getAttribute('src'))).toBeNull();
+    }
+    expect(relay.seen.length, 'remote bootstrap makes no relay requests').toBe(baseline);
+    await others[0].click('#btn-play');
+    await expect.poll(() => page.locator('#audio').evaluate((a) => a.paused)).toBe(true);
+    // Opening another remote while the original engine is paused must not take it over.
+    await others[1].reload();
+    await expect(others[1].locator('#np-title')).toHaveText(title);
+    await others[1].click('#btn-play');
+    await expect.poll(() => page.locator('#audio').evaluate((a) => !a.paused)).toBe(true);
+    for (const p of others) expect(await p.locator('#audio').evaluate((a) => a.getAttribute('src'))).toBeNull();
+    expect(relay.seen.length).toBe(baseline);
+    // Give the encrypted checkpoint time to commit before the document is destroyed.
+    await expect.poll(() => page.evaluate(async () => {
+      const { Vault } = await import('./vault.js');
+      const v = await new Vault().read('tab-engine-v1');
+      return !!(v?.song && v.playing);
+    })).toBe(true);
+    const meBefore = meHits.length;
+    await page.close();
+    await expect.poll(async () => Promise.all(others.map((p) => p.locator('#app').getAttribute('data-engine')))).toContain('owner');
+    const owner = (await others[0].locator('#app').getAttribute('data-engine')) === 'owner' ? others[0] : others[1];
+    await expect(owner.locator('#np-title')).toHaveText(title);
+    await expect.poll(() => owner.locator('#audio').evaluate((a) => !a.paused)).toBe(true);
+    const remote = others.find((p) => p !== owner);
+    expect(await remote.locator('#audio').evaluate((a) => a.getAttribute('src'))).toBeNull();
+    expect(relay.seen.length, 'close handoff reuses session and queue').toBe(baseline);
+    expect(meHits.length, 'close handoff does not refetch me').toBe(meBefore);
+    expect(meBefore, 'remote bootstrap does not fetch me or policy').toBe(0);
+    const storage = await owner.evaluate(() => localStorage.getItem('melodica.tabs.v1'));
+    expect(storage).not.toContain(tuner.password);
+    expect(storage).not.toContain('audioUrl');
+    for (let i = 0; i < 4; i++) {
+      const before = await owner.locator('#np-title').textContent();
+      await owner.click('#btn-next');
+      await expect(owner.locator('#np-title')).not.toHaveText(before);
+    }
+    expect(relay.seen.filter((r) => r.method === 'station.getPlaylist').length, 'refill works after handoff').toBeGreaterThan(1);
+  });
+}
+
+test('the engine reloads into the same song with Resume and makes no relay request', async ({ page, context }) => {
+  test.skip(!haveTuner, 'no tuner');
+  await longAudio(page);
+  await begin(page, { every: 0 });
+  const remote = await context.newPage();
+  await longAudio(remote);
+  await remote.goto(appUrl);
+  await expect(remote.locator('#app')).toHaveAttribute('data-engine', 'remote');
+  await page.locator('#audio').evaluate((a) => { a.currentTime = 42; });
+  await expect.poll(() => page.evaluate(async () => {
+    const { Vault } = await import('./vault.js');
+    return (await new Vault().read('tab-engine-v1'))?.position || 0;
+  })).toBeGreaterThanOrEqual(42);
+  const title = await page.locator('#np-title').textContent();
+  const baseline = relay.seen.length;
+  await page.reload();
+  await expect(page.locator('#app')).toHaveAttribute('data-engine', 'owner');
+  await expect(page.locator('#np-title')).toHaveText(title);
+  await expect(page.locator('#bar-resume')).toBeVisible();
+  await page.click('#bar-resume');
+  await expect.poll(() => page.locator('#audio').evaluate((a) => a.currentTime)).toBeGreaterThanOrEqual(42);
+  await expect(remote.locator('#app')).toHaveAttribute('data-engine', 'remote');
+  expect(relay.seen.length).toBe(baseline);
+});
+
+test('BroadcastChannel and a storage lease keep the engine sticky when Web Locks are unavailable', async ({ page, context }) => {
+  test.skip(!haveTuner, 'no tuner');
+  await context.addInitScript(() => Object.defineProperty(navigator, 'locks', { value: undefined }));
+  await longAudio(page);
+  await begin(page, { every: 0 });
+  await expect.poll(() => relay.seen.some((r) => r.method === 'track.explainTrack')).toBe(true);
+  await page.click('#account summary');
+  await page.uncheck('#remember-menu');
+  await page.click('#account summary');
+  const baseline = relay.seen.length;
+  const meHits = [];
+  context.on('request', (r) => { if (/\/(me|policy)$/.test(new URL(r.url()).pathname)) meHits.push(r.url()); });
+  const remote = await context.newPage();
+  await remote.goto(appUrl);
+  await expect(remote.locator('#app')).toHaveAttribute('data-engine', 'remote');
+  await expect(remote.locator('#np-title')).toHaveText(await page.locator('#np-title').textContent());
+  await remote.click('#btn-play');
+  await expect.poll(() => page.locator('#audio').evaluate((a) => a.paused)).toBe(true);
+  await remote.click('#btn-play');
+  await expect.poll(() => page.locator('#audio').evaluate((a) => !a.paused)).toBe(true);
+  expect(await remote.locator('#audio').evaluate((a) => a.getAttribute('src'))).toBeNull();
+  expect(relay.seen.length).toBe(baseline);
+  expect(meHits, 'a remote with Remember off reuses the engine account cache').toEqual([]);
+});
+
+test('extension appearance and disappearance transfer the same live play without relay or me requests', async ({ page, context }) => {
+  test.skip(!haveTuner, 'no tuner');
+  await longAudio(page);
+  const explicit = appUrl;
+  appUrl = `${origin}${APP_PATH}`;
+  try { await begin(page, { every: 0 }); } finally { appUrl = explicit; }
+  const title = await page.locator('#np-title').textContent();
+  const baseline = relay.seen.length;
+  const meHits = [];
+  context.on('request', (r) => { if (/\/(me|policy)$/.test(new URL(r.url()).pathname)) meHits.push(r.url()); });
+  await page.evaluate(() => {
+    let session = null, relay = null, playback = null, stations = [];
+    window.__handoff = { available: true, imports: 0, exports: 0, copyReads: 0 };
+    // A valid PCM fixture larger than one chunk: cached by the fake extension,
+    // unavailable to the web page except through explicit bridge-copy replies.
+    const bytes = new Uint8Array(44 + 16000 * 12 * 2);
+    const wav = new DataView(bytes.buffer);
+    const ascii = (offset, text) => { for (let i = 0; i < text.length; i++) bytes[offset + i] = text.charCodeAt(i); };
+    ascii(0, 'RIFF'); wav.setUint32(4, bytes.length - 8, true); ascii(8, 'WAVEfmt ');
+    wav.setUint32(16, 16, true); wav.setUint16(20, 1, true); wav.setUint16(22, 1, true);
+    wav.setUint32(24, 16000, true); wav.setUint32(28, 32000, true); wav.setUint16(32, 2, true); wav.setUint16(34, 16, true);
+    ascii(36, 'data'); wav.setUint32(40, bytes.length - 44, true);
+    const post = (m) => window.postMessage({ melodica: 1, ...m }, location.origin);
+    const view = () => ({ changedAt: Date.now(), loggedIn: !!session, status: playback?.status || 'idle',
+      track: playback?.song || null, station: playback?.station ? { token: playback.station.id, name: playback.station.name } : null,
+      position: playback?.position || 0, duration: playback?.duration || 0, volume: 80, quality: 'high',
+      stations: stations.map((s) => ({ token: s.id, name: s.name, isQuickMix: s.isQuickMix })), queueLength: playback?.queue?.length || 0 });
+    const ready = () => post({ type: 'ready', name: 'melodica-extension', version: '0.8.8', player: true, session: 1 });
+    addEventListener('message', (ev) => {
+      const d = ev.data;
+      if (ev.source !== window || ev.origin !== location.origin || !d || d.melodica !== 1 || !window.__handoff.available) return;
+      if (d.type === 'hello') ready();
+      if (d.type === 'subscribe') post({ type: 'state', state: view() });
+      if (d.type === 'session-get') post({ type: 'session', id: d.id, session, access: relay?.token || null, credential: null, account: { signedIn: false }, revoked: [] });
+      if (d.type === 'session-offer') {
+        session = d.session; relay = d.relay; stations = d.stations || [];
+        post({ type: 'result', id: d.id, ok: true, outcome: 'signed-in' });
+      }
+      if (d.type === 'command' && d.action === 'playback-import') {
+        playback = d.playback; window.__handoff.imports++;
+        post({ type: 'result', id: d.id, ok: true, state: view() });
+      }
+      if (d.type === 'command' && d.action === 'playback-export') {
+        window.__handoff.exports++;
+        post({ type: 'result', id: d.id, ok: true, playback: playback && { ...playback, at: Date.now(), song: { ...playback.song, fetchedAt: 1 } } });
+      }
+      if (d.type === 'command' && d.action === 'playback-copy' && playback) {
+        window.__handoff.copyReads++;
+        const part = bytes.subarray(d.offset, d.offset + Math.min(262144, d.limit));
+        let binary = '';
+        for (let i = 0; i < part.length; i += 32768) binary += String.fromCharCode(...part.subarray(i, i + 32768));
+        post({ type: 'result', id: d.id, ok: true, copy: { sid: session.sid, trackToken: playback.song.trackToken,
+          offset: d.offset, total: bytes.length, mime: 'audio/wav', bytes: btoa(binary), done: d.offset + part.length === bytes.length } });
+      }
+    });
+    ready();
+  });
+  await expect(page.locator('#app')).toHaveAttribute('data-mode', 'remote');
+  await expect.poll(() => page.evaluate(() => window.__handoff.imports)).toBe(1);
+  await expect.poll(() => page.evaluate(() => window.__handoff.exports)).toBeGreaterThan(0);
+  await expect(page.locator('#np-title')).toHaveText(title);
+  expect(await page.locator('#audio').evaluate((a) => a.getAttribute('src'))).toBeNull();
+  expect(relay.seen.length).toBe(baseline);
+  await expect.poll(() => page.evaluate(async () => {
+    const c = await caches.open('melodica-audio-v1');
+    for (const request of await c.keys()) { const r = await c.match(request); if (r.headers.get('content-type') === 'audio/wav') return (await r.blob()).size; }
+    return 0;
+  })).toBe(384044);
+  expect(await page.evaluate(() => window.__handoff.copyReads)).toBeGreaterThan(1);
+  // The explicit export is saved encrypted; it is absent from public localStorage.
+  await expect.poll(() => page.evaluate(async () => {
+    const { Vault } = await import('./vault.js');
+    return (await new Vault().read('tab-engine-v1'))?.tab;
+  })).toBe('extension');
+  await page.evaluate(() => { window.__handoff.available = false; });
+  await page.waitForTimeout(7500); // two missed replies do not prove the audio engine stopped
+  await expect(page.locator('#app')).toHaveAttribute('data-mode', 'remote');
+  expect(await page.locator('#audio').evaluate((a) => a.getAttribute('src'))).toBeNull();
+  await page.evaluate(() => window.postMessage({ melodica: 1, type: 'gone', reason: 'runtime-invalidated' }, location.origin));
+  await expect(page.locator('#app')).toHaveAttribute('data-mode', 'local', { timeout: 15000 });
+  await expect(page.locator('#app')).toHaveAttribute('data-engine', 'owner');
+  await expect(page.locator('#np-title')).toHaveText(title);
+  await expect.poll(() => page.locator('#audio').evaluate((a) => !a.paused)).toBe(true);
+  expect(relay.seen.length).toBe(baseline);
+  expect(meHits, 'transfer does not fetch me or policy').toEqual([]);
+  expect(await page.locator('#audio').evaluate((a) => a.currentSrc.startsWith('blob:')), 'the expired song resumes from the transferred copy').toBe(true);
+});
+
+test('back to a former engine while another tab plays stays remote', async ({ page, context }) => {
+  test.skip(!haveTuner, 'no tuner');
+  await longAudio(page);
+  await begin(page, { every: 0 });
+  const remote = await context.newPage();
+  await longAudio(remote);
+  await remote.goto(appUrl);
+  await expect(remote.locator('#app')).toHaveAttribute('data-engine', 'remote');
+  await expect.poll(() => page.evaluate(async () => {
+    const { Vault } = await import('./vault.js');
+    return !!(await new Vault().read('tab-engine-v1'))?.song;
+  })).toBe(true);
+  const baseline = relay.seen.length;
+  await page.goto('about:blank');
+  await expect(remote.locator('#app')).toHaveAttribute('data-engine', 'owner');
+  await expect.poll(() => remote.locator('#audio').evaluate((a) => !a.paused)).toBe(true);
+  await page.goBack();
+  await expect(page.locator('#app')).toHaveAttribute('data-engine', 'remote');
+  expect(await page.locator('#audio').evaluate((a) => a.getAttribute('src'))).toBeNull();
+  expect(relay.seen.length).toBe(baseline);
+});
+
+test('a blocked close handoff offers one-tap Resume without fetching another playlist', async ({ page, context }) => {
+  test.skip(!haveTuner, 'no tuner');
+  await longAudio(page);
+  await begin(page, { every: 0 });
+  const remote = await context.newPage();
+  await longAudio(remote);
+  await remote.goto(appUrl);
+  await expect(remote.locator('#app')).toHaveAttribute('data-engine', 'remote');
+  await remote.evaluate(() => {
+    const play = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function () {
+      HTMLMediaElement.prototype.play = play;
+      return Promise.reject(new DOMException('Autoplay requires a gesture', 'NotAllowedError'));
+    };
+  });
+  await expect.poll(() => page.evaluate(async () => {
+    const { Vault } = await import('./vault.js');
+    return !!(await new Vault().read('tab-engine-v1'))?.song;
+  })).toBe(true);
+  const baseline = relay.seen.length;
+  await page.close();
+  await expect(remote.locator('#app')).toHaveAttribute('data-engine', 'owner');
+  await expect(remote.locator('#bar-resume')).toBeVisible();
+  await remote.click('#bar-resume');
+  await expect.poll(() => remote.locator('#audio').evaluate((a) => !a.paused)).toBe(true);
+  expect(relay.seen.length).toBe(baseline);
+});

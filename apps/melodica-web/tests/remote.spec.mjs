@@ -21,7 +21,7 @@ import http from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { resolve, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { makeScrobbles, serveNode } from './tools/fake-scrobble.mjs';
 
 // Any bearer names the one listener here; seeded so the page has listens to show.
@@ -46,7 +46,7 @@ let server = null;
 let base = '';
 const apiHits = [];
 const audioHits = [];
-const SHELL_PATHS = new Set(['/melodica/', '/melodica/listens/', '/melodica/leaderboard/', '/melodica/map/', '/melodica/account/', '/melodica/extension/']);
+const SHELL_PATHS = new Set(['/melodica/', '/melodica/listens/', '/melodica/leaderboard/', '/melodica/map/', '/melodica/account/', '/melodica/extension/', '/melodica/rooms/']);
 
 // Chromium logs "Failed to load resource" for the expected 503 from /auth/me.
 function expectedResourceError(msg) {
@@ -154,11 +154,12 @@ function fakeExtension(opts) {
     post({ type: 'state', state: JSON.parse(JSON.stringify(st)) });
   };
   const startTrack = () => {
-    st.track = { ...tracks[idx % tracks.length], quality: st.quality, audioFormat: 'aacplus' };
+    st.track = { ...tracks[idx % tracks.length], quality: st.quality, audioFormat: 'aacplus', ...(opts.coverArt ? { coverArt: opts.coverArt, art: opts.coverArt } : {}) };
     st.position = 0;
     st.duration = st.track.duration;
     st.status = 'playing';
     st.queueLength = 3;
+    if (opts.queue) st.queue = [1, 2, 3].map((offset) => ({ ...tracks[(idx + offset) % tracks.length], coverArt: opts.queueArt || '', art: opts.queueArt || '' }));
   };
   setInterval(() => { if (st.status === 'playing') { st.position += 0.2; push(); } }, 200);
   window.addEventListener('message', (ev) => {
@@ -268,6 +269,110 @@ async function finish(page, evidence, info) {
 }
 
 test.describe.serial('remote mode (the extension plays, the page is a view)', () => {
+  test('anonymous leaderboard stays gated and an older extension cannot mount Rooms', async ({ page }) => {
+    await open(page);
+    await page.goto(base.replace('/app/', '/leaderboard/'));
+    await expect(page.locator('.route-notice')).toContainText('Sign in to Melodica to see the leaderboard.');
+    await expect(page.locator('#sui-leaderboard .board-row')).toHaveCount(0);
+
+    await page.goto(base.replace('/app/', '/rooms/'));
+    await expect(page.locator('.route-notice')).toContainText('Update the Melodica extension to play rooms.');
+    await expect(page.getByRole('button', { name: /create room/i })).toHaveCount(0);
+
+  });
+
+  test('listen links validate input, ask before playback, and share HTTPS links', async ({ page }, info) => {
+    const evidence = await open(page);
+    try {
+      await page.locator('.listen-links summary').click();
+      await page.locator('#listen-share-station').click();
+      await expect(page.locator('#listen-message')).toHaveText('Pick a station and song first.');
+      await page.locator('#listen-input').fill('javascript:alert(1)');
+      await page.locator('#listen-open button[type=submit]').click();
+      await expect(page.locator('#listen-message')).toHaveText("That link isn't supported");
+      expect(await page.evaluate(() => window.__remote.commands)).toEqual([]);
+      for (const uri of ['listen://station/S1', 'web+listen://station/S1', 'https://spacegho.st/listen/station/S1']) {
+        await page.locator('#listen-input').fill(uri);
+        await page.locator('#listen-open button[type=submit]').click();
+        await expect(page.locator('#listen-pending-name')).toHaveText('Station S1');
+      }
+      expect(await page.evaluate(() => window.__remote.commands)).toEqual([]);
+      await page.locator('#listen-play').click();
+      await expect(page.locator('#np-title')).toHaveText('Slow Light');
+      expect(await page.evaluate(() => window.__remote.commands)).toEqual(['play S1']);
+      await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { value: { writeText: (text) => { window.__copied = text; return Promise.resolve(); } }, configurable: true }));
+      await page.locator('#listen-share-artist').click();
+      expect(await page.evaluate(() => window.__copied)).toBe('https://spacegho.st/listen/artist/Aurora%20Fields');
+      await page.locator('#listen-share-station').click();
+      expect(await page.evaluate(() => window.__copied)).toBe('https://spacegho.st/listen/station/S1');
+      expect(apiHits).toEqual([]);
+    } finally { await finish(page, evidence, info); }
+  });
+
+  test('a linked station URL waits for Play even when the extension is signed in', async ({ page }, info) => {
+    const evidence = await open(page);
+    try {
+      await page.goto(base + '?station=S1');
+      await expect(page.locator('#listen-pending-name')).toHaveText('Station S1');
+      await expect(page.locator('#app')).toHaveAttribute('data-mode', 'remote');
+      expect(await page.evaluate(() => window.__remote.commands)).toEqual([]);
+      await page.locator('#listen-play').click();
+      await expect(page.locator('#np-title')).toHaveText('Slow Light');
+      expect(await page.evaluate(() => window.__remote.commands)).toEqual(['play S1']);
+    } finally { await finish(page, evidence, info); }
+  });
+
+  test('a linked artist waits for Play and handler registration is an explicit click', async ({ page }, info) => {
+    await page.addInitScript(() => Object.defineProperty(navigator, 'registerProtocolHandler', { value: (...args) => { window.__registration = args; }, configurable: true }));
+    const evidence = await open(page);
+    try {
+      await page.goto(base + '?seed=artist:Modest%20Mouse');
+      await expect(page.locator('#listen-pending-name')).toHaveText('Modest Mouse');
+      await expect(page.locator('#app')).toHaveAttribute('data-mode', 'remote');
+      expect(await page.evaluate(() => window.__remote.commands)).toEqual([]);
+      expect(await page.evaluate(() => window.__registration)).toBeUndefined();
+      await page.locator('.listen-links summary').click();
+      await page.locator('#listen-register').click();
+      expect(await page.evaluate(() => window.__registration)).toEqual(['web+listen', 'https://spacegho.st/listen/?uri=%s']);
+      await page.locator('#listen-play').click();
+      await expect.poll(() => page.evaluate(() => window.__remote.commands)).toEqual(['seed']);
+    } finally { await finish(page, evidence, info); }
+  });
+
+  test('extension queue: song details, cached covers and updates without local playback', async ({ page }, info) => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="9" height="9"><rect width="9" height="9" fill="gold"/></svg>';
+    const queueArt = new URL('broken-queue.png', base).href, coverArt = new URL('broken-current.png', base).href;
+    const cached = [];
+    await page.route('**/broken-*.png', (r) => r.fulfill({ contentType: 'image/png', body: 'not an image' }));
+    await page.route('**/scrobble/art/**', (r) => {
+      cached.push(new URL(r.request().url()).pathname);
+      return r.fulfill({ contentType: 'image/svg+xml', body: svg });
+    });
+    const evidence = await open(page, { queue: true, queueArt, coverArt });
+    await page.locator('#station-list button.station', { hasText: 'Aurora Fields Radio' }).click();
+    await expect(page.locator('#up-next .t')).toHaveText(['Second Song', 'Third Song', 'Slow Light']);
+    await expect(page.locator('#up-next .a')).toHaveText(['Band Two', 'Band Three', 'Aurora Fields']);
+    await expect(page.locator('#up-next .queue-album')).toHaveText(['Album Two', 'Album Three', 'Northern']);
+    await expect(page.locator('#up-next-empty')).toBeHidden();
+    for (const selector of ['#cover', '#bar-cover', '#history img']) {
+      await page.locator(selector).first().scrollIntoViewIfNeeded();
+      await expect.poll(() => page.locator(selector).first().evaluate((img) => img.naturalWidth)).toBe(9);
+    }
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 800 });
+      await page.locator('#up-next').scrollIntoViewIfNeeded();
+      await expect.poll(() => page.locator('#up-next img').evaluateAll((images) => images.length === 3 && images.every((img) => img.naturalWidth === 9))).toBe(true);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      await page.screenshot({ path: resolve(ARTIFACTS, `remote-queue-${width}.png`) });
+    }
+    await page.click('#btn-next');
+    await expect(page.locator('#up-next .t')).toHaveText(['Third Song', 'Slow Light', 'Second Song']);
+    for (const source of [queueArt, coverArt]) expect(cached).toContain(`/scrobble/art/${createHash('sha256').update(source).digest('hex')}`);
+    expect(apiHits, 'only the extension uses the relay').toEqual([]);
+    expect(audioHits, 'only the extension fetches audio').toEqual([]);
+    await finish(page, evidence, info);
+  });
+
   test('subscribe -> state: the player view, driven by pushed state; controls send commands', async ({ page }, info) => {
     const evidence = await open(page);
     try {
@@ -553,6 +658,45 @@ test.describe.serial('sessions with the extension (docs/BRIDGE.md 4)', () => {
 
 // ---------------------------------------------------------------- the shell and Resume (0.11.0)
 test.describe.serial('remote mode in the app shell', () => {
+  test('live listen deployments appear above the bar once, with left-aligned song details', async ({ page }, info) => {
+    const access = 'eyJhbGciOiJFUzI1NiJ9.eyJleHAiOjQxMDI0NDQ4MDB9.sig';
+    const evidence = await open(page, { session: true, extSession: SESSION('DEPLOY'), access });
+    await expect(page.locator('#live-state')).toHaveText('live');
+    const key = 'e:listener@example.com';
+    const at = Math.floor(Date.now() / 1000);
+    const row = { listened_at: at, artist_name: 'Aurora Fields', track_name: 'Slow Light', counted: true, units: 1.5,
+      town: { key: 'aurora fields', name: 'Aurora Fields', armies: 5 },
+      provinces: [{ key: 'indie rock', land: 'Rock', units: 1.5, stronghold: { name: 'Ironhold' } }] };
+    const deployment = { season: '2026-11', counted: 1, units: 1.5, listens: [row] };
+    await page.evaluate(() => { window.__deploys = 0; document.addEventListener('sui:deploy', () => window.__deploys++); });
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 800 });
+      const listen = { id: `deployment-${width}`, listened_at: at, session: at, artist: row.artist_name, title: row.track_name, album: 'Northern', deployment: row };
+      const dep = { ...deployment, listens: [{ ...row, listened_at: at + width }] };
+      scrobbles.emit(key, { type: 'listen', listen });
+      scrobbles.emit(key, { type: 'deploy', to: 'owner', deployment: dep });
+      await expect(page.locator('#deploy-feedback .sui-toast')).toHaveText('Your listen deployed 1.5 units to IronholdAurora Fields · The Thundering Crags');
+      const chip = page.locator(`#sui-listens .hist[data-id="deployment-${width}"] .sui-dep`);
+      await expect(chip).toHaveAttribute('href', '/melodica/map/#town=aurora%20fields');
+      await expect(chip).toContainText('+1.5 ⚔ Ironhold');
+      expect(await chip.locator('..').evaluate((meta) => getComputedStyle(meta).textAlign)).toBe('left');
+      const position = await page.locator('#deploy-feedback').evaluate((host) => ({ bottom: host.getBoundingClientRect().bottom, bar: document.getElementById('bar').getBoundingClientRect().top, width: document.documentElement.scrollWidth }));
+      expect(position.bottom).toBeLessThan(position.bar);
+      expect(position.width).toBeLessThanOrEqual(width);
+      scrobbles.emit(key, { type: 'deploy', to: 'owner', deployment: dep });
+      await page.screenshot({ path: resolve(ARTIFACTS, `listen-deployment-${width}.png`) });
+    }
+    await expect.poll(() => page.evaluate(() => window.__deploys)).toBe(2);
+    scrobbles.emit(key, { type: 'retreat', retreat: { text: 'Your armies left Aurora Fields.', closed: true } });
+    await expect(page.locator('#deploy-feedback')).toContainText('Your armies left Aurora Fields.');
+    expect(apiHits, 'remote requests no Pandora data').toEqual([]);
+    expect(audioHits, 'remote requests no song audio').toEqual([]);
+    await page.click('#account summary');
+    await page.click('#logout');
+    await expect(page.locator('#deploy-feedback')).toBeEmpty();
+    await finish(page, evidence, info);
+  });
+
   test('every route at 1280 and 390 as a remote: the bar pinned to the bottom, driving the extension; the page fetches no audio and keeps no copy', async ({ page }, info) => {
     const requests = [];
     page.on('request', (r) => { if (r.resourceType() === 'media' || /\.(mp3|m4a|aac|mp4)(\?|$)/.test(r.url()) || r.url().includes('/audio')) requests.push(r.url()); });
@@ -565,7 +709,7 @@ test.describe.serial('remote mode in the app shell', () => {
       // No account has answered yet: keep the map reachable for GitHub sign-in.
       await expect(page.locator('#site-nav a[data-k="map"]')).toBeVisible();
       for (const k of ['home', 'listens', 'leaderboard', 'map', 'account', 'extension', 'app']) {
-        await page.click(`#site-nav a[data-k="${k}"]`);
+        await page.click(`.top a[data-k="${k}"]`);
         await expect(page.locator('#app')).toHaveAttribute('data-route', k);
         if (k === 'map') await expect(page.locator('#route-view .route-notice a', { hasText: 'Sign in with GitHub' })).toBeVisible();
         for (const where of ['top', 'middle', 'bottom']) {

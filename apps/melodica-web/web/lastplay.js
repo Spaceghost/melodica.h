@@ -3,8 +3,8 @@
 // of its audio for when its link has expired.
 //
 // The record lives in the encrypted store (web/vault.js, record "last"), written only
-// by the device that plays: a page acting as a remote for the extension never writes
-// it and never fetches or keeps audio (the extension's engine does that for itself).
+// by the device that plays. On that same device an explicit extension bridge
+// export can mirror its actual play and cached bytes; remotes never fetch its media.
 // Copies are in the Cache API, keyed by track token: the playing song and the next one
 // at most; a copy is deleted when its song finishes. A full disk (quota) only means no
 // copy.
@@ -89,6 +89,17 @@ export class AudioCopies {
     } finally {
       if (this.inflight.get(token) === ctl) this.inflight.delete(token);
     }
+  }
+
+  // Import bytes already cached by this device's extension. No media request.
+  async put(token, blob) {
+    if (this.off || !token || !blob || !blob.size) return false;
+    try {
+      await (await this.open()).put(this.key(token), new Response(blob, { headers: {
+        'content-type': blob.type || 'audio/mp4', 'content-length': String(blob.size),
+      } }));
+      return true;
+    } catch (err) { this.log(`copy import failed: ${err && err.message}`); return false; }
   }
 
   async drop(token) {

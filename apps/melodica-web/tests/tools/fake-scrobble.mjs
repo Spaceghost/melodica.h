@@ -73,7 +73,7 @@ export function makeScrobbles({ who }) {
     if (p === '/scrobble/api/me' && m === 'GET') {
       const first = page(a, '', 15);
       return json({ account: { kind: key.startsWith('u:') ? 'user' : 'melodica', github: null, created_at: 0 }, settings: a.settings,
-        counts: { total: a.listens.length }, now_playing: a.now, recent: first.listens, next_cursor: first.next_cursor,
+        counts: { all: a.listens.length, '30d': a.listens.length, today: a.listens.length }, now_playing: a.now, recent: first.listens, next_cursor: first.next_cursor,
         crew_viewer: (self.crewViewers.has(key) || (self.crewAccounts && key.startsWith('u:'))) });
     }
     if (p === '/scrobble/api/me/listens' && m === 'GET') {
@@ -91,10 +91,12 @@ export function makeScrobbles({ who }) {
       if (body.listen_type === 'playing_now') { a.now = { artist: md.artist_name, title: md.track_name }; return json({ status: 'ok' }); }
       if (body.listen_type !== 'single' || !Number.isFinite(entry.listened_at)) return json({ error: 'invalid_listen' }, 400);
       const l = { session: entry.listened_at, listened_at: entry.listened_at, artist: md.artist_name, title: md.track_name, album: md.release_name, duration_ms: md.additional_info && md.additional_info.duration_ms, client: md.additional_info && md.additional_info.submission_client };
+      const deployment = self.deploymentFor?.(l);
+      if (deployment?.listens?.[0]) l.deployment = deployment.listens[0];
       const lid = id(l);
       if (!a.listens.some((x) => x.id === lid)) a.listens.unshift({ id: lid, ...l });
       a.listens.sort((x, y) => y.listened_at - x.listened_at || (y.id < x.id ? -1 : 1));
-      return json({ status: 'ok' });
+      return json({ status: 'ok', ...(deployment ? { deployment } : {}) });
     }
     if (p === '/scrobble/api/me/settings' && m === 'GET') return json(a.settings);
     if (p === '/scrobble/api/leaderboard' && m === 'GET') {
@@ -131,7 +133,7 @@ export function makeScrobbles({ who }) {
       const since = Number(url.searchParams.get('since')) || 0;
       return json({ events: events.filter((e) => e.key === key && e.ev.at > since).map((e) => e.ev), now: Date.now() });
     }
-    if (p === '/scrobble/api/live' && m === 'GET') return json({ members: [] });
+    if (p === '/scrobble/api/live' && m === 'GET') return json({ live: [] });
     if (p === '/scrobble/api/me/settings' && m === 'POST') {
       let body = null;
       try { body = await req.json(); } catch (_) { return json({ error: 'bad_json' }, 400); }

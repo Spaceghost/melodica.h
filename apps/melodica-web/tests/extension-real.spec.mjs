@@ -513,8 +513,8 @@ const RELOADS = Number(process.env.RELOADS || 20);
 
 // Milliseconds from navigation start until the page shows the extension signed in
 // (and, `playing`, showing a track); null when it never does within 10 s. The tuner's
-// tracks are 10 s long, so which track it is is checked afterwards, against the
-// extension's tracks before and after.
+// tracks are 10 s long, so the delivered state and displayed title are read together.
+// Background reads before/after navigation are diagnostics, not a snapshot of that read.
 async function signedInAfter(page, playing = false) {
   return page.evaluate(async (want) => {
     const t0 = performance.timeOrigin;
@@ -523,6 +523,7 @@ async function signedInAfter(page, playing = false) {
       const prompt = document.getElementById('remote-signin');
       const station = document.querySelector('#station-list button.station');
       if (!app || app.dataset.mode !== 'remote' || app.dataset.view !== 'player') return false;
+      if (!(window.__trace || []).some((t) => t.type === 'state' && t.loggedIn === true)) return false;
       if (!prompt || !prompt.hidden || !station) return false;
       if (want && /^(Pick a station)?$/.test((document.getElementById('np-title') || {}).textContent || '')) return false;
       return true;
@@ -552,7 +553,13 @@ function traceBridge(page) {
 function pageSnapshot(page) {
   return page.evaluate(() => {
     const app = document.getElementById('app');
+    const current = (window.__trace || []).filter((t) => t.type === 'state' && t.track)
+      .reduce((latest, t) => !latest || (t.changedAt || 0) >= (latest.changedAt || 0) ? t : latest, null);
     return {
+      bridgeTrack: current?.track || '',
+      timing: Object.fromEntries(Object.entries(window.__mwTiming || {}).map(([key, value]) => [key, Math.round(value)])),
+      navigation: performance.getEntriesByType('navigation').map((n) => ({ responseEnd: Math.round(n.responseEnd), interactive: Math.round(n.domInteractive), dcl: Math.round(n.domContentLoadedEventEnd) })),
+      scripts: performance.getEntriesByType('resource').filter((r) => /\.(js|css)(?:\?|$)/.test(r.name)).map((r) => ({ file: new URL(r.name).pathname.split('/').pop(), start: Math.round(r.startTime), response: Math.round(r.responseStart), duration: Math.round(r.duration) })),
       mode: app && app.dataset.mode, view: app && app.dataset.view,
       prompt: !document.getElementById('remote-signin').hidden,
       stations: document.querySelectorAll('#station-list button.station').length,
@@ -598,9 +605,10 @@ test.describe('reloads with the real extension signed in', () => {
         await page.reload();
         const ms = await signedInAfter(page, true);
         const after = ((await ext.bg()).track || {}).title || '';
-        const shown = await page.locator('#np-title').textContent();
+        const snap = await pageSnapshot(page);
+        const shown = snap.title;
         out.playing.push(ms);
-        if (ms === null || ms > RELOAD_MAX_MS || ![before, after].includes(shown)) out.misses.push({ kind: 'playing', i, ms, before, after, shown, snap: await pageSnapshot(page), trace: (await page.evaluate(() => window.__trace)).slice(0, 30) });
+        if (ms === null || ms > RELOAD_MAX_MS || !snap.bridgeTrack || shown !== snap.bridgeTrack) out.misses.push({ kind: 'playing', i, ms, before, after, shown, snap, trace: (await page.evaluate(() => window.__trace)).slice(0, 30) });
       }
       await page.screenshot({ path: resolve(ARTIFACTS, 'extension-real-reload.png') });
     } finally {
@@ -639,6 +647,7 @@ test.describe('reloads with the real extension signed in', () => {
       await extensionId(ctx);
       await new Promise((r) => setTimeout(r, 35_000));
       const page = await ctx.newPage();
+      await traceBridge(page);
       await page.goto(APP);
       const ms = await signedInAfter(page);
       out.asleep = ms;
@@ -646,6 +655,7 @@ test.describe('reloads with the real extension signed in', () => {
     } finally {
       await ctx.close();
     }
+    await writeFile(resolve(ARTIFACTS, 'extension-real-reloads.json'), JSON.stringify(out, null, 2));
     console.log(`reloads: ${JSON.stringify(out)}`);
     expect(out.misses, `every reload signed in within ${RELOAD_MAX_MS} ms`).toEqual([]);
     const slow = [...out.idle, ...out.playing].filter((ms) => ms > RELOAD_MS).length;
@@ -670,4 +680,96 @@ test('a fresh profile, the extension never opened: the page finds it and is its 
   } finally {
     await ctx.close();
   }
+});
+
+test.describe('same-device copy handoff', () => {
+  test.describe.configure({ retries: 0 });
+  test('disabling the real extension resumes its expired song from transferred bytes in the web app', async () => {
+    test.skip(!EXT || !haveTuner, 'requires an unpacked extension and local tuner');
+    test.setTimeout(120000);
+    const ctx = await launch(join(tmp, 'profile-disabled-copy'), true);
+    try {
+      const id = await extensionId(ctx);
+      const ctl = await ctx.newPage();
+      await ctl.goto(`chrome-extension://${id}/options.html`);
+      await ctl.fill('#endpoint', `${tuner.https}/services/json/`);
+      await ctl.click('#save');
+      await expect(ctl.locator('#options-message')).toContainText('Saved');
+      const send = (message) => ctl.evaluate((m) => chrome.runtime.sendMessage(m), message);
+      await send({ type: 'logout' });
+      const signed = await send({ type: 'login', email: tuner.user, password: tuner.password, remember: true });
+      expect(signed.ok, signed.error).toBe(true);
+      const stations = (await send({ type: 'stations' })).stations;
+      const station = stations.find((s) => !s.isQuickMix) || stations[0];
+      expect((await send({ type: 'player', action: 'play', station })).ok).toBe(true);
+      await expect.poll(async () => (await send({ type: 'player-get' })).state.status).toBe('playing');
+      await expect.poll(async () => (await send({ type: 'player-get' })).state.position).toBeGreaterThan(0.5);
+      await send({ type: 'player', action: 'pause' });
+      const state = (await send({ type: 'player-get' })).state;
+      const token = state.track.trackToken;
+      await expect.poll(() => ctl.evaluate(async (token) => {
+        const c = await caches.open('melodica-audio');
+        const r = await c.match(`https://melodica.invalid/audio/${encodeURIComponent(token)}`);
+        return r ? (await r.blob()).size : 0;
+      }, token)).toBeGreaterThan(0);
+      const hashInExtension = await ctl.evaluate(async (token) => {
+        const c = await caches.open('melodica-audio');
+        const r = await c.match(`https://melodica.invalid/audio/${encodeURIComponent(token)}`);
+        return [...new Uint8Array(await crypto.subtle.digest('SHA-256', await r.arrayBuffer()))].map((b) => b.toString(16).padStart(2, '0')).join('');
+      }, token);
+      const page = await ctx.newPage();
+      const calls = [];
+      page.on('request', (r) => calls.push(r.url()));
+      await page.addInitScript(() => {
+        window.__gone = [];
+        addEventListener('message', (event) => {
+          if (event.source === window && event.origin === location.origin && event.data?.melodica === 1 && event.data.type === 'gone') window.__gone.push(event.data.reason);
+        });
+      });
+      await page.goto(APP);
+      await expect(page.locator('#app')).toHaveAttribute('data-mode', 'remote');
+      await expect(page.locator('#np-title')).toHaveText(state.track.title);
+      await expect.poll(() => page.evaluate(async (token) => {
+        const c = await caches.open('melodica-audio-v1');
+        const r = await c.match(`${location.origin}/melodica/__audio/${encodeURIComponent(token)}`);
+        return r ? [...new Uint8Array(await crypto.subtle.digest('SHA-256', await r.arrayBuffer()))].map((b) => b.toString(16).padStart(2, '0')).join('') : '';
+      }, token), { timeout: 20000 }).toBe(hashInExtension);
+      await expect.poll(() => page.evaluate(async () => {
+        const { Vault } = await import('./vault.js');
+        return (await new Vault().read('last'))?.song?.trackToken || '';
+      })).toBe(token);
+      await send({ type: 'test-expire-last', dropCopy: false });
+      await expect.poll(() => page.evaluate(async () => {
+        const { Vault } = await import('./vault.js');
+        const p = await new Vault().read('tab-engine-v1');
+        return !!p?.song && Number(p.song.fetchedAt) < Date.now() - 60 * 60 * 1000;
+      })).toBe(true);
+      const baseline = relay.seen.length;
+      const startCalls = calls.length;
+      const manager = await ctx.newPage();
+      await manager.goto(`chrome://extensions/?id=${id}`);
+      const cdp = await ctx.newCDPSession(manager);
+      const offscreen = `chrome-extension://${id}/offscreen.html`;
+      expect((await cdp.send('Target.getTargets')).targetInfos.some((t) => t.url === offscreen)).toBe(true);
+      await manager.locator('extensions-detail-view #enableToggle').click();
+      await expect.poll(() => page.evaluate(() => window.__gone)).toEqual(['runtime-invalidated']);
+      await expect.poll(async () => (await cdp.send('Target.getTargets')).targetInfos.some((t) => t.url === offscreen)).toBe(false);
+      expect(ctx.serviceWorkers().some((w) => w.url().startsWith(`chrome-extension://${id}/`))).toBe(false);
+      await expect(page.locator('#app')).toHaveAttribute('data-mode', 'local');
+      await expect(page.locator('#np-title')).toHaveText(state.track.title);
+      await expect(page.locator('#bar-resume')).toBeVisible();
+      await page.click('#bar-resume');
+      await expect.poll(() => page.locator('#audio').evaluate((a) => !a.paused && a.currentSrc.startsWith('blob:'))).toBe(true);
+      expect(await page.locator('#audio').evaluate((a) => a.currentTime)).toBeGreaterThanOrEqual(state.position - 0.5);
+      expect(relay.seen.length, 'the actual web engine reuses the handed-off session and queue').toBe(baseline);
+      const after = calls.slice(startCalls);
+      expect(after.filter((url) => /\/(me|policy)(?:\?|$)/.test(new URL(url).pathname)), 'no me/policy on handoff').toEqual([]);
+      expect(after.filter((url) => /^https?:/.test(url) && (/\/audio\//.test(new URL(url).pathname) || /\.(mp3|m4a|aac|wav)$/.test(new URL(url).pathname))), 'no media request for an expired source').toEqual([]);
+      const proof = { ok: true, sameTitle: true, samePosition: true, sameAudioSha256: hashInExtension,
+        runtimeGone: true, offscreenClosed: true, backgroundClosed: true, webBlobPlaying: true,
+        noRelay: true, noMeOrPolicy: true, noMediaDownload: true };
+      await writeFile(resolve(ARTIFACTS, 'extension-real-expired-copy.json'), JSON.stringify(proof, null, 2) + '\n');
+      await cdp.detach();
+    } finally { await ctx.close(); }
+  });
 });

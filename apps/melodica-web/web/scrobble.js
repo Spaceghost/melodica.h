@@ -153,6 +153,20 @@ export class ListenTracker {
     this.sent = false;
   }
   setDuration(d) { if (!this.duration && Number.isFinite(d) && d > 0) this.duration = d; }
+  restore(marker, sid, now = Date.now() / 1000) {
+    if (!sid || typeof this.song.trackToken !== 'string' || !this.song.trackToken || marker?.sid !== sid || marker.trackToken !== this.song.trackToken ||
+      !Number.isFinite(marker.startedAt) || marker.startedAt <= 0 || marker.startedAt > now + 60 ||
+      !Number.isFinite(marker.played) || marker.played < 0 || marker.played > (this.duration || 86400) + 5 ||
+      typeof marker.sent !== 'boolean') return false;
+    this.startedAt = marker.startedAt;
+    this.played = marker.played;
+    this.sent = marker.sent;
+    this.last = null;
+    return true;
+  }
+  snapshot(sid) {
+    return { sid, trackToken: this.song.trackToken, startedAt: this.startedAt, sent: this.sent, played: this.played };
+  }
   tick(currentTime, playing) {
     const t = Number(currentTime);
     if (!Number.isFinite(t)) return;

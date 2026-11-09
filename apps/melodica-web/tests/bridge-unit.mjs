@@ -166,8 +166,18 @@ assert.equal('bridge' in new PianoClient({ apiBase: 'https://relay.example/api/'
   assert.deepEqual(cmd.station, { token: 'S1', name: 'One' });
   assert.equal(typeof cmd.id, 'string');
   win.inject({ melodica: 1, type: 'result', id: 'someone-else', ok: true });
-  win.inject({ melodica: 1, type: 'result', id: cmd.id, ok: true, state: { status: 'loading' } });
-  assert.deepEqual(await c, { ok: true, error: '', state: { status: 'loading' }, outcome: '' });
+  win.inject({ melodica: 1, type: 'result', id: cmd.id, ok: true, state: { status: 'loading' }, room: { id: 'room-1234567890123456' }, result: { id: 'room-1234567890123456', name: 'Late Night' }, status: 201 });
+  assert.deepEqual(await c, { ok: true, error: '', state: { status: 'loading' }, outcome: '', room: { id: 'room-1234567890123456' }, result: { id: 'room-1234567890123456', name: 'Late Night' }, status: 201 }, 'room API response metadata is retained');
+  const search = bridge.command('room-search', {}, 200);
+  const searchId = win.posted.at(-1).data.id;
+  const rooms = [{ id: 'room-1234567890123456', name: 'Late Night' }];
+  const recent = [{ id: 'room-1234567890123456', name: 'Late Night' }];
+  win.inject({ melodica: 1, type: 'result', id: searchId, ok: true, rooms, recent, next_cursor: 'cursor-2' });
+  assert.deepEqual(await search, { ok: true, error: '', state: null, outcome: '', rooms, recent, next_cursor: 'cursor-2' }, 'room-search top-level arrays and cursor are retained');
+  const recents = bridge.command('room-recent', {}, 200);
+  const recentId = win.posted.at(-1).data.id;
+  win.inject({ melodica: 1, type: 'result', id: recentId, ok: true, recentRoomIds: ['room-1234567890123456', 7] });
+  assert.deepEqual(await recents, { ok: true, error: '', state: null, outcome: '', recentRoomIds: ['room-1234567890123456'] }, 'room-recent retains only string IDs');
   const bad = bridge.command('next', {}, 200);
   win.inject({ melodica: 1, type: 'result', id: win.posted.at(-1).data.id, ok: false, error: 'not signed in' });
   assert.deepEqual(await bad, { ok: false, error: 'not signed in', state: null, outcome: '' });
@@ -179,6 +189,45 @@ assert.equal('bridge' in new PianoClient({ apiBase: 'https://relay.example/api/'
   assert.equal(pushed.length, 2, 'no states after unsubscribe');
   bridge.stop();
   log('remote control ok');
+}
+
+// --- room clock: a separate low-rate signal, never a full player state -------------
+{
+  const win = fakeWindow();
+  const clocks = [], states = [], changes = [];
+  const bridge = new BridgeTransport(win, {
+    onChange: (b) => changes.push(b.rooms),
+    onRoomClock: (clock) => clocks.push(clock),
+  }).start();
+  const clockMessage = { melodica: 1, type: 'room-clock', room: { id: 'room-1234567890123456', state: { play: { id: 'play-1', position_ms: 21000, server_time: 100 } }, audio: { state: 'listening' }, role: 'listener', locked: false }, state: { room: { id: 'room-1234567890123456' } } };
+  win.inject(clockMessage); // not active yet
+  assert.equal(clocks.length, 0, 'clock ignored before ready');
+  win.inject({ melodica: 1, type: 'ready', name: 'melodica-extension', version: '0.9.0', player: true, rooms: 1 });
+  bridge.subscribe((state) => states.push(state));
+  const changeCount = changes.length;
+  win.inject(clockMessage);
+  assert.deepEqual(clocks, [clockMessage], 'eligible room clock is forwarded intact');
+  assert.deepEqual(states, [], 'room clock never enters onState');
+  assert.equal(bridge.gotState, false, 'room clock does not stop state subscription retries');
+  assert.equal(changes.length, changeCount, 'room clock does not trigger full onChange rendering');
+  win.inject(clockMessage, { source: {} });
+  win.inject(clockMessage, { origin: 'https://evil.example' });
+  assert.equal(clocks.length, 1, 'other windows and origins are ignored');
+  win.inject({ melodica: 1, type: 'gone' });
+  win.inject(clockMessage);
+  assert.equal(clocks.length, 1, 'clock ignored after extension goes away');
+  bridge.stop();
+
+  for (const caps of [{ player: true, rooms: 0 }, { player: false, rooms: 1 }]) {
+    const otherWin = fakeWindow();
+    const rejected = [];
+    const b = new BridgeTransport(otherWin, { onRoomClock: (clock) => rejected.push(clock) }).start();
+    otherWin.inject({ melodica: 1, type: 'ready', ...caps });
+    otherWin.inject(clockMessage);
+    assert.deepEqual(rejected, [], `clock requires player+rooms capability: ${JSON.stringify(caps)}`);
+    b.stop();
+  }
+  log('room clock guards and separation ok');
 }
 
 // --- session layer (docs/BRIDGE.md 1 and 4) ---------------------------------------------

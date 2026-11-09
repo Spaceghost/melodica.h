@@ -19,17 +19,23 @@ export class Vault {
     this.idb = idb;
     this.crypto = crypto;
     this.db = null;
+    this.opening = null;
   }
 
   get available() { return !!(this.idb && this.crypto && this.crypto.subtle); }
 
   async open() {
     if (this.db) return this.db;
-    const r = this.idb.open(DB_NAME, 1);
-    r.onupgradeneeded = () => { if (!r.result.objectStoreNames.contains(STORE)) r.result.createObjectStore(STORE); };
-    this.db = await req(r);
-    this.db.onversionchange = () => { this.db.close(); this.db = null; };
-    return this.db;
+    if (this.opening) return this.opening;
+    this.opening = (async () => {
+      const r = this.idb.open(DB_NAME, 1);
+      r.onupgradeneeded = () => { if (!r.result.objectStoreNames.contains(STORE)) r.result.createObjectStore(STORE); };
+      this.db = await req(r);
+      const db = this.db;
+      db.onversionchange = () => { db.close(); if (this.db === db) this.db = null; };
+      return this.db;
+    })();
+    try { return await this.opening; } finally { this.opening = null; }
   }
 
   async get(id) {

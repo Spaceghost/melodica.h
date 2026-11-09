@@ -53,6 +53,26 @@ log('threshold ok');
 }
 log('tracker ok');
 
+// Moving a live play between engines preserves its timestamp and submission;
+// unrelated sessions and tracks cannot restore another play's progress.
+{
+  const song = { title: 'T', artist: 'A', trackToken: 'track-one' };
+  const original = new ListenTracker(song, 1000, 200);
+  for (let s = 0; s <= 100; s++) original.tick(s, true);
+  original.sent = true;
+  const marker = original.snapshot('session-one');
+  const resumed = new ListenTracker(song, 2000, 200);
+  assert.equal(resumed.restore(marker, 'session-one', 2000), true);
+  resumed.tick(150, true);
+  assert.equal(resumed.played, 100, 'the handoff position is not listening progress');
+  assert.equal(resumed.startedAt, 1000, 'the same play keeps its deduplication timestamp');
+  assert.equal(resumed.due(), false, 'an already submitted play cannot submit again');
+  for (const bad of [marker, { ...marker, trackToken: 'other' }, { ...marker, played: Infinity }, { ...marker, startedAt: 9999 }]) {
+    assert.equal(new ListenTracker(song, 2000, 200).restore(bad, bad === marker ? 'other-session' : 'session-one', 2000), false);
+  }
+}
+log('tracker handoff ok');
+
 // Body.
 {
   const m = trackMetadata({ title: 'Song', artist: 'Band', album: 'LP', coverArt: 'https://img/x.jpg', trackToken: 'TT', audioUrl: 'https://a' }, 200.4);

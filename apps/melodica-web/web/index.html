@@ -12,17 +12,29 @@
 </head>
 <body>
 <header class="top">
-  <h1 class="brand">melodica <span class="brand-tag">web</span></h1>
-  <nav id="site-nav" class="sui-nav site-nav" aria-label="melodica">
-    <a href="https://spacegho.st/melodica/" data-k="home">melodica</a>
+  <a class="brand" data-k="home" href="https://spacegho.st/melodica/" aria-label="melodica home">melodica <span class="brand-tag">web</span></a>
+  <div id="site-nav" class="site-nav"><nav class="sui-nav" aria-label="melodica">
     <a href="https://spacegho.st/melodica/app/" data-k="app" aria-current="page">Player</a>
+    <a href="https://spacegho.st/melodica/rooms/" data-k="rooms">Rooms</a>
     <a href="https://spacegho.st/melodica/listens/" data-k="listens">Listens</a>
     <a href="https://spacegho.st/melodica/leaderboard/" data-k="leaderboard">Leaderboard</a>
     <a href="https://spacegho.st/melodica/map/" data-k="map">Map</a>
     <a href="https://spacegho.st/melodica/extension/" data-k="extension">Extension</a>
     <a href="https://spacegho.st/melodica/account/" data-k="account">Account</a>
-  </nav>
+  </nav></div>
   <div class="top-right">
+    <details class="listen-links">
+      <summary>Listen links</summary>
+      <form id="listen-open" class="panel">
+        <label class="field" for="listen-input"><span>Open a listen link</span></label>
+        <input id="listen-input" type="text" maxlength="1024" placeholder="listen://artist/Modest%20Mouse" autocomplete="off" spellcheck="false">
+        <button type="submit" class="quiet">Open link</button>
+        <button id="listen-register" type="button" class="quiet" hidden>Open web+listen links here</button>
+        <button id="listen-share-artist" type="button" class="quiet">Copy artist link</button>
+        <button id="listen-share-station" type="button" class="quiet">Copy station link</button>
+        <p id="listen-message" class="message" role="status"></p>
+      </form>
+    </details>
     <details id="account" class="account" hidden>
       <summary class="account-summary" title="Account menu">
         <span class="avatar" aria-hidden="true">
@@ -61,6 +73,11 @@
 </header>
 
 <main id="app" class="app" data-view="loading">
+  <section id="listen-pending" class="panel" hidden aria-label="Linked station">
+    <p id="listen-pending-name"></p>
+    <button id="listen-play" type="button" class="primary">Play linked station</button>
+    <p class="fine">Sign in first if needed. Playback starts when you press Play.</p>
+  </section>
 
   <section id="view-login" class="view login" hidden>
     <form id="login-form" class="card login-card" autocomplete="on">
@@ -87,11 +104,10 @@
         <span id="account-signed" hidden>spacegho.st: <b id="account-name"></b> ·
           <button id="account-signout" type="button" class="link">sign out</button></span>
       </p>
-      <p class="fine">Sign-in and API calls pass through the spacegho.st relay (it forwards them
-        unchanged); audio streams straight from Pandora. Add <code>?api=&lt;url&gt;</code>
-        to use your own relay, or install the
-        <a href="https://spacegho.st/melodica/#melodica-extension" rel="noopener">melodica browser extension</a>
-        to talk to Pandora directly.</p>
+      <details class="login-help">
+        <summary>About sign-in and listening</summary>
+        <p>Use your Pandora account to play. Sign in with spacegho.st to save your listens. The optional <a href="https://spacegho.st/melodica/extension/">Melodica extension</a> can keep playback going when you close the player tab.</p>
+      </details>
     </form>
   </section>
 
@@ -307,6 +323,7 @@
 </div>
 
 
+<div id="deploy-feedback" aria-label="Listen deployment"></div>
 <audio id="audio" preload="auto"></audio>
 
 <footer class="foot">

@@ -63,6 +63,7 @@ export class BridgeTransport {
     this.origin = options.origin || win.location.origin;
     this.onChange = options.onChange || (() => {});
     this.onSession = options.onSession || (() => {}); // unsolicited {session, credential, account, revoked}
+    this.onRoomClock = options.onRoomClock || (() => {}); // lightweight room playback clock; never a player state
     this.onAccountSignout = options.onAccountSignout || (() => {}); // the extension signed out of spacegho.st
     this.log = options.log || (() => {});
     this.helloWindow = options.helloWindow === undefined ? HELLO_WINDOW_MS : options.helloWindow;
@@ -73,6 +74,7 @@ export class BridgeTransport {
     this.name = '';
     this.version = '';
     this.player = false;      // ready said player: true (the extension is a remote-controllable player)
+    this.rooms = 0;
     this.session = 0;         // ready said session: 1 (docs/BRIDGE.md 4)
     this.onState = null;      // set while subscribed
     this.gotState = false;
@@ -140,6 +142,12 @@ export class BridgeTransport {
     if (event.source !== this.win || event.origin !== this.origin) return;
     const d = event.data;
     if (!d || d.melodica !== 1 || typeof d.type !== 'string') return;
+    if (d.type === 'gone') {
+      this.active = this.present = this.player = false;
+      this.gone = true;
+      this.onChange(this);
+      return;
+    }
     if (d.type === 'present') {
       if (!this.present) {
         this.present = true;
@@ -149,17 +157,20 @@ export class BridgeTransport {
       return;
     }
     if (d.type === 'ready') {
+      this.gone = false;
       this.present = true;
       const name = typeof d.name === 'string' && d.name.trim() ? d.name.trim() : 'melodica extension';
       const version = typeof d.version === 'string' ? d.version.trim() : '';
       const player = d.player === true;
       const session = d.session === 1 ? 1 : 0;
-      const changed = !this.active || name !== this.name || version !== this.version || player !== this.player || session !== this.session;
+      const rooms = d.rooms === 1 ? 1 : 0;
+      const changed = !this.active || name !== this.name || version !== this.version || player !== this.player || session !== this.session || rooms !== this.rooms;
       this.active = true;
       this.name = name;
       this.version = version;
       this.player = player;
       this.session = session;
+      this.rooms = rooms;
       if (changed) {
         this.log(`bridge ready: ${this.label}${player ? '' : ' (no remote control)'}`);
         this.onChange(this);
@@ -170,6 +181,16 @@ export class BridgeTransport {
       if (this.onState && d.state && typeof d.state === 'object') {
         this.gotState = true;
         this.onState(d.state);
+      }
+      return;
+    }
+    if (d.type === 'room-clock') {
+      const room = d.room;
+      if (this.active && this.player && this.rooms === 1 && room && typeof room === 'object' && !Array.isArray(room) &&
+        typeof room.id === 'string' && /^[A-Za-z0-9_-]{16,64}$/.test(room.id) &&
+        room.state && typeof room.state === 'object' && !Array.isArray(room.state) &&
+        d.state && typeof d.state === 'object' && !Array.isArray(d.state)) {
+        this.onRoomClock({ melodica: 1, type: 'room-clock', room: d.room, state: d.state });
       }
       return;
     }
@@ -189,6 +210,15 @@ export class BridgeTransport {
         error: d.error === undefined || d.error === null ? '' : String(d.error),
         state: d.state && typeof d.state === 'object' ? d.state : null,
         outcome: typeof d.outcome === 'string' ? d.outcome : '',
+        ...('room' in d ? { room: d.room && typeof d.room === 'object' && !Array.isArray(d.room) ? d.room : null } : {}),
+        ...('result' in d ? { result: d.result } : {}),
+        ...(Number.isInteger(d.status) ? { status: d.status } : {}),
+        ...(Array.isArray(d.rooms) ? { rooms: d.rooms } : {}),
+        ...(Array.isArray(d.recent) ? { recent: d.recent } : {}),
+        ...('next_cursor' in d ? { next_cursor: typeof d.next_cursor === 'string' ? d.next_cursor : null } : {}),
+        ...(Array.isArray(d.recentRoomIds) ? { recentRoomIds: d.recentRoomIds.filter((id) => typeof id === 'string') } : {}),
+        ...(d.playback && typeof d.playback === 'object' ? { playback: d.playback } : {}),
+        ...('copy' in d ? { copy: d.copy && typeof d.copy === 'object' ? d.copy : null } : {}),
       });
     }
   }

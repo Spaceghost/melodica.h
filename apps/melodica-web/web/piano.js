@@ -248,12 +248,13 @@ export class PianoClient {
 
   // Restores a session from session() or the extension. true when it was accepted
   // (well formed); whether Pandora still honours it shows on the next call (1001).
-  restore(s) {
+  restore(s, stations = null) {
     if (!this.fn || !s || !s.partner || !s.user) return false;
     const flat = {
       partnerAuthToken: String(s.partner.authToken || ''), partnerId: String(Number(s.partner.id) | 0),
       userAuthToken: String(s.user.authToken || ''), userId: String(s.user.id || ''),
       syncOffset: String(Number(s.syncOffset) | 0),
+      ...(Array.isArray(stations) ? { stations } : {}),
     };
     this.fn.init();
     return this.withCString(JSON.stringify(flat), (p) => this.fn.restore(p)) === 0;

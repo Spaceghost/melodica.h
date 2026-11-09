@@ -4,9 +4,12 @@
 import { PianoClient, PianoError, resolveApiBase } from './piano.js';
 import { BridgeTransport, bridgeAllowed } from './bridge.js';
 import { Vault } from './vault.js';
+import { TabPlayer } from './tabs.js';
 import { AudioCopies, LAST_ID, lastRecord, validLast, urlExpired } from './lastplay.js';
 import { Account, USERNAME_RE, USERNAME_FORMAT, normalizeUsername } from './account.js';
-import { Scrobbles, ListenTracker, PAGE_SIZE, genomeTraits } from './scrobble.js';
+import { Scrobbles, ListenTracker, PAGE_SIZE, genomeTraits, trackMetadata } from './scrobble.js';
+import { parseListenUri, listenUri, routeOf as listenRoute } from './listen-uri.js';
+import { createRoomHost, isRoomsPath, roomIdFromPath, roomPositionMs, roomBlocksSource } from './rooms.js';
 
 const VERSION = '__MELODICA_WEB_VERSION__';
 const STORAGE = {
@@ -53,25 +56,33 @@ function artCachedUrl(song) {
   return artCopies.get(u);
 }
 
-// The shared ui's cover(src, cls, cached) behaviour on an existing <img>: the art, then
-// Scrobbles' cached copy on an error or when it has not loaded in 1.5 s (Pandora's http
-// art has no https twin on some hosts), then the fallback.
-const ART_TIMEOUT_MS = 1500;
-function showArt(img, song, fallback, onFinal) {
-  const src = artUrl(song);
+// Keep the existing image's identity hooks while the shared UI owns its fallbacks.
+function showArt(img, song, fallback, onFinal, onLoad) {
   const gen = (img.__artGen = (img.__artGen || 0) + 1);
-  img.onerror = null;
-  img.src = src || fallback;
-  if (!src) return;
-  let stage = 0;
-  const toFinal = () => { if (img.__artGen !== gen || stage === 2) return; stage = 2; img.src = fallback; if (onFinal) onFinal(); };
-  const toCached = () => {
-    if (img.__artGen !== gen || stage !== 0) return;
-    stage = 1;
-    artCachedUrl(song).then((c) => { if (img.__artGen !== gen) return; if (c && c !== src) img.src = c; else toFinal(); });
-  };
-  img.onerror = () => (stage === 0 ? toCached() : toFinal());
-  setTimeout(() => { if (!(img.complete && img.naturalWidth > 0)) toCached(); }, ART_TIMEOUT_MS);
+  const src = artUrl(song) || fallback;
+  Promise.all([import(UI_MODULE), song?.art_cached || artCachedUrl(song)]).then(([mod, cached]) => {
+    if (img.__artGen !== gen || !img.isConnected) return;
+    const next = mod.cover(src, img.className, cached || null);
+    for (const attr of img.attributes) {
+      if (!['src', 'loading', 'decoding'].includes(attr.name)) next.setAttribute(attr.name, attr.value);
+    }
+    next.__artGen = gen;
+    next.addEventListener('error', () => {
+      if (!next.isConnected) return;
+      if (next.getAttribute('src') === 'data:,') {
+        next.src = fallback;
+        if (onFinal) onFinal();
+      }
+    });
+    if (onLoad) next.addEventListener('load', () => { if (next.isConnected) onLoad(next.currentSrc || next.src); });
+    for (const key of ['cover', 'barCover']) if (el[key] === img) el[key] = next;
+    img.replaceWith(next);
+  }).catch((err) => {
+    if (img.__artGen !== gen || !img.isConnected) return;
+    img.src = fallback;
+    if (onFinal) onFinal();
+    console.debug('[art]', describeError(err));
+  });
 }
 
 // Fallback cover: a gold record on ink, used whenever Pandora sends no art.
@@ -123,6 +134,7 @@ const el = {
   bar: $('bar'), barCover: $('bar-cover'), barProgress: $('bar-progress'), barVolume: $('bar-volume'),
   barSignin: $('bar-signin'), barExpand: $('bar-expand'), routeView: $('route-view'), routeBody: $('route-body'),
   barResume: $('bar-resume'), barResumeAt: $('bar-resume-at'),
+  deployFeedback: $('deploy-feedback'),
   audio: $('audio'),
 };
 
@@ -148,9 +160,12 @@ function readPolicy() { return { inserts: true }; }
 
 const state = {
   client: null,
+  tabs: null,
+  engineReady: false,
   bridge: null,       // BridgeTransport: the link to the melodica extension (remote mode)
   account: null,      // Account (optional spacegho.st sign-in)
   accountReady: Promise.resolve(), // the policy is known once this settles
+  accountNavigating: false,
   policyReady: Promise.resolve(),  // the latest policy request
   remote: false,      // true when the melodica extension plays and this page is its view
   vault: null,        // Vault: the encrypted "Remember me" store (web/vault.js)
@@ -200,7 +215,7 @@ function show(view) {
 // controls, or a slim "Sign in to play" while nobody is signed in.
 function updateBar() {
   if (!el.bar) return;
-  const signin = !state.remote && el.app.dataset.view !== 'player';
+  const signin = !state.remote && !state.rooms?.active() && el.app.dataset.view !== 'player';
   el.bar.dataset.state = signin ? 'signin' : 'player';
   el.barSignin.hidden = !signin;
 }
@@ -394,10 +409,11 @@ async function deleteStation(st) {
 // ---------------------------------------------------------------- now playing display
 
 function setCover(song) {
-  showArt(el.cover, song, FALLBACK_COVER, () => { el.wash.src = 'data:,'; });
+  showArt(el.cover, song, FALLBACK_COVER, () => { el.wash.src = 'data:,'; }, (src) => {
+    if (src !== FALLBACK_COVER && src !== 'data:,') el.wash.src = src;
+  });
   showArt(el.barCover, song, FALLBACK_COVER);
   el.wash.src = artUrl(song) || 'data:,';
-  el.cover.onload = () => { if (el.cover.src !== FALLBACK_COVER && el.wash.src !== el.cover.src) el.wash.src = el.cover.src; };
 }
 
 function setPlayIcon(playing) {
@@ -458,11 +474,23 @@ function updateQualityChip() {
   el.qualityChip.hidden = false;
 }
 
-let renderUpNext = function renderUpNext() {
+let upNextKey = '';
+let upNextGen = 0;
+function renderUpNext() {
+  const songs = state.remote ? (Array.isArray(state.remoteState?.queue) ? state.remoteState.queue.filter(Boolean).map(remoteSong) : []) : state.queue;
+  const total = state.remote ? Math.max(songs.length, Number(state.remoteState?.queueLength) || 0) : songs.length;
+  const key = JSON.stringify([songs, total, !!state.song, state.remote]);
+  if (key === upNextKey) return;
+  upNextKey = key;
+  const gen = ++upNextGen;
   el.upNext.replaceChildren();
-  const peek = state.queue.slice(0, UP_NEXT_MAX);
+  const peek = songs.slice(0, UP_NEXT_MAX);
   for (const s of peek) {
     const li = document.createElement('li');
+    const img = document.createElement('img');
+    img.className = 'queue-cover';
+    img.alt = '';
+    img.src = FALLBACK_COVER;
     const t = document.createElement('span');
     t.className = 't';
     t.textContent = s.title || '';
@@ -470,18 +498,25 @@ let renderUpNext = function renderUpNext() {
     const a = document.createElement('span');
     a.className = 'a';
     a.textContent = s.isInsert ? '' : s.artist || '';
-    li.append(t, a);
+    const album = document.createElement('span');
+    album.className = 'queue-album';
+    album.textContent = s.isInsert ? '' : s.album || '';
+    li.append(img, t, a, album);
     el.upNext.append(li);
+    Promise.all([import(UI_MODULE), artCachedUrl(s)]).then(([mod, cached]) => {
+      if (gen !== upNextGen) return;
+      img.replaceWith(mod.cover(artUrl(s) || FALLBACK_COVER, 'queue-cover', s.art_cached || cached || null));
+    }).catch((err) => console.debug('[queue art]', describeError(err)));
   }
-  const more = state.queue.length - peek.length;
+  const more = peek.length ? total - peek.length : 0;
   el.upNextCount.textContent = more > 0 ? `+${more} more` : '';
   el.upNextEmpty.hidden = peek.length > 0;
   if (peek.length === 0) {
-    el.upNextEmpty.textContent = state.song
+    el.upNextEmpty.textContent = state.remote && total ? `${total} song${total === 1 ? '' : 's'} queued in the extension.` : state.song
       ? 'Last song of this playlist; Pandora sends more when it ends.'
       : 'Nothing queued yet.';
   }
-};
+}
 
 function ratingClasses(button, kind, rating) {
   button.classList.toggle('on', kind === 'love' && rating === 1);
@@ -575,8 +610,12 @@ function stopPlayback(reason) {
   if (reason) playerMessage(reason);
 }
 
-async function playStation(st) {
-  if (el.app.dataset.ready !== 'true') {
+async function playStation(st, { duringRestore = false } = {}) {
+  if (roomBlocksSource(state.rooms?.getState())) {
+    playerMessage('Leave the room before changing stations.', 'info');
+    return;
+  }
+  if (el.app.dataset.ready !== 'true' && !duringRestore) {
     // Pressed on the first paint: once the restore is done (as a remote or on its own).
     playerMessage(`Loading ${st.name}…`, 'info', 0);
     await readyPromise;
@@ -776,6 +815,7 @@ function updateRatingButtons() {
 }
 
 function skip(reason) {
+  if (state.rooms?.active()) { state.rooms.command('room-skip').catch((e) => playerMessage(e.message, 'error')); return; }
   if (state.remote) { remoteCommand('next'); return; }
   if (state.song && state.song.isInsert) return; // plays through
   if (reason) { playerMessage(reason); state.keepMessage = true; }
@@ -786,6 +826,10 @@ function skip(reason) {
 
 // Rate the current song (ban skips) or any song from the play log via its trackToken.
 async function rateSong(song, kind) {
+  const room = state.rooms?.getState()?.state;
+  if (room?.play && room.play.dj !== room.you && song === state.song) {
+    await state.rooms.command('room-command', { body: { action: 'react', play_id: room.play.id, reaction: kind === 'love' ? 'like' : 'dislike' } }).catch((e) => playerMessage(e.message, 'error')); return;
+  }
   if (!song || song.isInsert) return;
   if (state.remote) {
     if (song !== state.song) { playerMessage('Only the playing song can be rated while the extension plays.'); return; }
@@ -813,6 +857,10 @@ async function rateSong(song, kind) {
 function rate(kind) { return rateSong(state.song, kind); }
 
 async function tired() {
+  const room = state.rooms?.getState()?.state;
+  if (room?.play && room.play.dj !== room.you) {
+    await state.rooms.command('room-command', { body: { action: 'react', play_id: room.play.id, reaction: 'dislike' } }).catch((e) => playerMessage(e.message, 'error')); return;
+  }
   const song = state.song;
   if (!song || song.isInsert) return;
   if (state.remote) {
@@ -831,6 +879,8 @@ async function tired() {
 }
 
 async function explain() {
+  const room = state.rooms?.getState()?.state;
+  if (room?.play && room.play.dj !== room.you) { playerMessage('This song is streamed from the DJ’s player.'); return; }
   const song = state.song;
   if (!song || song.isInsert || state.explaining) return; // the e key bypasses the disabled button
   if (state.remote) { playerMessage('“Why this song?” is not available while the extension plays.'); return; }
@@ -858,6 +908,10 @@ async function explain() {
 }
 
 function togglePlay() {
+  if (state.rooms?.active()) {
+    const a = state.rooms.getState()?.audio;
+    state.rooms.command(a?.paused || !['listening', 'broadcasting'].includes(a?.state) ? 'room-resume' : 'room-pause').catch((e) => playerMessage(e.message, 'error')); return;
+  }
   if (state.remote) {
     const rs = state.remoteState || {};
     if (!state.song && !rs.station) {
@@ -894,6 +948,10 @@ function setVolume(v) {
   state.volume = clamp(Math.round(v), 0, 100);
   el.volume.value = el.barVolume.value = String(state.volume);
   applyVolume();
+  if (state.rooms?.active()) {
+    state.rooms.command('room-volume', { value: state.volume }).catch((e) => playerMessage(e.message, 'error'));
+    clearTimeout(volumeSaveTimer); volumeSaveTimer = setTimeout(saveVolume, 400); return;
+  }
   clearTimeout(volumeSaveTimer);
   volumeSaveTimer = setTimeout(saveVolume, 400);
   if (state.remote) {
@@ -925,11 +983,11 @@ function updateMediaSession(song) {
 function installMediaSession() {
   if (!('mediaSession' in navigator)) return;
   const set = (action, fn) => { try { navigator.mediaSession.setActionHandler(action, fn); } catch (_) { /* unsupported */ } };
-  set('play', () => el.audio.play().catch(() => {}));
-  set('pause', () => el.audio.pause());
+  set('play', () => state.rooms?.active() ? state.rooms.command('room-resume').catch((e) => playerMessage(e.message, 'error')) : el.audio.play().catch(() => {}));
+  set('pause', () => state.rooms?.active() ? state.rooms.command('room-pause').catch((e) => playerMessage(e.message, 'error')) : el.audio.pause());
   set('nexttrack', () => skip());
   set('previoustrack', null);
-  set('stop', () => stopPlayback());
+  set('stop', () => state.rooms?.active() ? state.rooms.command('room-pause').catch((e) => playerMessage(e.message, 'error')) : stopPlayback());
 }
 
 // ---------------------------------------------------------------- search
@@ -1012,13 +1070,18 @@ async function remoteCommand(action, fields = {}) {
 
 let sessionSyncedFor = '';
 function onBridgeChange(bridge) {
+  if (bridge.gone) { extensionWentAway(bridge); return; }
   updateStatus();
-  if (bridge.active && bridge.player && !state.remote) enterRemote();
+  if (bridge.active && bridge.player && !state.remote) {
+    pendingRoomImport = state.rooms?.getState();
+    pendingPlaybackImport = localPlayback();
+    enterRemote();
+  }
   if (state.remote) el.logout.hidden = !bridge.session;
   // Once per extension (and version): exchange sessions (docs/BRIDGE.md 4.3).
   if (bridge.active && bridge.player && bridge.session && sessionSyncedFor !== bridge.label) {
     sessionSyncedFor = bridge.label;
-    syncWithExtension();
+    syncWithExtension().then(transferRoomToExtension).catch((e) => console.debug('[bridge]', describeError(e)));
   }
 }
 
@@ -1031,7 +1094,7 @@ async function openExtensionLogin() {
 
 function remoteSong(t) {
   return {
-    title: t.title || '', artist: t.artist || '', album: t.album || '', coverArt: t.coverArt || '',
+    title: t.title || '', artist: t.artist || '', album: t.album || '', coverArt: t.coverArt || t.art || '', art_cached: typeof t.art_cached === 'string' ? t.art_cached : '',
     trackToken: t.trackToken || '', rating: t.rating || 0, duration: t.duration || 0,
     quality: t.quality || '', audioFormat: t.audioFormat || '',
   };
@@ -1060,6 +1123,13 @@ function renderRemote(rs) {
     remoteChangedAt = at;
   }
   state.remoteState = rs;
+  state.rooms?.updateRemote(rs.room);
+  if (state.bridge?.kind === 'tab' && rs.scrobble?.loaded) {
+    if (!state.scrobbles) state.scrobbles = new Scrobbles({ origin: location.origin, token: scrobbleToken });
+    state.scrobble = { ...(state.scrobble || newScrobbleState()), ...rs.scrobble };
+    renderScrobbleSettings();
+    startUi();
+  }
   markReady();
   if (rs.loggedIn === false) forgetSnapshot(); else saveSnapshot();
   // Stations: rebuilt only when the list itself changed (keeps focus and scroll).
@@ -1111,42 +1181,42 @@ function renderRemote(rs) {
   }
   if (QUALITIES.includes(rs.quality)) { state.quality = rs.quality; el.quality.value = rs.quality; }
 
-  // Up next: the extension only says how many songs are queued.
-  el.upNext.replaceChildren();
-  const n = Number(rs.queueLength) || 0;
-  el.upNextCount.textContent = '';
-  el.upNextEmpty.hidden = false;
-  el.upNextEmpty.textContent = n ? `${n} song${n === 1 ? '' : 's'} queued in the extension.` : 'Nothing queued yet.';
+  renderUpNext();
 
   // No Pandora session in the extension: say where to sign in (the page has no login).
-  const needsLogin = rs.loggedIn === false;
-  if (rs.loggedIn === true && !stations.length && rs.status !== 'loading') askRemoteStations();
+  const needsLogin = rs.loggedIn === false && state.bridge?.kind !== 'tab';
+  if (rs.loggedIn === true && !stations.length && rs.status !== 'loading' && state.bridge?.kind !== 'tab') askRemoteStations();
   if (el.remoteSignin.hidden === needsLogin) {
     el.remoteSignin.hidden = !needsLogin;
     if (!needsLogin) el.remoteSigninHelp.hidden = true;
   }
   if (needsLogin) el.hint.textContent = '';
   else if (!state.song) updateHint();
+  if (state.bridge?.kind === 'tab' && rs.loggedIn === false) show(el.viewLogin);
+  else if (state.bridge?.kind === 'tab') show(el.viewPlayer);
   if (el.playerMessage.textContent === CONNECTING) playerMessage('');
   if (rs.status === 'error' && rs.error && !needsLogin) playerMessage(rs.error, 'error', 0);
   else if (rs.status === 'loading') playerMessage('Loading…', 'info', 0);
   else if (el.playerMessage.textContent === 'Loading…' || /^Loading .*…$/.test(el.playerMessage.textContent)) playerMessage('');
   // The extension's username (0.5.4+ sends user: {username, …}); never an email.
   const name = !needsLogin && rs.user && typeof rs.user.username === 'string' ? rs.user.username : '';
-  el.signedIn.textContent = name || 'melodica extension';
-  el.signedInFull.textContent = name ? `Playing in the melodica extension as ${name}` : 'Playing in the melodica extension';
+  el.signedIn.textContent = name || extensionName();
+  const place = state.bridge?.kind === 'tab' ? 'another melodica tab' : 'the melodica extension';
+  el.signedInFull.textContent = `Playing in ${place}${name ? ` as ${name}` : ''}`;
 }
 
 function enterRemote() {
   if (state.remote) return;
+  state.rooms?.suspend();
   // The page may have started on its own: stop that and forget its Pandora session.
   if (state.song || el.audio.getAttribute('src')) stopPlayback();
   try { if (state.client && state.client.fn) state.client.logout(); } catch (_) { /* not loaded yet */ }
   state.remote = true;
+  if (state.tabs?.owner) state.engineReady = true;
   el.app.dataset.mode = 'remote';
   markReady();
   // A remote never downloads or keeps audio: the extension's engine plays (and saves) it.
-  if (state.copies) state.copies.clear();
+  if (state.copies && state.bridge?.kind !== 'tab') { copyMirrors.clear(); copiesClearing = state.copies.clear(); }
   updateBar();
   el.audio.pause();
   el.audio.removeAttribute('src');
@@ -1158,7 +1228,6 @@ function enterRemote() {
   el.usernameChange.hidden = true; // the extension's account is the extension's to name
   el.signedIn.textContent = 'melodica extension';
   el.signedInFull.textContent = 'Playing in the melodica extension';
-  renderUpNext = () => {}; // the queue panel shows the extension's count (renderRemote)
   show(el.viewPlayer);
   playerMessage(CONNECTING, 'info', 0);
   updateStatus();
@@ -1206,13 +1275,16 @@ function updateAccountLine() {
 const PANEL_SILENT_KEY = 'melodica.account.panel-silent';
 async function silentPanelSignIn(name, { force = false } = {}) {
   const a = state.account;
-  if (!a || !a.config || a.signedIn || state.remote || !PANES[name]) return false;
+  if (!a || !a.config || a.signedIn || state.remote || (!PANES[name] && name !== 'rooms') || routeOf(location.pathname) !== name) return false;
   await state.savedReady;
   if (state.saved || state.remote) return false;
   if (!force && a.session.get(PANEL_SILENT_KEY) === '1') return false;
   a.session.set(PANEL_SILENT_KEY, '1');
-  a.session.set(RETURN_KEY, ROUTE_PATH[name] || location.pathname);
-  try { location.assign(await a.startUrl({ prompt: 'none' })); return true; } catch (_) { a.session.remove(RETURN_KEY); return false; }
+  a.session.set(RETURN_KEY, name === 'rooms' ? location.pathname : ROUTE_PATH[name] || location.pathname);
+  state.accountNavigating = true;
+  el.app.dataset.accountReady = 'false';
+  try { location.assign(await a.startUrl({ prompt: 'none' })); return true; }
+  catch (_) { state.accountNavigating = false; el.app.dataset.accountReady = 'true'; a.session.remove(RETURN_KEY); return false; }
 }
 
 async function setupAccount() {
@@ -1231,7 +1303,7 @@ async function setupAccount() {
   }
   // A panel route without any sign-in is handled by silentPanelSignIn (also when the
   // visitor arrives on the player and moves to a panel route later).
-  if (!back.done && PANES[routeOf(location.pathname)] && await silentPanelSignIn(routeOf(location.pathname))) return;
+  if (!back.done && (PANES[routeOf(location.pathname)] || isRoomsPath(location.pathname)) && await silentPanelSignIn(routeOf(location.pathname))) return;
   await refreshPolicy();
   if (a.signedIn) await a.profile();
   updateAccountLine();
@@ -1258,6 +1330,11 @@ async function accountSignIn(ev) {
 // Signing out of spacegho.st here signs the extension out of it too (docs/BRIDGE.md 4.6):
 // at once when it is there, else at the next handshake.
 async function accountSignOut() {
+  if (state.rooms?.getState()?.id) {
+    try { await state.rooms.command('room-leave'); }
+    catch (e) { console.debug('[rooms]', describeError(e)); }
+    finally { state.rooms.leave({ leave: false }); }
+  }
   await state.account.signOut();
   await refreshPolicy();
   updateAccountLine();
@@ -1421,7 +1498,10 @@ async function loadSaved() {
 
 async function forgetSaved() {
   state.saved = null;
+  checkpointEpoch++;
+  if (state.tabs) state.tabs.handoff = null;
   if (state.copies) state.copies.clear();
+  await checkpointWrite;
   await state.vault.wipe();
 }
 
@@ -1461,6 +1541,7 @@ function rememberChoice(on) {
   if (state.remember) store.remove(STORAGE.rememberOff); else store.set(STORAGE.rememberOff, '1');
 }
 function setRemember(on) {
+  if (state.bridge?.kind === 'tab') { remoteCommand('remember', { value: !!on }); return; }
   rememberChoice(on);
   syncRemember();
   if (!state.remember) { forgetSaved(); return; }
@@ -1529,6 +1610,8 @@ async function syncWithExtension(force = false) {
   let m;
   try { m = await state.bridge.sessionGet(); } catch (err) { console.debug('[bridge]', describeError(err)); return; }
   await applyExtensionSession(m, true, force);
+  await transferPlaybackToExtension();
+  startExtensionHandoff();
   deliverAccountSignout();
 }
 
@@ -1542,6 +1625,7 @@ async function applyExtensionSession(m, initial, force = false) {
       try { await state.bridge.sessionLogout(m.session.sid); } catch (_) { /* tried */ }
       return;
     }
+    if (state.extSid && state.extSid !== m.session.sid) lastExtensionPlayback = null;
     state.extSid = m.session.sid;
     const same = mine && mine.sid === m.session.sid;
     const credential = m.credential || (state.saved && state.saved.credential && state.saved.credential.email === m.session.email ? state.saved.credential : null);
@@ -1558,18 +1642,22 @@ async function applyExtensionSession(m, initial, force = false) {
     const mirrored = mine && (m.revoked.includes(mine.sid) || mine.sid === state.extSid);
     state.extSid = '';
     if (mirrored) {
+      state.tabs?.cache.clear();
+      lastExtensionPlayback = null;
+      pendingPlaybackImport = null;
       await forgetSaved();
       syncRemember();
       clearScrobbles();
     } else if (mine && initial) {
       let r = null;
-      try { r = await state.bridge.sessionOffer({ session: mine, credential: state.saved.credential || undefined, account: accountView() }); } catch (_) { r = null; }
+      try { r = await state.bridge.sessionOffer({ session: mine, credential: state.saved.credential || undefined, account: accountView(), playback: pendingPlaybackImport, stations: pendingPlaybackImport?.stations || state.stations, relay: state.saved.relay }); } catch (_) { r = null; }
       if (r && (r.outcome === 'revoked' || r.outcome === 'invalid')) await forgetSaved();
       else if (r && r.ok) state.extSid = mine.sid;
     }
   }
   applyExtensionAccount(m.account);
   if (state.remote) loadScrobbles(); // the copy's token (or the account) reads the listens
+  if (state.extSid) { transferPlaybackToExtension(); startExtensionHandoff(); }
 }
 
 // spacegho.st: the extension signed in and this page not -> a silent sign-in (prompt=none,
@@ -1605,6 +1693,11 @@ function showLogin() {
 }
 
 async function login(email, password) {
+  if (state.bridge?.kind === 'tab') {
+    const result = await remoteCommand('login', { email, password, remember: el.remember.checked });
+    if (!result?.ok) loginMessage(result?.error || 'The player tab could not sign in.', 'error');
+    return !!result?.ok;
+  }
   el.loginButton.disabled = true;
   loginMessage('Signing in…', 'info');
   try {
@@ -1621,6 +1714,7 @@ async function login(email, password) {
     store.set(STORAGE.email, email);
     loginMessage('');
     await enterPlayer();
+    checkpointEngine(true);
     return true;
   } catch (err) {
     loginMessage(describeError(err), 'error');
@@ -1646,12 +1740,15 @@ async function enterPlayer({ quiet = false } = {}) {
 
 // Signing out here signs out the extension too (docs/BRIDGE.md 4.4).
 function logout() {
+  if (!state.remote) state.rooms?.leave();
+  state.tabs?.cache.clear();
   forgetSnapshot();
   const sid = state.sessionMeta ? state.sessionMeta.sid : (state.saved && state.saved.session ? state.saved.session.sid : '');
   if (sid) addRevoked(sid);
   state.sessionMeta = null;
   forgetSaved();
   clearScrobbles();
+  if (state.bridge?.kind === 'tab') { remoteCommand('logout'); return; }
   if (state.remote) { remoteLogout(sid); return; }
   closeUsernamePick();
   showUsername('');
@@ -1684,6 +1781,7 @@ function newScrobbleState() {
 // The bearer: the relay's access token (here, or the extension's kept with the shared
 // session), else the spacegho.st account's token.
 async function scrobbleToken() {
+  if (state.bridge?.kind === 'tab') await state.savedReady;
   if (!state.remote && state.client && state.client.accessToken) return state.client.accessToken;
   const relay = state.saved && state.saved.relay;
   if (state.remote && relay && relay.token && relayTokenUntil(relay) > Date.now()) return relay.token;
@@ -1701,7 +1799,7 @@ function renderScrobbleSettings() {
   const sc = state.scrobble;
   el.scrobbleSettings.hidden = !(sc && sc.loaded);
   el.listensPanel.hidden = !(sc && sc.loaded);
-  el.siteNav.querySelector('a[data-k="map"]').hidden = !!(sc && sc.loaded && !sc.crew);
+  if (sc && sc.loaded) setNavCrew(!!sc.crew);
   remountOnAuth();
   if (!sc || !sc.loaded) return;
   const links = state.scrobbles.links; // on this page's origin
@@ -1722,8 +1820,7 @@ function listenRow(l) {
   img.className = 'hist-cover';
   img.alt = '';
   img.loading = 'lazy';
-  img.src = typeof l.art === 'string' && /^https:\/\//.test(l.art) ? l.art : FALLBACK_COVER;
-  img.addEventListener('error', () => { img.src = FALLBACK_COVER; }, { once: true });
+  showArt(img, { coverArt: l.art || '', art_cached: l.art_cached || '' }, FALLBACK_COVER);
   const meta = document.createElement('div');
   meta.className = 'hist-meta';
   const t = document.createElement('span');
@@ -1734,6 +1831,13 @@ function listenRow(l) {
   a.className = 'hist-artist';
   a.textContent = l.artist || '';
   meta.append(t, a);
+  if (l.deployment) {
+    import(UI_MODULE).then((mod) => {
+      if (!li.isConnected) return;
+      const chip = mod.deployChip(l.deployment, `${location.origin}/melodica/map/`);
+      if (chip) { meta.classList.add('sui'); meta.append(chip); }
+    }).catch((err) => console.debug('[deployment]', describeError(err)));
+  }
   const when = document.createElement('time');
   when.className = 'hist-when';
   const ms = Number(l.listened_at) * 1000;
@@ -1850,9 +1954,11 @@ function scrobbleStart(song) {
   sc.tracker = null;
   if (!song || song.isInsert || state.remote || !scrobbleOn()) return;
   sc.tracker = new ListenTracker(song, Date.now() / 1000, Number(song.duration) || 0);
+  sc.tracker.restore(song.melodicaPlay, state.sessionMeta?.sid || '');
   const len = el.audio.duration;
   sc.tracker.setDuration(Number.isFinite(len) ? len : 0);
   sc.tracker.stationName = state.station ? String(state.station.name || '') : '';
+  song.melodicaPlay = sc.tracker.snapshot(state.sessionMeta?.sid || '');
   state.scrobbles.submit('playing_now', song, sc.tracker.duration, undefined, sc.tracker.stationName).catch((err) => {
     if (!scrobbleRefused(err)) console.debug('[scrobble]', describeError(err));
   });
@@ -1864,15 +1970,18 @@ function scrobbleTick() {
   if (!tr || state.remote || tr.song !== state.song) return;
   if (Number.isFinite(el.audio.duration)) tr.setDuration(el.audio.duration);
   tr.tick(el.audio.currentTime, !el.audio.paused && !el.audio.ended);
+  tr.song.melodicaPlay = tr.snapshot(state.sessionMeta?.sid || '');
   if (!tr.due() || !scrobbleOn()) return;
   tr.sent = true;
+  tr.song.melodicaPlay = tr.snapshot(state.sessionMeta?.sid || '');
   sendListen({ song: tr.song, duration: tr.duration, at: tr.startedAt, station: tr.stationName || '' });
 }
 
 async function sendListen(item) {
   const sc = state.scrobble;
   try {
-    await state.scrobbles.submit('single', item.song, item.duration, item.at, item.station || '');
+    const result = await state.scrobbles.submit('single', item.song, item.duration, item.at, item.station || '');
+    if (sc === state.scrobble) showDeployment(result.deployment);
     scheduleListensRefresh();
   } catch (err) {
     if (scrobbleRefused(err)) return;
@@ -1892,6 +2001,7 @@ function flushScrobbleRetry() {
 }
 
 async function setScrobbleSetting(patch) {
+  if (state.bridge?.kind === 'tab') { await remoteCommand('scrobble-settings', { patch }); return; }
   const sc = state.scrobble;
   if (!sc || !sc.loaded) return;
   el.scrobbleOn.disabled = el.scrobbleBoard.disabled = true;
@@ -1919,6 +2029,7 @@ function clearScrobbles() {
   clearTimeout(listensTimer);
   if (state.scrobble) state.scrobble.gen += 1;
   state.scrobble = null;
+  setNavCrew(true);
   el.listens.replaceChildren();
   el.listensEmpty.hidden = false;
   el.listensMore.hidden = true;
@@ -1932,9 +2043,46 @@ function clearScrobbles() {
 // and, for the GitHub crew, the Map. It loads after the first /scrobble/api/me answer;
 // without it the listens list above (v0.9.0) is the fallback.
 const UI_MODULE = './vendor/scrobble-ui/scrobble-ui.js';
+let resolveAccountStarted;
+const accountStarted = new Promise((resolve) => { resolveAccountStarted = resolve; });
+async function accountForPanels() {
+  // The shell mounts while the engine opens its vault. Wait for the actual account
+  // startup promise, rather than the resolved placeholder used by remote tabs.
+  if (state.tabs?.owner) await accountStarted;
+  await state.accountReady;
+}
 const PANES = { listens: 'mountListens', leaderboard: 'mountLeaderboard', map: 'mountMap' };
 let ui = null;          // {mod, client, live, views, crew}
 let uiPane = 'listens';
+let deploymentView = null;
+const shownDeployments = new Set();
+
+// Both the submit answer and the owner's live event describe the same listen.
+// Show it once whichever arrives first; listeners on other devices still receive
+// the live feedback. No player or song state is persisted from these events.
+async function showDeployment(deployment) {
+  if (!deployment || !Array.isArray(deployment.listens) || !deployment.listens.length) return;
+  const sc = state.scrobble;
+  let mod;
+  try { mod = await import(UI_MODULE); } catch (err) { console.debug('[deployment]', describeError(err)); return; }
+  if (!sc || state.scrobble !== sc) return;
+  const key = JSON.stringify([deployment.season, deployment.listens.map((l) => [l.listened_at, l.artist_name, l.track_name, l.counted, l.units, l.reason])]);
+  if (shownDeployments.has(key)) return;
+  shownDeployments.add(key);
+  if (shownDeployments.size > 100) shownDeployments.delete(shownDeployments.values().next().value);
+  if (!deploymentView) deploymentView = mod.mountDeployToast(el.deployFeedback);
+  deploymentView.show(deployment);
+}
+
+function watchDeployments(mine) {
+  const live = mine.live;
+  live.addEventListener('deploy', (ev) => { if (ui === mine) showDeployment(ev.detail?.deployment); });
+  live.addEventListener('retreat', (ev) => {
+    if (ui !== mine) return;
+    if (!deploymentView) deploymentView = mine.mod.mountDeployToast(el.deployFeedback);
+    if (deploymentView) deploymentView.retreat(ev.detail?.retreat);
+  });
+}
 
 // Here the relay token first (as for submitting); in remote mode the spacegho.st account
 // first. null means the spacegho.st session cookie, when there is one.
@@ -1949,6 +2097,10 @@ async function uiToken() {
 function uiLiveState(st) {
   el.liveState.textContent = st === 'open' ? 'live' : st === 'polling' ? 'updating' : '';
   el.liveState.dataset.state = st || '';
+}
+
+function watchAccountLive(live) {
+  for (const type of ['playing', 'listen']) live.addEventListener(type, (ev) => state.tabs?.updateScrobbles(ev.detail));
 }
 
 async function startUi() {
@@ -1966,6 +2118,8 @@ async function startUi() {
   mine.mod = mod;
   mine.client = mod.createClient({ base: location.origin, token: uiToken });
   mine.live = mine.client.live();
+  watchAccountLive(mine.live);
+  watchDeployments(mine);
   mine.live.addEventListener('state', (e) => uiLiveState((e.detail && e.detail.state) || e.state));
   el.listensFallback.hidden = true;
   $('tab-map').hidden = !mine.crew;
@@ -2001,6 +2155,9 @@ function stopUi() {
   const mine = ui;
   ui = null;
   uiPane = 'listens';
+  if (deploymentView) deploymentView.unmount();
+  deploymentView = null;
+  shownDeployments.clear();
   if (mine) {
     for (const v of Object.values(mine.views)) { try { v.unmount(); } catch (_) { /* gone */ } }
     try { if (mine.live) mine.live.close(); } catch (_) { /* closed */ }
@@ -2031,7 +2188,7 @@ function installUiEvents() {
     $(`sui-${k}`).addEventListener('sui:live', (ev) => uiLiveState(ev.detail && ev.detail.state));
   }
   // The site nav: same pages on this origin (a self-hosted copy keeps its own host).
-  for (const a of el.siteNav.querySelectorAll('a')) {
+  for (const a of document.querySelectorAll('.top a[data-k]')) {
     const u = new URL(a.getAttribute('href'));
     a.href = `${location.origin}${u.pathname}`;
   }
@@ -2141,6 +2298,7 @@ function installEvents() {
   el.barVolume.addEventListener('input', () => setVolume(Number(el.barVolume.value)));
   el.barVolume.addEventListener('change', () => { saveVolume(); el.volume.dispatchEvent(new Event('change')); });
   el.quality.addEventListener('change', () => {
+    if (state.rooms?.active()) { el.quality.value = state.quality; return; }
     if (state.remote) { remoteCommand('quality', { value: QUALITIES.includes(el.quality.value) ? el.quality.value : 'high' }); return; }
     setQuality(QUALITIES.includes(el.quality.value) ? el.quality.value : 'high');
     const wasFetching = state.fetching !== null;
@@ -2183,11 +2341,24 @@ function installEvents() {
   a.addEventListener('ended', () => {
     state.consecutiveAudioErrors = 0;
     if (state.song && state.copies) state.copies.drop(state.song.trackToken); // its copy is done with
+    if (state.rooms?.active()) {
+      const room = state.rooms.getState()?.state;
+      if (room?.play?.dj === room?.you && room.you_broadcasting !== false) state.rooms.command('room-command', { body: { action: 'end', play_id: room.play.id } }).catch((e) => playerMessage(e.message, 'error'));
+      return;
+    }
     nextSong();
   });
   a.addEventListener('pause', () => persistLast());
   a.addEventListener('error', () => {
     if (!state.song || state.resuming) return; // Resume tries the copy next (resumeLast)
+    if (state.rooms?.active()) {
+      const room = state.rooms.getState()?.state;
+      if (room?.current_dj === room?.you && room.you_broadcasting !== false) {
+        a.pause();
+        playerMessage('The broadcast source needs attention. Reconnect room audio or explicitly skip this play.', 'error', 0);
+      }
+      return;
+    }
     state.consecutiveAudioErrors += 1;
     const code = a.error ? a.error.code : 0;
     const why = code === 4 ? `this browser cannot play ${state.song.audioFormat} audio` : `audio error ${code}`;
@@ -2387,6 +2558,72 @@ function whenReady(fn) {
 // <artist|genre>:<name>&autoplay=1: a station from that artist or genre, reused when
 // one already exists, then played. In remote mode the extension does it.
 let pendingSeed = null;
+let pendingListen = null;
+function showListenTarget(target) {
+  pendingListen = target;
+  const pane = $('listen-pending');
+  pane.hidden = !target;
+  if (target) $('listen-pending-name').textContent = target.name || `Station ${target.station}`;
+}
+
+function installListenLinks() {
+  const message = (s) => { $('listen-message').textContent = s; };
+  $('listen-open').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const target = parseListenUri($('listen-input').value);
+    if (!target) { message("That link isn't supported"); return; }
+    if (['artist', 'genre', 'station'].includes(target.target)) {
+      showListenTarget(target);
+      if (route !== 'app') go('app');
+      message('Press Play linked station to start.');
+    } else location.assign(listenRoute(target));
+  });
+  const register = $('listen-register');
+  register.hidden = typeof navigator.registerProtocolHandler !== 'function';
+  register.addEventListener('click', () => {
+    try {
+      navigator.registerProtocolHandler('web+listen', 'https://spacegho.st/listen/?uri=%s');
+      message('Choose melodica in your browser’s link handler prompt.');
+    } catch (_) { message('Open spacegho.st/melodica/ to register links in this browser.'); }
+  });
+  for (const kind of ['artist', 'station']) $('listen-share-' + kind).addEventListener('click', async () => {
+    const value = kind === 'artist' ? state.song && state.song.artist : state.station && state.station.id;
+    if (typeof value !== 'string' || !value) { message('Pick a station and song first.'); return; }
+    const target = kind === 'artist' ? { target: 'artist', name: value } : { target: 'station', station: value };
+    const forms = listenUri(target);
+    if (!forms) { message('Pick a station and song first.'); return; }
+    try { await navigator.clipboard.writeText(forms.https); message('Link copied.'); }
+    catch (_) { $('listen-input').value = forms.https; $('listen-input').select(); message('Copy the selected link.'); }
+  });
+  $('listen-play').addEventListener('click', async () => {
+    const target = pendingListen;
+    if (!target) return;
+    if (target.target === 'station') {
+      const station = state.stations.find((s) => s.id === target.station);
+      if (!station) { message('Sign in with the account that owns this station, then press Play.'); return; }
+      showListenTarget(null);
+      await playStation(station);
+    } else {
+      const ready = state.remote ? state.remoteState && state.remoteState.loggedIn : state.client && state.client.session();
+      if (!ready) { message('Sign in, then press Play linked station.'); return; }
+      showListenTarget(null);
+      await playSeed({ kind: target.target, name: target.name });
+    }
+  });
+  const q = new URLSearchParams(location.search);
+  const station = q.get('station');
+  const raw = q.get('seed');
+  // Link navigation selects a target; it never creates a station or starts audio.
+  // ?autoplay=1 is the existing fallback from a deliberate map Play action.
+  if (!q.has('autoplay')) {
+    const m = raw && /^(artist|genre):(.{1,200})$/s.exec(raw);
+    const forms = station ? listenUri({ target: 'station', station })
+      : m ? listenUri({ target: m[1], name: m[2] }) : null;
+    if (forms) showListenTarget(parseListenUri(forms.uri));
+    q.delete('station'); q.delete('seed');
+    history.replaceState(history.state, '', location.pathname + (q.toString() ? `?${q}` : '') + location.hash);
+  }
+}
 function seedFromUrl() {
   const q = new URLSearchParams(location.search);
   const raw = q.get('seed');
@@ -2400,6 +2637,11 @@ function seedFromUrl() {
 
 function playSeed(seed) {
   if (!seed || !seed.name || !['artist', 'genre', 'track'].includes(seed.kind)) return Promise.resolve(false);
+  if (roomBlocksSource(state.rooms?.getState())) {
+    pendingSeed = null;
+    playerMessage('Leave the room before starting another station.', 'info');
+    return Promise.resolve(false);
+  }
   if (route !== 'app') go('app');
   if (state.remote) {
     if (!state.remoteState || state.remoteState.loggedIn !== true) { pendingSeed = seed; return Promise.resolve(false); }
@@ -2424,7 +2666,10 @@ async function seedStation(seed) {
   const name = low(seed.name);
   clearResume();
   const have = state.stations.find((x) => !x.isQuickMix && (low(x.name) === name || low(x.name) === `${name} radio`));
-  if (have) { await playStation(have); return have; }
+  // An explicit Play target may run while restore is preparing the controls.
+  // Its authenticated session/stations are already installed; waiting for those
+  // same controls here would deadlock the restore that is awaiting this action.
+  if (have) { await playStation(have, { duringRestore: true }); return have; }
   playerMessage(`Starting a ${seed.name} station…`, 'info', 0);
   const r = await state.client.search(seed.kind === 'track' && seed.artist_name ? `${seed.name} ${seed.artist_name}` : seed.name);
   const artists = (r.artists || []).filter((x) => x && x.musicId);
@@ -2438,7 +2683,7 @@ async function seedStation(seed) {
   buildStations();
   const created = state.stations.find((x) => !before.has(x.id)) || state.stations.find((x) => low(x.name).startsWith(low(pick.name || pick.title)));
   if (!created) throw new Error(`The ${seed.name} station was not created.`);
-  await playStation(created);
+  await playStation(created, { duringRestore: true });
   return created;
 }
 
@@ -2599,6 +2844,7 @@ async function resumeLast() {
 }
 
 function installResume() {
+  installListenLinks();
   document.addEventListener('sui:play', (ev) => { const d = ev.detail; if (d) playSeed({ kind: d.kind, name: d.name, artist_name: d.artist_name }); });
   pendingSeed = seedFromUrl();
   state.copies = new AudioCopies({
@@ -2623,6 +2869,7 @@ function installResume() {
     if (rec) { state.resume = rec; setPlayIcon(false); updateResumeUi(); }
   });
   el.barResume.addEventListener('click', () => {
+    if (state.rooms?.active()) { state.rooms.command('room-resume').catch((e) => playerMessage(e.message, 'error')); return; }
     if (state.tap && !state.resume && !remoteResumable()) { const t = state.tap; state.tap = null; updateResumeUi(); t.run(); return; }
     if (state.remote) remoteCommand('resume'); else resumeLast();
   });
@@ -2630,6 +2877,115 @@ function installResume() {
 }
 
 // ---------------------------------------------------------------- the shell (0.11.0)
+let roomMediaKey = '';
+function installRooms() {
+  const metadata = () => {
+    const s = state.song, duration = Number.isFinite(el.audio.duration) ? el.audio.duration : Number(s?.duration) || 0;
+    return s && !s.isInsert && duration > 0 ? trackMetadata(s, duration, state.station?.name || '') : null;
+  };
+  const waitPlaying = () => new Promise((resolve, reject) => {
+    const finish = () => {
+      if (!metadata() || el.audio.paused || el.audio.readyState < 2) return;
+      cleanup(); resolve({ track_metadata: metadata() });
+    };
+    const timer = setTimeout(() => { cleanup(); reject(new Error('Start a station, then press Connect room audio to begin your DJ turn.')); }, 8000);
+    const cleanup = () => { clearTimeout(timer); for (const e of ['playing', 'loadedmetadata', 'timeupdate']) el.audio.removeEventListener(e, finish); };
+    for (const e of ['playing', 'loadedmetadata', 'timeupdate']) el.audio.addEventListener(e, finish);
+    finish();
+  });
+  state.rooms = createRoomHost({
+    loadUi: () => import(UI_MODULE), token: uiToken, remote: () => state.remote,
+    send: (action, fields) => {
+      if (state.bridge instanceof BridgeTransport && state.bridge.rooms !== 1) {
+        throw Object.assign(new Error('This extension version does not support Rooms. Install the current extension release to join.'), { code: 'extension_update_required' });
+      }
+      return state.bridge.command(action, fields);
+    },
+    player: {
+      currentTrack: metadata,
+      positionMs: () => Math.max(0, Math.round(el.audio.currentTime * 1000)),
+      async startTurn() {
+        await readyPromise;
+        if (!state.client?.loggedIn) throw new Error('Sign in to Pandora in the player before taking a DJ turn.');
+        if (state.tap && state.song && !state.song.isInsert && el.audio.currentTime < 1) {
+          state.tap = null; await el.audio.play();
+        } else {
+          state.station ||= lastStation() || state.stations[0];
+          if (!state.station) throw new Error('Choose a station in the player before taking a DJ turn.');
+          await nextSong();
+        }
+        return waitPlaying();
+      },
+      capture: async () => (await import(UI_MODULE)).capturePlayerAudio(el.audio),
+      pause: () => el.audio.pause(),
+      resume: () => state.resume ? resumeLast() : el.audio.play(),
+      setVolume: (value) => { state.volume = clamp(Number(value) || 0, 0, 100); el.volume.value = el.barVolume.value = String(state.volume); applyVolume(); },
+      scrobbling: () => scrobbleOn(),
+      volume: () => state.volume,
+    },
+    onChange: () => {
+      queueMicrotask(paintRoomPlayback); updateBar();
+      if (state.tabs?.owner && !state.remote) { state.tabs.publish(); checkpointEngine(true); }
+    },
+    onClock: paintRoomProgress,
+  });
+  state.rooms.addEventListener('error', (e) => playerMessage(e.detail.message, 'error'));
+  setInterval(paintRoomProgress, 500);
+}
+
+function paintRoomProgress() {
+  const snapshot = state.rooms?.getState(), play = snapshot?.state?.play;
+  if (play && !snapshot.state.closed_at) setProgress(roomPositionMs(snapshot) / 1000, play.duration_ms / 1000);
+}
+
+function paintRoomPlayback() {
+  const snapshot = state.rooms?.getState(), room = snapshot?.state, play = room?.play;
+  const sourceBlocked = roomBlocksSource(snapshot);
+  el.quality.disabled = sourceBlocked;
+  for (const button of el.stationList.querySelectorAll('button.station, button.delete')) {
+    if (button.disabled !== sourceBlocked) button.disabled = sourceBlocked;
+    if (sourceBlocked) button.title = 'Leave the room before changing stations.';
+    else if (button.title === 'Leave the room before changing stations.') button.removeAttribute('title');
+  }
+  if (!room || room.closed_at) {
+    if (roomMediaKey) {
+      roomMediaKey = '';
+      if (state.song) {
+        displaySong(state.song, { shown: true });
+        setProgress(state.resume?.position ?? el.audio.currentTime, state.song.duration || 0);
+        updateMediaSession(state.song);
+      } else showIdle();
+      updateResumeUi();
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = el.audio.paused ? 'paused' : 'playing';
+    }
+    return;
+  }
+  if (!play) {
+    el.miniTitle.textContent = el.title.textContent = 'Waiting for the DJ';
+    el.miniArtist.textContent = el.artist.textContent = room.name;
+    el.album.textContent = el.station.textContent = '';
+    setPlayIcon(false); setProgress(0, 0);
+    if (roomMediaKey !== room.id + ':waiting') { roomMediaKey = room.id + ':waiting'; updateMediaSession({ title: room.name, artist: 'Waiting for the DJ' }); }
+    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+    return;
+  }
+  el.barResume.hidden = true;
+  const t = play.track_metadata, info = t.additional_info || {};
+  el.miniTitle.textContent = el.title.textContent = t.track_name || '';
+  el.miniArtist.textContent = el.artist.textContent = t.artist_name || '';
+  el.album.textContent = t.release_name || '';
+  el.station.textContent = 'in ' + room.name;
+  const active = !snapshot.audio?.paused && ['listening', 'broadcasting'].includes(snapshot.audio?.state) && !play.paused_at;
+  setPlayIcon(active);
+  if (roomMediaKey !== play.id) {
+    roomMediaKey = play.id;
+    setCover({ title: t.track_name, artist: t.artist_name, album: t.release_name, coverArt: info.art_url || '' });
+    updateMediaSession({ title: t.track_name, artist: t.artist_name, album: t.release_name, coverArt: info.art_url || '' });
+  }
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = active ? 'playing' : 'paused';
+  setProgress(roomPositionMs(snapshot) / 1000, play.duration_ms / 1000);
+}
+
 // Every /melodica/ page is this one document: the hub, the player, Listens, the
 // Leaderboard, the Map, the Account and the Extension page are routes (history.pushState),
 // so the <audio> element and the extension link live on across them, and the player bar
@@ -2637,19 +2993,46 @@ function installResume() {
 // route; the hub and the extension page come from it as fragments (?fragment=1).
 const SHELL_BASE = '/melodica/';
 const ROUTES = { '': 'home', 'app/': 'app', 'listens/': 'listens', 'leaderboard/': 'leaderboard', 'map/': 'map', 'account/': 'account', 'extension/': 'extension' };
+ROUTES['rooms/'] = 'rooms';
 const ROUTE_PATH = Object.fromEntries(Object.entries(ROUTES).map(([p, r]) => [r, SHELL_BASE + p]));
 const ROUTE_TITLE = {
   home: 'melodica · Pandora players for every device', app: 'melodica — Pandora in the browser', listens: 'Your listens · melodica',
-  leaderboard: 'Leaderboard · melodica', map: 'Map · melodica', account: 'Account · melodica', extension: 'The melodica extension · melodica',
+  leaderboard: 'Leaderboard · melodica', rooms: 'Rooms · melodica', map: 'Map · melodica', account: 'Account · melodica', extension: 'The melodica extension · melodica',
 };
 const ROUTE_HEAD = { listens: 'Your listens', leaderboard: 'Leaderboard', map: 'Map', account: 'Account' };
 function routeOf(pathname) {
+  if (isRoomsPath(pathname)) return 'rooms';
   if (!pathname.startsWith(SHELL_BASE)) return 'app';
   return ROUTES[pathname.slice(SHELL_BASE.length)] || 'app';
 }
 let route = '';
+let routePath = '';
 let routeGen = 0;
 let routeUi = null;          // {live, view} of a Listens/Leaderboard/Map route
+let shellNav = null;
+let navCrew = true;
+function markNavRoute() {
+  for (const a of document.querySelectorAll('.top a[data-k]')) {
+    if (a.dataset.k === route) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  }
+}
+function setNavCrew(crew) {
+  if (navCrew === crew) return;
+  navCrew = crew;
+  if (shellNav) shellNav.setCrew(crew);
+  else {
+    const map = el.siteNav.querySelector('a[data-k="map"]');
+    if (map) map.hidden = !crew;
+  }
+  markNavRoute();
+}
+async function mountShellNav() {
+  try {
+    const mod = await import(UI_MODULE);
+    shellNav = mod.mountNav(el.siteNav, { base: location.origin, active: route, crew: navCrew, home: false });
+    markNavRoute();
+  } catch (err) { console.debug('[scrobble-ui]', describeError(err)); }
+}
 let accountMenuHome = null;  // where the account menu lives when it is not on the Account route
 const fragments = new Map();
 
@@ -2682,7 +3065,7 @@ async function mountRouteUi(name, host, gen) {
   }
   if (gen !== routeGen) return;
   // Arrived on the player and moved here: sign in silently first (once), else mount.
-  if (!(await uiToken())) { await state.accountReady; if (gen !== routeGen) return; if (await silentPanelSignIn(name)) return; }
+  if (!(await uiToken())) { await accountForPanels(); if (gen !== routeGen) return; if (await silentPanelSignIn(name)) return; }
   if (gen !== routeGen) return;
   const client = mod.createClient({ base: location.origin, token: uiToken });
   const api = client.api;
@@ -2690,14 +3073,20 @@ async function mountRouteUi(name, host, gen) {
     const result = await api(path, ...args);
     if (gen === routeGen) {
       if (path === 'me') {
-        el.siteNav.querySelector('a[data-k="map"]').hidden = !result.crew_viewer;
+        setNavCrew(!!result.crew_viewer);
         if (name === 'map' && !result.crew_viewer) routeNotice(host, name, 'crew_only');
       }
       if (path === 'game') host.parentNode?.querySelector(':scope > .route-notice')?.remove();
     }
+    // The home page is a snapshot; keep five real entries per chart and link through
+    // to the complete, paged board. The standalone Leaderboard route stays untouched.
+    if (name === 'leaderboard' && host.classList.contains('hub-board-host') && path.startsWith('leaderboard?')) {
+      return { ...result, songs: result.songs?.slice(0, 5) || [], artists: result.artists?.slice(0, 5) || [], listeners: result.listeners?.slice(0, 5) || [], djs: result.djs?.slice(0, 5) || [] };
+    }
     return result;
   };
   const live = client.live();
+  watchAccountLive(live);
   const opts = { client, live };
   if (name === 'listens') { opts.pageSize = 25; opts.scrollRoot = host; }
   if (name === 'leaderboard') opts.window = '7d';
@@ -2710,6 +3099,13 @@ async function mountRouteUi(name, host, gen) {
     console.debug('[scrobble-ui]', name, code);
     if (gen === routeGen) routeNotice(host, name, code);
   });
+  // Check identity before mounting the board so a rejected async request cannot
+  // leave an empty leaderboard. This does not require crew membership.
+  if (name === 'leaderboard') {
+    try { await client.api('me'); }
+    catch (e) { if (gen === routeGen) routeNotice(host, name, e.code || e.status || e.statusCode || 'not_loaded'); return; }
+    if (gen !== routeGen) return;
+  }
   let view = null;
   try { view = mod[PANES[name]](host, opts); } catch (err) { console.debug('[scrobble-ui]', describeError(err)); }
   routeUi = { live, view };
@@ -2725,7 +3121,7 @@ function remountOnAuth() {
   if (k === authKey) return;
   const first = !authKey;
   authKey = k;
-  if (first || !route || !PANES[route]) return;
+  if (first || !route || (!PANES[route] && !['home', 'rooms'].includes(route))) return;
   remountRoute();
 }
 function remountRoute() { const r = route; leaveRoute(); route = ''; renderRoute(r); }
@@ -2739,14 +3135,22 @@ function routeNotice(host, name, code) {
   const signin = ['unauthorized', 'no_session', 'no_token', 'unauthenticated', 401, '401', 'login_required', 'http_401', 'invalid_token', 'sign_in_required'].includes(code);
   const crew = ['forbidden', 'not_crew', 'crew_only', 'not_member', 403, '403', 'http_403'].includes(code);
   const p = document.createElement('p');
-  const what = name === 'map' ? 'the crew map' : name === 'leaderboard' ? 'the leaderboard' : 'your listens';
+  const what = name === 'rooms' ? 'rooms' : name === 'map' ? 'the crew map' : name === 'leaderboard' ? 'the leaderboard' : 'your listens';
   p.textContent = signin ? `Sign in to see ${what}.`
     : crew ? 'The crew map is invite-only. Signed in with another GitHub account? Sign in again with the one the crew knows.'
     : `This panel could not load${code ? ` (${code})` : ''}.`;
   const a = document.createElement('a');
   a.className = 'button';
   a.href = SIGNIN_GITHUB(ROUTE_PATH[name] || ROUTE_PATH.home);
-  a.textContent = `Sign in with GitHub to see ${what}`;
+  a.textContent = name === 'map' ? `Sign in with GitHub to see ${what}` : `Sign in to see ${what}`;
+  if (code === 'extension_update_required') {
+    p.textContent = 'Update the Melodica extension to play rooms.';
+    a.href = ROUTE_PATH.extension; a.textContent = 'Get the extension update';
+  }
+  if (name === 'leaderboard' && signin) {
+    p.textContent = 'Sign in to Melodica to see the leaderboard.';
+    a.href = ROUTE_PATH.app; a.textContent = 'Sign in to Melodica';
+  }
   const retry = document.createElement('button');
   retry.type = 'button';
   retry.className = 'link';
@@ -2780,32 +3184,123 @@ async function showFragment(path, gen) {
   }
   if (gen !== routeGen) return;
   const doc = new DOMParser().parseFromString(html, 'text/html');
-  for (const n of doc.querySelectorAll('script, style, link')) n.remove();
+  for (const n of doc.querySelectorAll('script, style, link, .topbar')) n.remove();
   el.routeBody.replaceChildren(...[...doc.body.childNodes].map((n) => document.adoptNode(n)));
-  // The hub's leaderboard: the shared panel, as on the Leaderboard route.
+  if (el.routeBody.querySelector('[data-hub-me]')) mountHubUi(gen);
+}
+
+async function mountHubUi(gen) {
+  let mod;
+  try { mod = await import(UI_MODULE); } catch (err) { console.debug('[scrobble-ui]', describeError(err)); return; }
+  if (gen !== routeGen) return;
+  if (!(await uiToken())) {
+    await accountForPanels();
+    if (gen !== routeGen || await silentPanelSignIn('leaderboard')) return;
+  }
+  if (gen !== routeGen) return;
+  const me = el.routeBody.querySelector('[data-hub-me]');
+  const crew = el.routeBody.querySelector('[data-hub-live]');
   const board = el.routeBody.querySelector('[data-hub-board]');
-  if (board) { board.replaceChildren(); board.classList.add('sui-host'); mountRouteUi('leaderboard', board, gen); }
+  if (!me || !crew || !board) return;
+  board.classList.add('hub-board-host');
+  const section = board.closest('.hub-board');
+  const hub = section?.closest('.hub');
+  if (section && hub) {
+    const title = section.querySelector(':scope > h2');
+    if (title) title.textContent = 'Leaderboard';
+    section.removeAttribute('aria-labelledby');
+    section.setAttribute('aria-label', 'Leaderboard');
+    hub.insertBefore(section, hub.querySelector(':scope > .foot'));
+  }
+  const client = mod.createClient({ base: location.origin, token: uiToken });
+  const views = [];
+  let crewView = null;
+  const api = client.api;
+  client.api = async (path, ...args) => {
+    const result = await api(path, ...args);
+    if (gen !== routeGen) return result;
+    if (path === 'me') {
+      setNavCrew(!!result.crew_viewer);
+      if (result.crew_viewer && !crewView) crewView = mod.mountNowPlaying(crew, { client, live });
+      if (!result.crew_viewer && crewView) { crewView.unmount(); crewView = null; }
+    }
+    if (path.startsWith('leaderboard?')) {
+      return { ...result, songs: result.songs?.slice(0, 5) || [], artists: result.artists?.slice(0, 5) || [], listeners: result.listeners?.slice(0, 5) || [], djs: result.djs?.slice(0, 5) || [] };
+    }
+    return result;
+  };
+  const live = client.live();
+  watchAccountLive(live);
+  routeUi = { live, view: { unmount() {
+    for (const view of views) view.unmount();
+    crewView?.unmount();
+  } } };
+  for (const [host, name] of [[me, 'listens'], [board, 'leaderboard']]) {
+    host.classList.add('sui-host');
+    host.addEventListener('sui:error', (ev) => {
+      if (gen === routeGen) routeNotice(host, name, ev.detail?.code || ev.detail?.status);
+    });
+  }
+  // Listening details and chart previews require a known signed-in account.
+  let profile = null;
+  try { profile = await client.api('me'); } catch (_) { /* leave the sign-in prompt */ }
+  if (gen !== routeGen) return;
+  if (!profile) {
+    const prompt = document.createElement('p'); prompt.className = 'muted';
+    const signIn = document.createElement('a'); signIn.href = ROUTE_PATH.app;
+    signIn.textContent = 'Sign in to Melodica';
+    prompt.append(signIn, ' to see the leaderboard.');
+    board.replaceChildren(prompt);
+    return;
+  }
+  views.push(mod.mountListens(me, { client, live, pageSize: 3 }));
+  section?.querySelector(':scope > h2')?.remove();
+  views.push(mod.mountLeaderboard(board, { client, live, window: '7d' }));
+  const heading = board.querySelector('.board-head > h1');
+  if (heading) {
+    const sectionHeading = document.createElement('h2');
+    sectionHeading.textContent = heading.textContent;
+    heading.replaceWith(sectionHeading);
+    const all = document.createElement('a');
+    all.className = 'hub-board-all'; all.href = ROUTE_PATH.leaderboard;
+    all.textContent = 'See full leaderboard';
+    sectionHeading.parentNode.append(all);
+  }
 }
 
 function renderRoute(next, { focus = false } = {}) {
   const gen = ++routeGen;
-  if (next !== route) leaveRoute();
+  if (next !== route || location.pathname !== routePath) leaveRoute();
   route = next;
+  routePath = location.pathname;
   el.app.dataset.route = next;
   document.title = ROUTE_TITLE[next] || ROUTE_TITLE.app;
-  for (const a of el.siteNav.querySelectorAll('a')) {
-    if (a.dataset.k === next) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
-  }
+  markNavRoute();
   el.routeView.hidden = next === 'app';
   if (next === 'app') return;
   if (el.routeBody.childNodes.length) return; // already drawn (popstate to the same route)
-  if (next === 'home' || next === 'extension') {
+  if (next === 'rooms') {
+    const host = document.createElement('div'); host.className = 'sui-host';
+    el.routeBody.replaceChildren(host);
+    host.addEventListener('sui:error', (e) => { if (gen === routeGen) routeNotice(host, 'rooms', e.detail?.code || e.detail?.status); });
+    Promise.resolve().then(async () => {
+      await accountForPanels();
+      if (gen !== routeGen) return;
+      if (!(await uiToken()) && await silentPanelSignIn('rooms')) return;
+      // Public room discovery is still an authenticated app feature. Do not mount
+      // the lobby/create form until this API has confirmed the current identity.
+      await state.rooms.api('rooms');
+      if (gen !== routeGen) return;
+      const view = await state.rooms.mount(host, roomIdFromPath(location.pathname));
+      if (gen !== routeGen) view.unmount(); else routeUi = { view };
+    }).catch((e) => { if (gen === routeGen) routeNotice(host, 'rooms', e.code || e.status || e.message); });
+  } else if (next === 'home' || next === 'extension') {
     showFragment(ROUTE_PATH[next], gen);
   } else if (PANES[next]) {
     const host = document.createElement('div');
     host.className = `sui-host${next === 'map' ? ' sui-map-host' : ''}`;
     host.tabIndex = 0;
-    el.routeBody.replaceChildren(routeHeading(ROUTE_HEAD[next]), host);
+    el.routeBody.replaceChildren(host);
     mountRouteUi(next, host, gen);
   } else if (next === 'account') {
     const menu = el.account.querySelector('.account-menu');
@@ -2816,8 +3311,7 @@ function renderRoute(next, { focus = false } = {}) {
   scrollTo(0, 0);
 }
 
-function go(next, { replace = false } = {}) {
-  const path = ROUTE_PATH[next];
+function go(next, { replace = false, path = ROUTE_PATH[next] } = {}) {
   if (!path) return;
   if (location.pathname !== path) history[replace ? 'replaceState' : 'pushState']({ route: next }, '', path);
   renderRoute(next, { focus: true });
@@ -2832,6 +3326,7 @@ function installShell() {
     const a = e.target.closest && e.target.closest('a[href]');
     if (!a || a.target === '_blank' || a.hasAttribute('download')) return;
     const u = new URL(a.href, location.href);
+    if (u.origin === location.origin && isRoomsPath(u.pathname) && !u.search) { e.preventDefault(); go('rooms', { path: u.pathname }); return; }
     if (u.origin !== location.origin || !(u.pathname.slice(SHELL_BASE.length) in ROUTES) || !u.pathname.startsWith(SHELL_BASE) || u.search) return;
     e.preventDefault();
     go(ROUTES[u.pathname.slice(SHELL_BASE.length)]);
@@ -2839,14 +3334,367 @@ function installShell() {
   addEventListener('popstate', () => renderRoute(routeOf(location.pathname)));
   for (const a of [el.barExpand, el.barSignin]) a.href = `${location.origin}${ROUTE_PATH.app}`;
   renderRoute(routeOf(location.pathname));
+  mountShellNav();
 }
 
+// ---------------------------------------------------------------- one engine across tabs
+const TAB_HANDOFF = 'tab-engine-v1';
+let checkpointAt = 0;
+let checkpointWrite = Promise.resolve();
+let checkpointEpoch = 0;
+const publicTrack = (song) => song ? Object.fromEntries(['title', 'artist', 'album', 'coverArt', 'art', 'art_cached', 'trackToken', 'rating', 'duration', 'quality', 'audioFormat'].map((k) => [k, song[k]])) : null;
+
+let pendingPlaybackImport = null;
+let pendingRoomImport = null;
+let extensionHealth = 0;
+let extensionHealthBusy = false;
+let lastExtensionPlayback = null;
+let copiesClearing = Promise.resolve();
+const copyMirrors = new Map();
+
+function localPlayback() {
+  if (!state.song || state.remote) return null;
+  return {
+    v: 1, at: Date.now(), sid: state.sessionMeta?.sid || '',
+    userId: state.client?.session()?.user?.id || '',
+    station: state.station, stations: state.stations.slice(), song: state.song, queue: state.queue,
+    position: state.resume?.position ?? el.audio.currentTime,
+    duration: state.song.duration || 0, status: !state.resume && !el.audio.paused ? 'playing' : 'paused',
+    quality: state.quality, volume: state.volume,
+    room: state.rooms?.getState() || null,
+  };
+}
+
+async function transferPlaybackToExtension() {
+  const p = pendingPlaybackImport;
+  if (!p || !state.extSid || !state.bridge?.session) return;
+  pendingPlaybackImport = null;
+  const sharedUserId = state.saved?.session?.user?.id;
+  if (!p.userId || !sharedUserId || String(p.userId) !== String(sharedUserId)) return;
+  // Session sharing chooses the extension's established session when present. A
+  // handoff carries that agreed sid; raw URLs travel only in this command reply.
+  const song = { ...p.song };
+  if (song.melodicaPlay?.sid === p.sid && song.melodicaPlay.trackToken === song.trackToken) {
+    song.melodicaPlay = { ...song.melodicaPlay, sid: state.extSid };
+  }
+  try { await state.bridge.command('playback-import', { playback: { ...p, sid: state.extSid, song } }, 4000); } catch (_) { /* older extension */ }
+}
+
+async function transferRoomToExtension() {
+  const room = pendingRoomImport;
+  if (!room?.id || !state.bridge?.session || !state.remote) return;
+  pendingRoomImport = null;
+  try {
+    const result = await state.bridge.command('room-join', { id: room.id, paused: room.audio?.paused === true }, 10000);
+    if (!result?.ok) playerMessage(result?.error || 'The extension could not join this room.', 'error');
+    else if (result.state) renderRemote(result.state);
+  } catch (e) { playerMessage(e.message, 'error'); }
+}
+
+function startExtensionHandoff() {
+  if (extensionHealth || !state.tabs.owner || !state.bridge?.session || state.bridge.kind === 'tab') return;
+  extensionHealth = setInterval(async () => {
+    if (extensionHealthBusy || !state.remote || !state.tabs.owner) return;
+    extensionHealthBusy = true;
+    const bridge = state.bridge;
+    try {
+      const r = await bridge.command('playback-export', {}, 3000);
+      if (state.bridge !== bridge || !state.remote || !bridge.active) return;
+      const p = r?.playback;
+      if (r?.ok && p?.v === 1 && p.sid === state.extSid && p.song && p.station) {
+        lastExtensionPlayback = p;
+        const rec = engineRecord(p);
+        await state.vault.write(rec, TAB_HANDOFF);
+        if (!state.remote || bridge.gone) return;
+        mirrorExtensionCopy(bridge, p);
+        if ((p.played === true || p.status === 'playing') && !p.song.isInsert) {
+          const last = lastRecord({ station: p.station, song: p.song, position: p.position, queue: p.queue || [] });
+          if (last) await state.vault.write(last, LAST_ID);
+        }
+      }
+    } catch (_) {
+      // A timeout does not prove the extension stopped playing. Keep the page a
+      // remote until the content script confirms its runtime was invalidated.
+      if (state.bridge === bridge) playerMessage(CONNECTING, 'info', 0);
+    } finally { extensionHealthBusy = false; }
+  }, 1000);
+}
+
+async function mirrorExtensionCopy(bridge, playback) {
+  const token = playback.song?.trackToken;
+  if (!token || playback.song.isInsert || !state.remember || !state.copies) return;
+  const previous = copyMirrors.get(token);
+  if (previous?.done || previous?.busy || previous?.retryAt > Date.now()) return;
+  const entry = { busy: true, retryAt: Date.now() + 5000, done: false };
+  copyMirrors.set(token, entry);
+  if (copyMirrors.size > 4) copyMirrors.delete(copyMirrors.keys().next().value);
+  const valid = () => state.remote && state.bridge === bridge && bridge.active && state.extSid === playback.sid
+    && (!state.remoteState?.track?.trackToken || state.remoteState.track.trackToken === token);
+  try {
+    await copiesClearing;
+    if (!valid()) return;
+    if (await state.copies.has(token)) { entry.done = true; return; }
+    const parts = [];
+    let offset = 0, total = 0, mime = '';
+    while (valid()) {
+      const r = await bridge.command('playback-copy', { trackToken: token, offset, limit: 262144 }, 5000);
+      const c = r?.copy;
+      if (!r?.ok || !c || !valid()) return;
+      if (c.sid !== playback.sid || c.trackToken !== token || c.offset !== offset || !Number.isInteger(c.total)
+        || c.total <= 0 || c.total > 128 * 1024 * 1024 || typeof c.bytes !== 'string' || c.bytes.length > 349536) return;
+      if (offset === 0) { total = c.total; mime = String(c.mime || 'audio/mp4'); }
+      if (c.total !== total || String(c.mime || 'audio/mp4') !== mime || !mime.startsWith('audio/')) return;
+      const binary = atob(c.bytes);
+      if (!binary.length || binary.length > 262144 || offset + binary.length > total) return;
+      parts.push(Uint8Array.from(binary, (ch) => ch.charCodeAt(0)));
+      offset += binary.length;
+      if (c.done) {
+        if (offset !== total) return;
+        await state.copies.keep([token]);
+        if (!valid()) return;
+        entry.done = await state.copies.put(token, new Blob(parts, { type: mime }));
+        return;
+      }
+      if (offset >= total) return;
+    }
+  } catch (err) { console.debug('[bridge-copy]', describeError(err)); }
+  finally { entry.busy = false; }
+}
+
+async function extensionWentAway(bridge) {
+  if (!state.remote || state.bridge !== bridge || !state.tabs.owner) return;
+  clearInterval(extensionHealth); extensionHealth = 0;
+  bridge.unsubscribe();
+  sessionSyncedFor = '';
+  let rec = lastExtensionPlayback?.sid === state.extSid ? engineRecord(lastExtensionPlayback) : null;
+  if (state.remoteState?.room?.id) {
+    if (rec) rec.room = state.remoteState.room;
+    else rec = { ...engineRecord(), saved: null, room: state.remoteState.room, tab: 'extension', song: null, station: null, stations: [] };
+  }
+  state.remote = false;
+  state.engineReady = false;
+  remoteChangedAt = 0;
+  // Keep the bridge listener: a re-enabled extension can announce itself again.
+  if (!state.client.fn) await state.client.load();
+  if (rec && await restoreTabEngine(rec)) return;
+  await startEngine();
+}
+
+function engineRecord(playback = null) {
+  const p = playback;
+  return {
+    until: Date.now() + 15000, tab: p ? 'extension' : state.tabs.id,
+    apiBase: state.apiBase, saved: p ? state.saved : currentRecord(),
+    remember: state.remember, stations: state.stations,
+    station: p ? p.station : state.station,
+    song: p ? p.song : state.song, queue: p ? p.queue : state.queue, history: state.history,
+    position: p ? p.position : state.resume?.position ?? el.audio.currentTime,
+    playing: p ? p.status === 'playing' : !state.resume && !el.audio.paused,
+    quality: p ? p.quality : state.quality, volume: p ? p.volume : state.volume,
+    policy: state.policy, account: { config: state.account?.config, name: state.account?.name },
+    room: p ? p.room || null : state.rooms?.getState() || null,
+    scrobble: state.scrobble ? { settings: state.scrobble.settings, crew: state.scrobble.crew, loaded: state.scrobble.loaded } : null,
+    cache: [...state.tabs.cache],
+  };
+}
+
+function tabSnapshot() {
+  if (!state.engineReady) return state.tabs?.current?.state || null;
+  if (state.remote && state.bridge?.kind !== 'tab') {
+    const rs = state.remoteState;
+    if (!rs) return null;
+    return { ...rs, track: publicTrack(rs.track), last: rs.last ? { ...publicTrack(rs.last), position: rs.last.position } : null,
+      queue: (rs.queue || []).map(publicTrack) };
+  }
+  const song = state.song;
+  return {
+    scrobble: state.scrobble ? { loaded: state.scrobble.loaded, crew: state.scrobble.crew, settings: state.scrobble.settings } : null,
+    room: state.rooms?.getState() || null,
+    changedAt: Date.now(), loggedIn: !!state.client?.loggedIn,
+    status: state.resume || el.audio.paused ? 'paused' : 'playing',
+    track: publicTrack(song), position: state.resume?.position ?? el.audio.currentTime,
+    duration: song?.duration || 0, quality: state.quality, volume: state.volume,
+    station: state.station ? { token: state.station.id, name: state.station.name } : null,
+    stations: state.stations.map((s) => ({ token: s.id, name: s.name, isQuickMix: s.isQuickMix })),
+    queue: state.queue.filter((s) => !s.isInsert).map(publicTrack), queueLength: state.queue.length,
+    last: state.resume ? { ...publicTrack(song), position: state.resume.position } : null,
+    user: { username: state.account?.name || el.signedIn.textContent || '' },
+  };
+}
+
+function tabBridge() {
+  return {
+    kind: 'tab', name: 'another melodica tab', version: '', session: 0,
+    active: true, player: true, gotState: !!state.tabs.current?.state,
+    command: (action, fields) => state.tabs.command(action, fields),
+    subscribe(fn) { state.tabs.onState = fn; if (state.tabs.current?.state) fn(state.tabs.current.state); },
+    unsubscribe() { state.tabs.onState = null; },
+    post() {},
+  };
+}
+
+function enterTabRemote() {
+  state.rooms?.suspend();
+  state.engineReady = false;
+  if (state.bridge?.kind !== 'tab') state.bridge?.stop?.();
+  state.bridge = tabBridge();
+  state.remote = false;
+  enterRemote();
+  el.app.dataset.engine = 'remote';
+  setStatus('Playing in another melodica tab');
+  // Changes paint before any account discovery, relay restore or wasm bootstrap.
+  if (state.tabs.current?.state) renderRemote(state.tabs.current.state);
+}
+
+async function tabCommand(action, fields = {}) {
+  if (!state.engineReady) return { ok: false, error: 'The player is starting. Try again in a moment.' };
+  if (state.remote && state.bridge?.kind !== 'tab') return state.bridge.command(action, fields);
+  try {
+    if (action.startsWith('room-')) { const result = await state.rooms.handle(action, fields); state.tabs.publish(); checkpointEngine(true); return { ...result, state: tabSnapshot() }; }
+    if (state.rooms?.active() && (['toggle', 'pause', 'resume', 'next', 'volume'].includes(action) || (action === 'play' && !fields.station))) {
+      const a = state.rooms.getState()?.audio;
+      const command = action === 'toggle' ? (a?.paused || !['listening','broadcasting'].includes(a?.state) ? 'room-resume' : 'room-pause') : ({ play: 'room-resume', resume: 'room-resume', pause: 'room-pause', next: 'room-skip', volume: 'room-volume' })[action];
+      const result = await state.rooms.handle(command, fields); state.tabs.publish(); return { ...result, state: tabSnapshot() };
+    }
+    switch (action) {
+      case 'login':
+        rememberChoice(fields.remember !== false);
+        if (!await login(String(fields.email || ''), String(fields.password || ''))) return { ok: false, error: el.loginMessage.textContent };
+        break;
+      case 'logout': logout(); break;
+      case 'remember': setRemember(fields.value); break;
+      case 'scrobble-settings': await setScrobbleSetting(fields.patch || {}); break;
+      case 'play': {
+        const st = state.stations.find((s) => s.id === fields.station?.token);
+        if (st) await playStation(st); else if (state.resume) await resumeLast(); else if (state.song) await el.audio.play();
+        break;
+      }
+      case 'toggle': togglePlay(); break;
+      case 'resume': if (state.resume) await resumeLast(); else await el.audio.play(); break;
+      case 'pause': el.audio.pause(); break;
+      case 'next': skip(); break;
+      case 'love': case 'ban': await rateSong(state.song, action); break;
+      case 'tired': await tired(); break;
+      case 'volume': setVolume(fields.value); break;
+      case 'quality': if (roomBlocksSource(state.rooms?.getState())) return { ok: false, error: 'Leave the room to change your station’s quality.' }; if (QUALITIES.includes(fields.value)) { setQuality(fields.value); state.queue = []; renderUpNext(); } break;
+      case 'stations': break; // the current list is already in every snapshot
+      case 'seed': await playSeed(fields.seed); break;
+      default: return { ok: false, error: `The player does not support ${action}.` };
+    }
+    state.tabs.publish();
+    checkpointEngine(true);
+    return { ok: true, state: tabSnapshot() };
+  } catch (err) { return { ok: false, error: describeError(err) }; }
+}
+
+function checkpointEngine(force = false) {
+  if (!state.tabs.owner || !state.engineReady || state.remote || !state.vault || (!state.rooms?.active() && (!state.sessionMeta || !state.client?.loggedIn || !state.stations.length)) || (!force && Date.now() - checkpointAt < 1000)) return;
+  checkpointAt = Date.now();
+  const rec = engineRecord();
+  const epoch = checkpointEpoch;
+  state.tabs.publishHandoff(rec);
+  if (!state.remember) return;
+  checkpointWrite = checkpointWrite.then(() => state.tabs.owner && state.remember && epoch === checkpointEpoch ? state.vault.write(rec, TAB_HANDOFF) : null).catch((err) => console.debug('[tabs]', describeError(err)));
+}
+
+async function restoreTabEngine(rec) {
+  // Reconstitute the live session without user.getStationList, /me or a login.
+  const saved = rec.saved;
+  const roomOnly = !saved?.session && !!rec.room?.id;
+  if (!roomOnly) {
+    if (!saved?.session || !Array.isArray(rec.stations) || !rec.stations.length || !state.client.restore(saved.session, rec.stations)) return false;
+    state.client.setCredentials(saved.credential ? { user: saved.credential.email, password: saved.credential.password } : null);
+    state.client.restoreAccess(saved.relay?.token || '', saved.relay?.at || 0);
+  }
+  state.saved = saved || null;
+  state.sessionMeta = saved?.session || null;
+  state.remember = rec.remember;
+  state.policy = rec.policy || { inserts: true };
+  state.stations = rec.stations || [];
+  state.station = rec.station;
+  state.queue = rec.queue || [];
+  state.history = rec.history || [];
+  state.quality = rec.quality;
+  state.volume = rec.volume;
+  state.account.config = rec.account?.config || null;
+  state.account.name = rec.account?.name || '';
+  state.scrobbles = new Scrobbles({ origin: location.origin, token: scrobbleToken });
+  state.scrobble = { ...newScrobbleState(), ...rec.scrobble };
+  state.engineReady = true;
+  state.remote = false;
+  el.app.dataset.mode = 'local';
+  el.app.dataset.engine = 'owner';
+  el.searchForm.hidden = false;
+  el.logout.hidden = false;
+  buildStations();
+  showUsername(state.account.name);
+  show(roomOnly ? el.viewLogin : el.viewPlayer);
+  renderScrobbleSettings();
+  syncRemember();
+  renderHistory();
+  if (pendingSeed) {
+    // Station playback waits for ready controls; the restored engine can accept it now.
+    markReady();
+    await playSeed(pendingSeed);
+    updateStatus();
+    state.tabs.publish();
+    return true;
+  }
+  if (!roomOnly && rec.song && rec.station) {
+    // The public view has the latest position even if the asynchronous checkpoint
+    // was interrupted by close/reload.
+    const view = state.tabs.current?.state;
+    const pos = view?.track?.trackToken === rec.song.trackToken ? Number(view.position) || rec.position : rec.position;
+    showResumable(rec.station, { song: rec.song, queue: rec.queue || [], position: pos });
+    if (rec.playing && rec.tab !== state.tabs.id) await resumeLast();
+  }
+  if (rec.room?.id) await state.rooms.command('room-join', { id: rec.room.id, paused: rec.tab === state.tabs.id || rec.room.audio?.paused === true });
+  renderUpNext();
+  updateStatus();
+  state.tabs.publish();
+  markReady();
+  return true;
+}
+
+async function takeTabEngine() {
+  state.tabs.onState = null;
+  state.bridge?.unsubscribe?.();
+  state.remote = false;
+  state.bridge = null;
+  remoteChangedAt = 0;
+  delete el.app.dataset.mode;
+  el.app.dataset.engine = 'owner';
+  await startEngine();
+}
+
+let startupSnapshot = null;
 async function main() {
-  const snap = readSnapshot();
-  if (snap) paintSnapshot(snap);
+  state.vault = new Vault();
+  state.tabs = new TabPlayer({ snapshot: tabSnapshot, command: tabCommand, takeover: takeTabEngine,
+    lose: enterTabRemote, checkpoint: checkpointEngine, suspend: () => { el.audio.pause(); state.rooms?.suspend(); },
+    prepareRequest: async (request) => {
+      // A remote without a remembered token still reads as the engine's listener.
+      // Add its bearer in the engine only; the response shares the engine's cache.
+      const url = new URL(request.url);
+      if (url.origin !== location.origin || !url.pathname.startsWith('/scrobble/api/')) return request;
+      const headers = new Headers(request.headers);
+      if (!headers.has('authorization')) {
+        const token = await scrobbleToken();
+        if (token) headers.set('authorization', `Bearer ${token}`);
+      }
+      return { ...request, headers: [...headers] };
+    } });
+  mark('tabsBegin');
+  await state.tabs.start();
+  mark('tabsReady');
+  state.savedReady = loadSaved().catch(() => { state.saved = null; });
+  startupSnapshot = readSnapshot();
+  const snap = startupSnapshot;
+  if (snap && state.tabs.owner) paintSnapshot(snap);
   el.volume.value = el.barVolume.value = String(state.volume);
   el.quality.value = state.quality;
   installEvents();
+  installRooms();
   installShell();
   installResume();
   installScrobbleEvents();
@@ -2857,6 +3705,13 @@ async function main() {
   renderUpNext();
   renderHistory();
 
+  if (!state.tabs.owner) { enterTabRemote(); return; }
+  await startEngine();
+}
+
+async function startEngine() {
+  mark('engineStart');
+  const snap = startupSnapshot;
   let api;
   try {
     api = apiBaseFromPage();
@@ -2867,9 +3722,6 @@ async function main() {
   state.apiFromQuery = api.fromQuery;
   const log = (m) => console.debug('[piano]', m);
   state.client = new PianoClient({ apiBase: api.apiBase, log, onAccess: () => { refreshPolicy(); }, onSession: onClientSession });
-  // The encrypted "Remember me" store; an old plaintext password is moved into it first.
-  state.vault = new Vault();
-  state.savedReady = loadSaved().catch((err) => { console.debug('[vault]', describeError(err)); state.saved = null; });
   // The optional spacegho.st account: finishes a sign-in round trip and reads the
   // policy while the wasm loads; logins wait for it so the policy is known first.
   const session = {
@@ -2878,18 +3730,32 @@ async function main() {
     remove(k) { try { sessionStorage.removeItem(k); } catch (_) { /* unavailable */ } },
   };
   state.account = new Account({ origin: location.origin, store, session, log: (m) => console.debug('[account]', m) });
-  state.accountReady = setupAccount().catch((err) => console.debug('[account]', describeError(err))).then(() => remountOnAuth());
   // The melodica extension: say hello now (and again for a few seconds) so its content
   // script can answer while the wasm loads; it may also appear later, and the page
   // then switches to remote mode (onBridgeChange). An explicit ?api= means the relay
   // given there, without the extension (the CI smoke relies on that).
   if (!api.fromQuery && bridgeAllowed(location)) {
-    state.bridge = new BridgeTransport(window, { log, onChange: onBridgeChange, onSession: (m) => applyExtensionSession(m, false), onAccountSignout: onExtensionAccountSignout });
+    state.bridge = new BridgeTransport(window, { log, onChange: onBridgeChange, onSession: (m) => applyExtensionSession(m, false), onAccountSignout: onExtensionAccountSignout,
+      onRoomClock: ({ room }) => {
+        if (state.rooms?.updateClockRemote(room) && state.remoteState) state.remoteState.room = state.rooms.getState();
+      },
+    });
     state.bridge.start();
+    mark('bridgeStart');
   }
   updateStatus();
   // The wasm loads meanwhile, so the page on its own does not wait for the extension.
   const loading = state.client.load().then(() => null, (err) => err || new Error('load failed'));
+  // Discovery and WASM loading run while the encrypted session opens. Adopt a warm
+  // handoff's request cache before account validation can make a network request.
+  await state.savedReady;
+  mark('vaultReady');
+  const handoff = state.tabs.handoff || await state.vault.read(TAB_HANDOFF);
+  const warm = handoff && handoff.until > Date.now() && handoff.apiBase === state.apiBase;
+  if (warm) state.tabs.restoreCache(handoff.cache);
+  state.accountReady = (warm ? Promise.resolve() : setupAccount().catch((err) => console.debug('[account]', describeError(err))).then(() => remountOnAuth()))
+    .finally(() => { if (!state.accountNavigating) el.app.dataset.accountReady = 'true'; });
+  resolveAccountStarted();
   // Painted from the snapshot: as a remote, the extension has the full hello window
   // (a dot says "connecting" after 300 ms; nothing is blocked meanwhile); on its own,
   // nothing waits for an extension (one that appears takes over, onBridgeChange).
@@ -2911,6 +3777,9 @@ async function main() {
     setStatus('wasm failed to load', true);
     return;
   }
+  if (warm && await restoreTabEngine(handoff)) return;
+  state.engineReady = true;
+  el.app.dataset.engine = 'owner';
   updateStatus();
   // An extension that said present but not yet ready is waking its background: the
   // page waits for it as a remote (up to the hello window) instead of showing a login.

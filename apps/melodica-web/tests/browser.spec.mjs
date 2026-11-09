@@ -141,7 +141,7 @@ function report(evidence) {
 async function waitForLoginScreen(page, evidence) {
   expect(evidence.challenged, 'Cloudflare answered with a challenge page instead of the app').toBe(false);
   await expect(page).toHaveTitle(/melodica/);
-  await expect(page.locator('header h1')).toContainText('melodica');
+  await expect(page.getByRole('link', { name: 'melodica home', exact: true })).toBeVisible();
   // data-view="login" is set by app.js only after the wasm module loaded and mw_init returned 0.
   await expect(page.locator('#app')).toHaveAttribute('data-view', 'login', { timeout: 30_000 });
   await expect(page.locator('#view-error')).toBeHidden();

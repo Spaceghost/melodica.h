@@ -669,3 +669,53 @@ melodica bearer against the live service.
 MIT (this repository). The libpiano-compatible sources in
 `vendor/melodica.h/compat` are under `LICENSE.libpiano` (MIT, Lars-Dominik
 Braun); see `THIRD_PARTY_NOTICES.md` for the rest.
+
+### Listen links
+
+The player accepts `listen://`, `web+listen://` and
+`https://spacegho.st/listen/` links from **Listen links** in the header.
+Artist, genre and station targets ask for **Play linked station** after sign-in;
+opening a link alone starts no audio. Other targets open their matching Listens,
+Map or Leaderboard page. The same menu copies HTTPS artist/station links, and its
+explicit **Open web+listen links here** button asks the browser to register the
+handler. Browsers that cannot register it can use HTTPS links.
+
+The site Worker routes `/listen/<path>` and `/listen/?uri=<encoded-link>` through
+`web/listen-uri.js`, copied from melodica-scrobble's reference parser. The route
+returns 302 only to the closed Melodica route table, and 404 for invalid targets.
+Tests: `node --test tests/listen-uri.test.mjs site/tests/listen.test.mjs` and the
+three listen-link cases in `tests/remote.spec.mjs`.
+### One player across browser tabs
+
+Tabs on the same origin share one playback engine. Opening another Melodica page
+renders the current song from `melodica.tabs.v1` in localStorage and makes the new
+page a remote. Pause and Play stay in the original engine tab, including when
+another remote opens while paused. Web Locks arbitrate ownership; browsers without
+Web Locks use the same storage lease and BroadcastChannel. The lease expires after
+six seconds if a tab disappears without a close event.
+
+The public snapshot contains song metadata, station names, volume and position.
+Credentials, session tokens, signed audio URLs and cached account replies stay in
+memory or the AES-GCM vault. Application requests from remotes go through the
+engine; simultaneous account reads share an in-flight request and successful
+`me`/policy replies have a 30-second TTL. A short-lived encrypted checkpoint keeps
+the session, station list, queue and position for close/reload handoffs. With
+Remember off, that checkpoint stays in BroadcastChannel memory. Restoring
+it also restores the WASM station cache, so the queue can continue when exhausted.
+Reload shows Resume; another surviving tab can resume automatically when the
+engine closes, subject to the browser's autoplay permission. Restoring a page from
+the back/forward cache re-elects the engine before it can play.
+
+Extensions with `playback-export`/`playback-import` transfer the current song,
+queue and position through explicit bridge commands. Their signed URLs never go
+into localStorage. Bounded private chunks mirror the extension's cached current
+audio bytes directly into this device's cache, including after the source URL
+expires. The page mirrors a song the extension actually played into this device's
+encrypted last-song record; paused unheard imports do not replace that record. A responsive older extension stays remote;
+an explicit invalidated-runtime signal allows a cached play to return to the web
+engine. Unanswered bridge requests keep the page remote.
+
+Browser coverage is in `tests/smoke-playback.spec.mjs`: three tabs at desktop and
+phone widths, remote pause/play, engine close/reload, the storage-lease fallback,
+and extension appearance/disappearance. Those tests use the real protocol core
+against melodica-tuner; the extension lifecycle test uses a bridge fixture.
