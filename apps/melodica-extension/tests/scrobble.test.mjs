@@ -4,7 +4,7 @@
 //   node tests/scrobble.test.mjs
 import {
   trackMetadata, genomeTraits, thresholdSeconds, playingNow, single, scrobbleBase, recentFrom, listenOf, prependListen, isSpot, RECENT_MAX,
-  enqueue, outcome, QUEUE_MAX,
+  enqueue, outcome, QUEUE_MAX, failureText, seedKey, seedStation, seedPick,
 } from '../build/node/scrobble.js';
 
 let n = 0;
@@ -25,6 +25,7 @@ eq(genomeTraits('rock'), null, 'genome: not a list');
 eq(genomeTraits([]), null, 'genome: none left');
 eq(trackMetadata(song, 0, ['heavy electric distortion']).additional_info.genome, ['heavy electric distortion'], 'genome in additional_info');
 eq(trackMetadata(song, 0, []).additional_info.genome, undefined, 'no genome field without traits');
+eq(trackMetadata(song, 0, null, { version: '0.8.5', station: ' Night Drive Radio ' }).additional_info, { submission_client: 'melodica-extension', submission_client_version: '0.8.5', station_name: 'Night Drive Radio', duration_ms: 200000, art_url: 'https://img.example/a.jpg' }, 'version and station');
 eq(trackMetadata({ ...song, ad: true }), null, 'a slot has no metadata');
 eq(trackMetadata({ ...song, kind: 'spot' }), null, 'a slot has no metadata');
 eq(isSpot({ ad: true }) && isSpot({ kind: 'spot' }) && !isSpot(song), true, 'isSpot');
@@ -56,6 +57,20 @@ q = enqueue(q, single(meta, 1));
 eq(q.length, 1, 'the same play is queued once');
 for (let i = 2; i < QUEUE_MAX + 10; i++) q = enqueue(q, single(meta, i));
 eq([q.length, q[0].payload[0].listened_at], [QUEUE_MAX, 10], 'capped, oldest dropped');
-eq([200, 403, 401, 400, 429, 500, 0].map(outcome), ['ok', 'off', 'auth', 'drop', 'retry', 'retry', 'retry'], 'answers');
+eq([200, 403, 401, 400, 429, 500, 0].map((s) => outcome(s)), ['ok', 'retry', 'auth', 'drop', 'retry', 'retry', 'retry'], 'answers');
+eq(outcome(403, { error: 'scrobbling_off' }), 'off', 'only scrobbling_off turns scrobbling off');
+eq(outcome(403, { error: 'crew_only' }), 'retry', 'other refusals keep the listen');
+eq(seedKey('Daft Punk Radio'), 'daft punk', 'Radio dropped');
+eq(seedStation([{ token: 's1', name: 'Today\'s Hits' }, { token: 's2', name: 'Daft Punk Radio' }], 'daft punk')?.token, 's2', 'reuses "<name> Radio"');
+eq(seedStation([{ token: 's1', name: 'Jazz' }], 'Blues'), null, 'no station of that name');
+const found = [{ kind: 'song', name: 'Around the World – Daft Punk', token: 'S', score: 99 }, { kind: 'artist', name: 'Daft Punk Tribute', token: 'A2', score: 90 }, { kind: 'artist', name: 'Daft Punk', token: 'A1', score: 80 }, { kind: 'genre', name: 'Electronica', token: 'G1', score: 0 }];
+eq(seedPick(found, 'artist', 'Daft Punk').token, 'A1', 'exact artist name first');
+eq(seedPick(found, 'genre', 'electronica').token, 'G1', 'genre station');
+eq(seedPick(found.filter((r) => r.kind !== 'genre'), 'genre', 'Synthwave').token, 'A2', 'no genre: best artist');
+eq(seedPick([{ kind: 'song', name: 'x', token: 'S' }], 'artist', 'y').token, 'S', 'then a song');
+eq(seedPick([], 'artist', 'y'), null, 'nothing');
+eq(failureText(null, 3), '', 'no line while it works');
+eq(failureText({ status: 401, error: 'invalid_token' }, 2), 'Scrobbling failed (HTTP 401 invalid_token). 2 listens wait to be sent.', 'failure line');
+eq(failureText({ status: 0, error: '' }, 1), 'Scrobbling failed (no connection). 1 listen waits to be sent.', 'offline line');
 eq([thresholdSeconds(30), thresholdSeconds(31), thresholdSeconds(200), thresholdSeconds(600)], [null, 15.5, 100, 240], '30 s minimum, half, 4 min cap');
 console.log(`scrobble: ${n} checks ok`);

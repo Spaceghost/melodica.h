@@ -49,9 +49,13 @@ export def genomeTraits list
 	out.length ? out : null
 
 # Only artist, title, album, duration, an https art URL and the genome traits.
-export def trackMetadata song, duration = 0, genome = null
+export def trackMetadata song, duration = 0, genome = null, extra = null
 	return null if !song or isSpot(song) or !song.artist or !song.title
 	const info = {submission_client: SUBMISSION_CLIENT}
+	const version = extra and String(extra.version or '').slice(0, 32)
+	info.submission_client_version = version if version
+	const station = extra and String(extra.station or '').trim().slice(0, 128)
+	info.station_name = station if station
 	const secs = Math.max(Number(song.duration) or 0, Number(duration) or 0)
 	info.duration_ms = Math.round(secs * 1000) if secs > 0
 	const art = artUrl(song.coverArt)
@@ -119,10 +123,37 @@ export def enqueue queue, body
 	list.push(body)
 	list.slice(-QUEUE_MAX)
 
-# What a Scrobbles answer means for a submission.
-export def outcome status
+# What a Scrobbles answer means for a submission. Only 403 scrobbling_off means the
+# account's switch is off; any other refusal keeps the listen for a later try.
+export def outcome status, body = null
 	return 'ok' if status >= 200 and status < 300
-	return 'off' if status === 403
+	return 'off' if status === 403 and body and body.error === 'scrobbling_off'
 	return 'auth' if status === 401 or status === 404
 	return 'drop' if status === 400 or status === 413 or status === 422
 	'retry'
+
+# The popup's line while submissions fail: what the server answered, and how many
+# listens wait to go. Empty while scrobbling works.
+export def failureText fail, waiting = 0
+	return '' unless fail
+	const why = fail.status ? "HTTP {fail.status}{fail.error ? ' ' + fail.error : ''}" : 'no connection'
+	const n = Number(waiting) or 0
+	"Scrobbling failed ({why}).{n ? ' ' + n + (n === 1 ? ' listen waits' : ' listens wait') + ' to be sent.' : ''}"
+
+# play-seed (docs/BRIDGE.md): names compare without case, punctuation or a trailing
+# "Radio"; a station already in the list wins, else Pandora's best match of the asked
+# kind, then an artist, then a song.
+export const SEED_KINDS = ['artist', 'genre']
+export def seedKey s
+	String(s or '').toLowerCase().replace(/\s+radio$/, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+
+export def seedStation stations, name
+	const want = seedKey(name)
+	return null unless want
+	(Array.isArray(stations) ? stations : []).find(do(s) s and s.token and seedKey(s.name) === want) or null
+
+export def seedPick results, kind, name
+	const want = seedKey(name)
+	const all = (Array.isArray(results) ? results : []).filter(do(r) r and r.token)
+	const best = do(list) list.find(do(r) seedKey(r.name) === want) or list.slice().sort(do(x, y) (Number(y.score) or 0) - (Number(x.score) or 0))[0]
+	best(all.filter(do(r) r.kind === kind)) or best(all.filter(do(r) r.kind === 'artist')) or all.find(do(r) r.kind === 'song') or null

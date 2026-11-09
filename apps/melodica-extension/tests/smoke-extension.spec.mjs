@@ -246,6 +246,7 @@ test.afterAll(async () => {
     remember: report.remember,
     session: report.session,
     scrobbles: report.scrobbles,
+    scrobbleFailure: report.scrobbleFailure,
     scrobbleUi: report.scrobbleUi,
     spots: report.spots,
     update: report.update,
@@ -836,8 +837,11 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     for (const l of acct.listens) {
       const meta = l.body.payload[0].track_metadata;
       expect(Object.keys(meta).every((k) => allowed.includes(k)), `listen fields ${Object.keys(meta)}`).toBe(true);
-      expect(Object.keys(meta.additional_info).every((k) => ['submission_client', 'duration_ms', 'art_url'].includes(k))).toBe(true);
+      expect(Object.keys(meta.additional_info).every((k) => ['submission_client', 'submission_client_version', 'station_name', 'duration_ms', 'art_url'].includes(k)), `additional_info ${Object.keys(meta.additional_info)}`).toBe(true);
       expect(meta.additional_info.submission_client).toBe('melodica-extension');
+      expect(meta.additional_info.submission_client_version, 'client version sent').toBe(manifest.version);
+      expect(typeof meta.additional_info.station_name === 'string' && meta.additional_info.station_name.length > 0, 'station name sent').toBe(true);
+      expect(/^https?:\/\//.test(meta.additional_info.art_url || ''), `art_url sent (${meta.additional_info.art_url})`).toBe(true);
       expect(meta.track_name, 'the slot is never scrobbled').not.toBe(slotSeen.track.title);
       expect(l.body.listen_type, 'no single for a 10 s song').toBe('playing_now');
     }
@@ -876,6 +880,24 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     expect(await popR.locator('#link-melodica').getAttribute('href')).toBe('https://spacegho.st/melodica/');
     await popR.screenshot({ path: shot('popup-recent') });
     await popR.close();
+    // A refusal other than scrobbling_off (here 403 forbidden) keeps scrobbling on and
+    // shows the failure in the popup; the next song that goes clears it.
+    acct.scrobbleFailWith(403, 'forbidden');
+    const popF = await context.newPage();
+    await popF.setViewportSize(POPUP);
+    await popF.goto(`chrome-extension://${id}/popup.html`);
+    const refusedAt = acct.scrobbleRefused.length;
+    await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'player', action: 'next' }));
+    await expect.poll(() => acct.scrobbleRefused.length, { timeout: 40_000 }).toBeGreaterThan(refusedAt);
+    await expect(popF.locator('#scrobble-fail')).toContainText('Scrobbling failed (HTTP 403 forbidden)', { timeout: 15_000 });
+    await popF.screenshot({ path: shot('popup-scrobble-fail') });
+    acct.scrobbleFailWith(0);
+    const goodAt = acct.listens.length;
+    await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'player', action: 'next' }));
+    await expect.poll(() => acct.listens.length, { timeout: 40_000 }).toBeGreaterThan(goodAt);
+    await expect(popF.locator('#scrobble-fail')).toHaveCount(0, { timeout: 15_000 });
+    await popF.close();
+    report.scrobbleFailure = { shown: true, recovered: true };
     // The player tab's Listens and Leaderboard panels: the shared Scrobbles UI packaged in
     // the extension (scrobble-ui.pin), against the fake API; no Map for a non-GitHub account.
     const pt = await context.newPage();

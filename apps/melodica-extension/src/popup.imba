@@ -219,6 +219,8 @@ tag Popup
 							<button#logout type="button" @click=logout> "Sign out"
 						if player and player.scrobbling and player.scrobbling.notice
 							<ScrobbleNotice scrobbling=player.scrobbling>
+						if player and player.scrobbling and player.scrobbling.failing
+							<p#scrobble-fail.ext-scrobble-fail role="status"> player.scrobbling.failing
 						if user.prompt
 							<UsernamePick user=user>
 						<div.card.now.ext-compact>

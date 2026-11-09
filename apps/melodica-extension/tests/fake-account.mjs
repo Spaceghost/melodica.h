@@ -54,6 +54,7 @@ export function createAccountServer({ issuer = 'https://spacegho.st', accessTtl 
   const listens = [];
   const scrobbleRefused = [];
   let scrobbleDown = false;
+  let scrobbleFail = null;
   const seededListens = [];
   const scrobbleUiCalls = [];
   const userOf = (email) => {
@@ -252,6 +253,7 @@ export function createAccountServer({ issuer = 'https://spacegho.st', accessTtl 
       }
       if (p === '/scrobble/api/me/listens' && req.method === 'POST') {
         if (scrobbleDown) return json(res, 503, { error: 'unavailable' });
+        if (scrobbleFail) { scrobbleRefused.push(JSON.parse(body || 'null')); return json(res, scrobbleFail.status, { error: scrobbleFail.error }); }
         let q = null;
         try { q = JSON.parse(body); } catch { q = null; }
         if (!q || !['single', 'playing_now'].includes(q.listen_type) || !Array.isArray(q.payload)) return json(res, 400, { error: 'invalid_request' });
@@ -272,6 +274,7 @@ export function createAccountServer({ issuer = 'https://spacegho.st', accessTtl 
   return {
     issuer, accounts, calls, tokens, requests, handle, users, loginOks, usernameCalls, listens, scrobbleRefused, scrobbleSettings, scrobbleUiCalls,
     scrobbleOffline(down) { scrobbleDown = !!down; },
+    scrobbleFailWith(status, error) { scrobbleFail = status ? { status, error } : null; },
     seedListen(l) { seededListens.unshift(l); },
     allow(email, { spots = true } = {}) { allowList.set(String(email).trim().toLowerCase(), { spots: !!spots }); },
     disallow(email) { allowList.delete(String(email).trim().toLowerCase()); },

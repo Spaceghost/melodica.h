@@ -13,7 +13,7 @@
 #   ext  -> {melodica:1, type:'response', id, ok, status, body:Uint8Array, error}
 #   page -> {melodica:1, type:'subscribe'} | {type:'unsubscribe'}
 #   ext  -> {melodica:1, type:'state', state}            (on subscribe and on every change)
-#   page -> {melodica:1, type:'command', id, action, …}  (play/pause/toggle/next/love/ban/tired/stop/volume/quality/stations/openLogin, also spelled open-login)
+#   page -> {melodica:1, type:'command', id, action, …}  (play/pause/toggle/next/love/ban/tired/stop/volume/quality/stations/openLogin, also spelled open-login; play-seed {kind, name} or seed {seed: {kind, name}}, kind 'artist'|'genre')
 #   ext  -> {melodica:1, type:'result', id, ok, error, state}
 # The extension also announces 'ready' once when it loads. Only searches whose
 # method matches /^[a-z]+\.[A-Za-z]+$/ are forwarded; the background POSTs the
@@ -86,6 +86,12 @@ def handleCommand data
 			return reply({ok: no, error: o and o.error or 'the extension did not answer'}) unless o and o.ok
 			r = await browser.runtime.sendMessage({type: 'player-get'})
 			return reply({ok: yes, opened: o.opened, state: publicState(r and r.state)}) if r and r.ok
+		elif action === 'play-seed' or action === 'seed'
+			const seed = data.seed and typeof data.seed === 'object' ? data.seed : data
+			r = await browser.runtime.sendMessage({type: 'play-seed', kind: String(seed.kind or ''), name: String(seed.name or '').slice(0, 128)})
+			return reply({ok: no, error: r and r.error or 'the extension did not answer', kind: r and r.kind}) unless r and r.ok
+			pushState(r.state) if subscribed and r.state
+			return reply({ok: yes, station: r.station, created: r.created, state: publicState(r.state)})
 		elif action === 'stations'
 			r = await browser.runtime.sendMessage({type: 'stations'})
 			return reply({ok: no, error: r and r.error or 'extension error'}) unless r and r.ok
