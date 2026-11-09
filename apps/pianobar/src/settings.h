@@ -106,6 +106,7 @@ typedef struct {
 	char *fifo;
 	char *rpcHost, *rpcTlsPort, *partnerUser, *partnerPassword, *device, *inkey, *outkey, *caBundle;
 	char *audioPipe;
+	char *listenbrainzUrl, *listenbrainzToken, *listenbrainzQueue;
 	char keys[BAR_KS_COUNT];
 	int sampleRate;
 	BarMsgFormatStr_t msgFormat[MSG_COUNT];

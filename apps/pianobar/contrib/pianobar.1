@@ -26,6 +26,13 @@ Per-user configuration file. See
 .B CONFIGURATION.
 .RE
 
+.I $XDG_CONFIG_HOME/pianobar/listenbrainz-queue
+.RS
+Listens that could not be delivered to the
+.B listenbrainz_url
+server yet, one per line. They are retried automatically.
+.RE
+
 .I /etc/libao.conf
 or
 .I ~/.libao
@@ -351,6 +358,32 @@ of gain adjustment.
 Keep a history of the last n songs (5, by default). You can rate these songs.
 
 .TP
+.B listenbrainz_token = token
+Scrobble to a ListenBrainz-compatible server with this user token. Scrobbling
+is off while it is unset. For spacegho.st, create a token at
+https://spacegho.st/melodica/account/. The token is sent only in the
+Authorization header and never printed.
+
+.TP
+.B listenbrainz_url = https://spacegho.st/scrobble
+Base URL of the ListenBrainz-compatible server (the API lives under
+.I /1/
+below it). The presets
+.B spacegho.st
+(the default) and
+.B listenbrainz
+(https://api.listenbrainz.org) can be used instead of a URL. pianobar sends
+"now playing" when a song starts and the listen once it has played for half
+its length or four minutes, whichever comes first (songs of 30 seconds or less
+never count). Listens are sent with the album, the album art URL, the duration
+and the station name. A listen that cannot be delivered (no network, server
+error, refused token) waits in the queue file (see
+.B FILES)
+and is retried. This works next to
+.B event_command
+scrobblers.
+
+.TP
 .B love_icon =  <3
 Icon for loved songs.
 
@@ -410,6 +443,29 @@ Your pandora.com username.
 .TP
 .B volume = 0
 Initial volume correction in dB. Usually between -30 and +5.
+
+.SH LISTEN LINKS
+.B pianobar
+.I link
+opens a listen:// link (also web+listen:// and
+https://spacegho.st/listen/...). A link never starts playback by itself.
+.B listen://station/<id>
+selects that station if it is in your station list and asks before playing it.
+.B listen://artist/<name>
+and
+.B listen://genre/<name>
+pick a matching station from your list, or offer to create one from Pandora's
+search or genre stations, and ask before playing it. Every other link (track,
+map, user, listens, leaderboard) opens its page on spacegho.st with
+.B xdg-open
+and exits. Unsupported links print "That link isn't supported." and exit with
+status 1.
+
+.I make install
+installs
+.I pianobar-listen.desktop
+(x-scheme-handler/listen, run in a terminal); make it the handler with
+.B xdg-mime default pianobar-listen.desktop x-scheme-handler/listen
 
 .SH REMOTE CONTROL
 .B pianobar

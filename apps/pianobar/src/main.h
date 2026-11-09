@@ -27,6 +27,9 @@ THE SOFTWARE.
 
 #include <piano.h>
 
+#include "listen_uri.h"
+#include "listenbrainz.h"
+#include "listenbrainz_curl.h"
 #include "player.h"
 #include "settings.h"
 #include "ui_readline.h"
@@ -46,6 +49,12 @@ typedef struct {
 	sig_atomic_t doQuit;
 	BarReadlineFds_t input;
 	unsigned int playerErrors;
+	/* ListenBrainz-compatible scrobbling (listenbrainz_url/_token) */
+	BarLb_t lb;
+	BarLbCurl_t lbHttp;
+	/* listen:// link from the command line, resolved after login */
+	BarListenUri_t listen;
+	bool hasListen;
 } BarApp_t;
 
 #include <signal.h>

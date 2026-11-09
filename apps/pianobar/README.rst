@@ -18,9 +18,16 @@ Features
 - upcoming songs/song history
 - customize keybindings and text output (see `configuration example`_)
 - remote control and eventcmd interface (send tracks to last.fm_, for example)
+- built-in scrobbling to spacegho.st_ or any ListenBrainz-compatible server:
+  set ``listenbrainz_token`` (and optionally ``listenbrainz_url``) in the
+  config file; undelivered listens are queued and retried (see the manpage)
+- opens listen:// links (``pianobar listen://artist/...``): station links
+  ask before playing, other links open on spacegho.st; ``make install`` adds a
+  desktop entry for the scheme (see the manpage, LISTEN LINKS)
 - proxy support for listeners outside the USA
 
 .. _last.fm: https://www.last.fm
+.. _spacegho.st: https://spacegho.st/melodica/account/
 .. _configuration example: https://github.com/PromyLOPh/pianobar/blob/master/contrib/config-example
 
 Download

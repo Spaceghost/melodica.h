@@ -12,6 +12,12 @@
 #control_proxy = http://127.0.0.1:9090/
 #bind_to = if!tun0
 
+# Scrobbling to a ListenBrainz-compatible server (spacegho.st by default;
+# get a token at https://spacegho.st/melodica/account/)
+#listenbrainz_url = https://spacegho.st/scrobble
+#listenbrainz_url = listenbrainz
+#listenbrainz_token = your-token
+
 # Keybindings
 #act_help = ?
 #act_songlove = +

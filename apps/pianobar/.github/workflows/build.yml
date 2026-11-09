@@ -21,4 +21,8 @@ jobs:
           sudo apt install libao-dev libavcodec-dev libavfilter-dev libavformat-dev libavutil-dev libcurl4-gnutls-dev libgcrypt20-dev libjson-c-dev libpth-dev pkg-config build-essential
     - name: Build pianobar
       run: make
+    - name: Scrobbler tests (unit + fake ListenBrainz server)
+      run: |
+          make test
+          sh ci/listenbrainz-e2e.sh
 

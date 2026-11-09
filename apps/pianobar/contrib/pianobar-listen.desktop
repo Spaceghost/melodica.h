@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=pianobar
+GenericName=Pandora player
+Comment=Open listen:// links in pianobar
+Exec=pianobar %u
+Terminal=true
+NoDisplay=true
+Categories=AudioVideo;Audio;Player;
+MimeType=x-scheme-handler/listen;

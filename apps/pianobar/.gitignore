@@ -9,3 +9,6 @@ libpiano.so*
 waitress-test
 __pycache__/
 *.pyc
+test/listenbrainz_test
+test/listenbrainz_e2e
+test/listen_uri_test

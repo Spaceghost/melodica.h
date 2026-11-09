@@ -33,7 +33,11 @@ PIANOBAR_SRC:=\
 		${PIANOBAR_DIR}/ui_act.c \
 		${PIANOBAR_DIR}/ui.c \
 		${PIANOBAR_DIR}/ui_readline.c \
-		${PIANOBAR_DIR}/ui_dispatch.c
+		${PIANOBAR_DIR}/ui_dispatch.c \
+		${PIANOBAR_DIR}/listenbrainz.c \
+		${PIANOBAR_DIR}/listenbrainz_curl.c \
+		${PIANOBAR_DIR}/listen_uri.c \
+		${PIANOBAR_DIR}/listen.c
 PIANOBAR_OBJ:=${PIANOBAR_SRC:.c=.o}
 
 LIBPIANO_DIR:=src/libpiano
@@ -126,11 +130,30 @@ libpiano.so.0: ${LIBPIANO_RELOBJ} ${LIBPIANO_OBJ}
 	${SILENTECHO} "    CC  $< (PIC)"
 	${SILENTCMD}${CC} -c -fPIC -o $@ ${ALL_CFLAGS} -MMD -MF $*.d -MP $<
 
+# scrobbler tests: unit (no network) and the end-to-end helper (libcurl)
+test/listenbrainz_test: test/listenbrainz_test.c ${PIANOBAR_DIR}/listenbrainz.c ${PIANOBAR_DIR}/listenbrainz.h
+	${SILENTECHO} "  LINK  $@"
+	${SILENTCMD}${CC} ${CFLAGS} -Wall -Wextra -o $@ test/listenbrainz_test.c ${PIANOBAR_DIR}/listenbrainz.c
+
+test/listenbrainz_e2e: test/listenbrainz_e2e.c ${PIANOBAR_DIR}/listenbrainz.c ${PIANOBAR_DIR}/listenbrainz_curl.c
+	${SILENTECHO} "  LINK  $@"
+	${SILENTCMD}${CC} ${CFLAGS} -Wall -Wextra ${LIBCURL_CFLAGS} -o $@ test/listenbrainz_e2e.c \
+			${PIANOBAR_DIR}/listenbrainz.c ${PIANOBAR_DIR}/listenbrainz_curl.c ${LIBCURL_LDFLAGS}
+
+test/listen_uri_test: test/listen_uri_test.c ${PIANOBAR_DIR}/listen_uri.c ${PIANOBAR_DIR}/listen_uri.h
+	${SILENTECHO} "  LINK  $@"
+	${SILENTCMD}${CC} ${CFLAGS} -Wall -Wextra -o $@ test/listen_uri_test.c ${PIANOBAR_DIR}/listen_uri.c
+
+test: test/listenbrainz_test test/listenbrainz_e2e test/listen_uri_test
+	./test/listenbrainz_test
+	./test/listen_uri_test
+
 clean:
 	${SILENTECHO} " CLEAN"
 	${SILENTCMD}${RM} ${PIANOBAR_OBJ} $(filter-out ${MELODICA_DIR}/build/compat/libpiano.a,${LIBPIANO_OBJ}) \
 			${LIBPIANO_RELOBJ} pianobar libpiano.so* \
-			libpiano.a $(PIANOBAR_SRC:.c=.d) $(LIBPIANO_SRC:.c=.d)
+			libpiano.a $(PIANOBAR_SRC:.c=.d) $(LIBPIANO_SRC:.c=.d) \
+			test/listenbrainz_test test/listenbrainz_e2e test/listen_uri_test
 
 all: pianobar
 
@@ -143,6 +166,8 @@ endif
 	install -m755 pianobar ${DESTDIR}${BINDIR}/
 	install -d ${DESTDIR}${MANDIR}/man1/
 	install -m644 contrib/pianobar.1 ${DESTDIR}${MANDIR}/man1/
+	install -d ${DESTDIR}${PREFIX}/share/applications/
+	install -m644 contrib/pianobar-listen.desktop ${DESTDIR}${PREFIX}/share/applications/
 
 install-libpiano:
 	install -d ${DESTDIR}${LIBDIR}/
@@ -156,6 +181,7 @@ install-libpiano:
 uninstall:
 	$(RM) ${DESTDIR}/${BINDIR}/pianobar \
 	${DESTDIR}/${MANDIR}/man1/pianobar.1 \
+	${DESTDIR}/${PREFIX}/share/applications/pianobar-listen.desktop \
 	${DESTDIR}/${LIBDIR}/libpiano.so.0.0.0 \
 	${DESTDIR}/${LIBDIR}/libpiano.so.0 \
 	${DESTDIR}/${LIBDIR}/libpiano.so \

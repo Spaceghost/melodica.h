@@ -127,6 +127,13 @@ void BarSettingsDestroy (BarSettings_t *settings) {
 	free (settings->timeFormat);
 	free (settings->fifo);
 	free (settings->audioPipe);
+	free (settings->listenbrainzUrl);
+	if (settings->listenbrainzToken != NULL) {
+		memset (settings->listenbrainzToken, 0,
+				strlen (settings->listenbrainzToken));
+	}
+	free (settings->listenbrainzToken);
+	free (settings->listenbrainzQueue);
 	free (settings->rpcHost);
 	free (settings->rpcTlsPort);
 	free (settings->partnerUser);
@@ -186,6 +193,9 @@ void BarSettingsRead (BarSettings_t *settings) {
 	settings->outkey = strdup ("6#26FRL$ZWD");
 	settings->fifo = BarGetXdgConfigDir (PACKAGE "/ctl");
 	settings->audioPipe = NULL;
+	settings->listenbrainzUrl = strdup ("https://spacegho.st/scrobble");
+	settings->listenbrainzQueue = BarGetXdgConfigDir (PACKAGE
+			"/listenbrainz-queue");
 	assert (settings->fifo != NULL);
 	settings->sampleRate = 0; /* default to stream sample rate */
 
@@ -293,6 +303,12 @@ void BarSettingsRead (BarSettings_t *settings) {
 				settings->password = strdup (val);
 			} else if (streq ("password_command", key)) {
 				settings->passwordCmd = strdup (val);
+			} else if (streq ("listenbrainz_url", key)) {
+				free (settings->listenbrainzUrl);
+				settings->listenbrainzUrl = strdup (val);
+			} else if (streq ("listenbrainz_token", key)) {
+				free (settings->listenbrainzToken);
+				settings->listenbrainzToken = strdup (val);
 			} else if (streq ("rpc_host", key)) {
 				free (settings->rpcHost);
 				settings->rpcHost = strdup (val);
