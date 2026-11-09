@@ -164,7 +164,7 @@ test.beforeAll(async () => {
     // The account server lives on the same "spacegho.st": the extension's default
     // https://spacegho.st/oauth/... lands here through --host-resolver-rules.
     const url = new URL(req.url, `https://${WEB_HOST}`);
-    if (url.pathname.startsWith('/oauth') || url.pathname.startsWith('/__fake-github')) {
+    if (url.pathname.startsWith('/oauth') || url.pathname.startsWith('/scrobble/') || url.pathname.startsWith('/__fake-github')) {
       try { await acct.handle(req, res, await readBody(req)); } catch (e) { res.writeHead(500); res.end(String(e)); }
       return;
     }
@@ -240,6 +240,7 @@ test.afterAll(async () => {
     username: report.username,
     remember: report.remember,
     session: report.session,
+    scrobbles: report.scrobbles,
     spots: report.spots,
     update: report.update,
     audio: report.audio,
@@ -476,7 +477,13 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     console.log(`now playing: ${now.title} – ${now.artist} on ${now.station}`);
     expect(context.pages().length, 'no tab opened by starting a station').toBe(pagesBefore);
     await coverLoaded(popup);
+    // Scrobbling is on by default; the notice comes before anything is sent.
+    await expect(popup.locator('#scrobble-notice')).toHaveText('Scrobbling to spacegho.st is on. Turn it off in settings.', { timeout: 30_000 });
     await popup.screenshot({ path: shot('playing') });
+    expect(acct.listens.length, 'nothing scrobbled before the notice was seen').toBe(0);
+    await popup.click('#scrobble-notice-ok');
+    await expect(popup.locator('#scrobble-notice')).toHaveCount(0);
+    step('scrobbling notice shown before the first submission');
     const first = await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'player-get' }).then((r) => { if (!r || !r.ok) throw new Error(`player-get: ${r && r.error}`); return r.state; }));
     expect(first.status, 'background state').toBe('playing');
     expect(first.track && first.track.title).toBe(now.title);
@@ -566,7 +573,9 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     await player.close();
     const p3 = await probe();
     await new Promise((ok) => setTimeout(ok, 3000));
-    const p4 = await probe();
+    let p4 = await probe();
+    // A song boundary (the next song or ad loading) is not a stop: wait it out.
+    for (let i = 0; i < 40 && p4.status === 'loading'; i++) { await new Promise((ok) => setTimeout(ok, 250)); p4 = await probe(); }
     console.log(`player tab closed: ${JSON.stringify(p3)} -> ${JSON.stringify(p4)}`);
     expect(p4.status, 'still playing after the player tab closed').toBe('playing');
     // The tuner's fixture tracks are short: the next track starting also counts as progress.
@@ -747,6 +756,22 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
         rounds.push({ seq: `station+${action}`, want, reply: reply && reply.state && reply.state.status, ms: first ? Math.round(first.at - t0) : null, after: seen.map((x) => `${x.status}@${Math.round(x.at - t0)}`).filter((x, j, a) => j === 0 || x.split('@')[0] !== a[j - 1].split('@')[0]).join('>') });
       }
     }
+    // Pause and resume right after a station change, while its playlist may still be
+    // loading (no wait between the three commands).
+    for (let i = 0; i < 4; i++) {
+      const st = sts[(i + 2) % sts.length];
+      await noAd();
+      await xsend({ type: 'player', action: 'play', station: { token: st.token, name: st.name } });
+      await xsend({ type: 'player', action: 'pause' });
+      const n = await page.evaluate(() => window.__t.length);
+      const t0 = await page.evaluate(() => performance.now());
+      const reply = await xsend({ type: 'player', action: 'resume' });
+      await page.waitForFunction((k) => window.__t.slice(k).some((x) => x.status === 'playing'), n, { timeout: 5_000 }).catch(() => {});
+      await pop2.waitForTimeout(1500);
+      const seen = await page.evaluate((k) => window.__t.slice(k), n);
+      const first = seen.find((x) => x.status === 'playing');
+      rounds.push({ seq: 'quick station+pause+resume', want: 'playing', reply: reply && reply.state && reply.state.status, ms: first ? Math.round(first.at - t0) : null, after: seen.map((x) => `${x.status}@${Math.round(x.at - t0)}`).filter((x, j, a) => j === 0 || x.split('@')[0] !== a[j - 1].split('@')[0]).join('>') });
+    }
     await page.evaluate(() => clearInterval(window.__refresh));
     console.log(`popup -> page latency: ${JSON.stringify(rounds)}`);
     for (const r of rounds) expect(r.ms, `${r.seq || 'popup'} ${r.want} -> page within 500 ms (${JSON.stringify(r)})`).toBeLessThan(500);
@@ -792,6 +817,39 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     expect(spotsAfter.registered, 'ad.registerAd called after the ad').toBeGreaterThan(0);
     report.spots = { defaultPolicy: { ...spotsAfter, title: adSeen.track.title, company: adSeen.track.artist, nextRefused: true } };
     step('ad played and registered');
+
+    // Scrobbles: playing_now for songs (only artist, title, album, duration, art and
+    // the client), never the ad. The fixture songs are 10 s, under the 30 s floor, so
+    // no single is due (thresholds: tests/scrobble.test.mjs).
+    await expect.poll(() => acct.listens.filter((l) => l.body.listen_type === 'playing_now').length, { timeout: 30_000 }).toBeGreaterThan(0);
+    const allowed = ['additional_info', 'artist_name', 'release_name', 'track_name'];
+    for (const l of acct.listens) {
+      const meta = l.body.payload[0].track_metadata;
+      expect(Object.keys(meta).every((k) => allowed.includes(k)), `listen fields ${Object.keys(meta)}`).toBe(true);
+      expect(Object.keys(meta.additional_info).every((k) => ['submission_client', 'duration_ms', 'art_url'].includes(k))).toBe(true);
+      expect(meta.additional_info.submission_client).toBe('melodica-extension');
+      expect(meta.track_name, 'the ad is never scrobbled').not.toBe(adSeen.track.title);
+      expect(l.body.listen_type, 'no single for a 10 s song').toBe('playing_now');
+    }
+    expect(acct.listens.some((l) => l.who.startsWith('m:')), 'sent with the melodica token').toBe(true);
+    const sentBefore = acct.listens.length;
+    const optsS = await context.newPage();
+    await optsS.goto(`chrome-extension://${id}/options.html`);
+    await expect(optsS.locator('#scrobble-enabled')).toBeEnabled({ timeout: 30_000 });
+    await expect(optsS.locator('#scrobble-enabled')).toBeChecked();
+    await optsS.locator('#scrobble-enabled').uncheck();
+    await expect(optsS.locator('#scrobble-message')).toHaveText('Scrobbling is off.');
+    await optsS.screenshot({ path: shot('scrobbling-off') });
+    const offAt = acct.listens.length;
+    const songAt = (await bgState()).track;
+    for (let i = 0; i < 80; i++) { const t = (await bgState()).track; if (t && songAt && t.trackToken !== songAt.trackToken && !t.ad) break; await new Promise((ok) => setTimeout(ok, 500)); }
+    await new Promise((ok) => setTimeout(ok, 1500));
+    expect(acct.listens.length, 'nothing scrobbled while off').toBe(offAt);
+    await optsS.locator('#scrobble-enabled').check();
+    await expect(optsS.locator('#scrobble-message')).toHaveText('Scrobbling is on.');
+    await optsS.close();
+    report.scrobbles = { notice: true, playingNow: sentBefore, adScrobbled: false, optOut: true };
+    step('scrobbles: playing_now sent, never the ad, opt-out stops them');
 
     // Verify the access response and subsequent fixture requests.
     // The fixture checks the selected playback policy.

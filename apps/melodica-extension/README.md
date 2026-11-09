@@ -396,6 +396,19 @@ reads the real feed, so it shows none).
   the key and the session. A plaintext password left by versions before 0.6.0 is
   sealed at start-up and erased. Where IndexedDB or WebCrypto is missing, nothing
   is remembered.
+- **Scrobbling** (on by default): while you are signed in to Pandora, what you
+  play is scrobbled to Spaceghost Scrobbles (spacegho.st/scrobble) under your
+  melodica account. A `playing_now` goes out when a song starts and one listen
+  once it has played half its length or 4 minutes, whichever comes first; songs
+  of 30 s or less and inserted items are excluded from submissions. A listen carries the artist, title,
+  album, length, cover URL and `submission_client: melodica-extension`, nothing
+  else. Listens that cannot be sent (offline, server errors) wait in
+  `storage.local` (`scrobbleQueue`, at most 50) and go out later. Nothing is sent
+  until the first-run notice ("Scrobbling to spacegho.st is on. Turn it off in
+  settings.") has been seen. The switch here is the account's own setting
+  (`/scrobble/api/me/settings`), so turning it off on the scrobble site turns it
+  off here too. With the web app open as a remote, only the extension submits
+  (docs/BRIDGE.md).
 - **Check for updates**: reads the store feed now (above).
 - **Copy diagnostics**: the last 50 lines of the background log (boot,
   permissions, each request's method, size, syncTime, clock offset and which
@@ -623,6 +636,9 @@ request. The password never goes there. The optional spacegho.st account's
 tokens are kept in `storage.local` under `account` until you sign out (which
 revokes the refresh token) or the server refuses them; they are sent only to
 spacegho.st. Nothing is logged with tokens or codes in it.
+
+Scrobbles (above, Options) go to `spacegho.st/scrobble/api/me/listens` with the
+melodica token; turning scrobbling off stops them and empties the queue.
 
 ## License
 

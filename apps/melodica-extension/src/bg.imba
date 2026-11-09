@@ -17,6 +17,7 @@ import { Core } from './core.imba'
 import { Pandora, PandoraError, QUALITIES } from './pandora.imba'
 import { browser, loadSettings, normalizeEndpoint, fromBase64, toBase64, SETTINGS_DEFAULTS } from './shared.imba'
 import { seal, unseal, wipe, vaultAvailable } from './vault.imba'
+import { SCROBBLE_NOTICE, LEADERBOARD_URL, isAd, trackMetadata, thresholdSeconds, playingNow, single, enqueue, outcome } from './scrobble.imba'
 import { normalizeAccountBase, randomString, pkceChallenge, authorizeUrl, parseRedirect, tokenForm, storedTokens, accessFresh, policyFrom, accountLabel, jwtClaims, CLIENT_ID, TAB_CLIENT_ID, TAB_REDIRECT, POLICY_DEFAULT } from './account.imba'
 import { feedUrl, latestVersion, bannerState, compareVersions, STORE_URL } from './update.imba'
 import { Engine } from './engine.imba'
@@ -143,6 +144,9 @@ def boot
 	sessionMeta = meta
 	sessionMeta = {sid: newSid(), createdAt: Date.now()} if client.loggedIn and !(sessionMeta and sessionMeta.sid)
 	client.onLogin = do sessionStarted()
+	const sc = await browser.storage.local.get({scrobbling: null, scrobbleNoticeSeen: no})
+	scrobble.on = sc.scrobbling if typeof sc.scrobbling === 'boolean'
+	scrobble.noticeSeen = !!sc.scrobbleNoticeSeen
 	if saved.player and typeof saved.player === 'object'
 		player = Object.assign({}, PLAYER_IDLE, saved.player)
 		# A worker restart mid-song in Chromium keeps the offscreen document and its
@@ -629,6 +633,117 @@ def denyAccess
 	note('access: not allowed; signing out of Pandora')
 	await forgetPandora('melodica access withdrawn')
 
+# ---- Spaceghost Scrobbles (spacegho.st/scrobble; melodica-web docs/BRIDGE.md: the side
+# whose audio plays submits, so with the extension present only the extension does).
+# On by default; the account's own setting (/scrobble/api/me/settings) can turn it off.
+# Never an ad. playing_now at the start of a play; one single once it has played
+# half its length or 4 minutes (tracks of 30 s or less never count). Singles that
+# cannot be sent wait in storage.local (scrobbleQueue) and go out later.
+
+const SCROBBLE_MAX_AGE = 60 * 60 * 1000
+const SCROBBLE_RETRY = 60 * 1000
+let scrobble = {on: null, checkedAt: 0, noticeSeen: null, play: null, lastFlush: 0}
+
+def scrobbleView
+	const loggedIn = !!(state and state.client.loggedIn)
+	{on: scrobble.on !== no, notice: loggedIn and scrobble.on !== no and scrobble.noticeSeen === no ? SCROBBLE_NOTICE : '', leaderboard: LEADERBOARD_URL, history: 'https://spacegho.st/scrobble/'}
+
+def noticeSeen
+	if scrobble.noticeSeen === null
+		scrobble.noticeSeen = !!(await browser.storage.local.get({scrobbleNoticeSeen: no})).scrobbleNoticeSeen
+	scrobble.noticeSeen
+
+# The account's scrobbling switch (GET), or set it (POST {scrobbling}).
+def scrobbleSettings force = no, set = null
+	return scrobble unless state and state.client.loggedIn
+	return scrobble if set === null and !force and scrobble.checkedAt and Date.now() - scrobble.checkedAt < SCROBBLE_MAX_AGE
+	const init = set === null ? {} : {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({scrobbling: !!set})}
+	const r = await melodicaCall('/scrobble/api/me/settings', init)
+	note("scrobbling settings: HTTP {r.status}")
+	if r.status === 200 and r.body and typeof r.body.scrobbling === 'boolean'
+		scrobble.on = r.body.scrobbling
+		scrobble.checkedAt = Date.now()
+		await browser.storage.local.set({scrobbling: scrobble.on})
+		await browser.storage.local.set({scrobbleQueue: []}) unless scrobble.on
+		playerChanged(player)
+	elif set !== null
+		throw new PandoraError(r.body and (r.body.message or r.body.error_description) or "Scrobbles answered HTTP {r.status}.", null, 0, 'scrobble')
+	scrobble
+
+def postListen body
+	const r = await melodicaCall('/scrobble/api/me/listens', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(body)})
+	outcome(r.status)
+
+def queueOf
+	const q = (await browser.storage.local.get({scrobbleQueue: []})).scrobbleQueue
+	Array.isArray(q) ? q : []
+
+# One submission. A single that cannot go now waits in the queue; a playing_now that
+# cannot go is dropped. Before the first-run notice was seen, singles wait too.
+def submitListen body
+	return unless scrobble.on !== no and state and state.client.loggedIn
+	unless await noticeSeen()
+		await browser.storage.local.set({scrobbleQueue: enqueue(await queueOf(), body)}) if body.listen_type === 'single'
+		return
+	let res = 'retry'
+	try
+		res = await postListen(body)
+	catch e
+		res = 'retry'
+	note("scrobble: {body.listen_type} {res}")
+	if res === 'off'
+		scrobble.on = no
+		await browser.storage.local.set({scrobbling: no, scrobbleQueue: []})
+		playerChanged(player)
+	elif res === 'retry' or res === 'auth'
+		await browser.storage.local.set({scrobbleQueue: enqueue(await queueOf(), body)}) if body.listen_type === 'single'
+	elif res === 'ok'
+		flushListens().catch(do(e) null)
+
+# Send what waits in the queue, oldest first; stop at the first one that cannot go.
+let flushing = no
+def flushListens
+	return if flushing or scrobble.on === no or !(await noticeSeen())
+	flushing = yes
+	scrobble.lastFlush = Date.now()
+	try
+		let q = await queueOf()
+		while q.length
+			const res = await postListen(q[0])
+			break if res === 'retry' or res === 'auth'
+			if res === 'off'
+				scrobble.on = no
+				q = []
+				break
+			q = q.slice(1)
+			await browser.storage.local.set({scrobbleQueue: q})
+		await browser.storage.local.set({scrobbleQueue: q})
+	catch e
+		null
+	finally
+		flushing = no
+
+# Every player state: a new song starts a play (playing_now); the play's single goes
+# Count only qualifying song playback.
+def scrobbleTick p
+	return unless state and state.client.loggedIn and scrobble.on !== no
+	const t = p and p.track
+	return unless t and !isAd(t) and t.trackToken
+	if !scrobble.play or scrobble.play.key !== t.trackToken
+		return unless p.status === 'playing'
+		scrobble.play = {key: t.trackToken, startedAt: Math.floor(Date.now() / 1000) - Math.floor(Number(p.position) or 0), sent: no}
+		const meta = trackMetadata(t, p.duration)
+		scrobbleSettings().catch(do(e) null)
+		submitListen(playingNow(meta)).catch(do(e) null) if meta
+		flushListens().catch(do(e) null) if Date.now() - scrobble.lastFlush > SCROBBLE_RETRY
+		return
+	return if scrobble.play.sent
+	const meta = trackMetadata(t, p.duration)
+	const th = meta and thresholdSeconds((meta.additional_info.duration_ms or 0) / 1000)
+	return unless th and Number(p.position) >= th
+	scrobble.play.sent = yes
+	submitListen(single(meta, scrobble.play.startedAt)).catch(do(e) null)
+
 # ---- the melodica username (docs/ACCOUNT.md, Usernames)
 
 const USERNAME_RE = /^[a-z0-9][a-z0-9_-]{1,22}[a-z0-9]$/
@@ -676,6 +791,7 @@ def runMelodicaLogin email, prompt
 	await setMelodica(patch)
 	sessionChanged()
 	await refreshMe(no)
+	scrobbleSettings(yes).catch(do(e) null)
 	yes
 
 # The bearer for /me and /username: the spacegho.st account's token when signed in,
@@ -822,7 +938,7 @@ def openPlayer
 
 # What every view gets: the engine's state plus the session bits a view needs.
 def playerView
-	Object.assign({}, player, {stations: state and state.saved.stations or [], loggedIn: !!(state and state.client.loggedIn), account: {signedIn: account.signedIn, label: account.label}, user: userView(), access: {allowed: !!access.allowed, message: access.allowed ? '' : String(access.message or '')}})
+	Object.assign({}, player, {stations: state and state.saved.stations or [], loggedIn: !!(state and state.client.loggedIn), account: {signedIn: account.signedIn, label: account.label}, user: userView(), scrobbling: scrobbleView(), access: {allowed: !!access.allowed, message: access.allowed ? '' : String(access.message or '')}})
 
 def publicTrack song
 	return null unless song
@@ -838,6 +954,7 @@ def playerChanged next
 	player = Object.assign({}, PLAYER_IDLE, next)
 	session.set({player}).catch(do(e) null)
 	badge()
+	scrobbleTick(player)
 	const message = {type: 'player-state', state: playerView()}
 	broadcast(message)
 	pushSubscribers(message)
@@ -871,8 +988,13 @@ def pushSubscribers message
 	const set = await subscriberSet()
 	for tabId in Array.from(set)
 		browser.tabs.sendMessage(tabId, message).catch do(e)
-			set.delete(tabId)
-			saveSubscribers()
+			# Only a tab that is gone (or has no content script) stops being a subscriber.
+			const m = String(e and e.message or e)
+			if /receiving end does not exist|no tab with id|could not establish connection|invalid tab/i.test(m)
+				set.delete(tabId)
+				saveSubscribers()
+			else
+				note("push to tab {tabId} failed: {m}")
 
 def badge
 	try
@@ -1176,6 +1298,18 @@ def handle msg, sender
 			{user: userView()}
 		when 'username-set'
 			{user: await setUsername(String(msg.username or ''))}
+		when 'scrobble-notice-seen'
+			scrobble.noticeSeen = yes
+			await browser.storage.local.set({scrobbleNoticeSeen: yes})
+			flushListens().catch(do(e) null)
+			playerChanged(player)
+			{scrobbling: scrobbleView()}
+		when 'scrobble-settings'
+			await scrobbleSettings(yes)
+			{scrobbling: scrobbleView(), known: scrobble.checkedAt > 0}
+		when 'scrobble-set'
+			await scrobbleSettings(yes, !!msg.on)
+			{scrobbling: scrobbleView(), known: scrobble.checkedAt > 0}
 		when 'username-later'
 			await setMelodica({later: yes})
 			{user: userView()}

@@ -44,9 +44,14 @@ becomes a view of that playback and a remote for it, instead of running its own 
   "stations": [{"token": "…", "name": "…", "isQuickMix": false, "allowDelete": true}],
   "loggedIn": true,
   "account": {"signedIn": false, "label": ""},
-  "access": {"allowed": true, "message": ""}
+  "access": {"allowed": true, "message": ""},
+  "scrobbling": {"on": true}
 }
 ```
+
+`scrobbling.on` (since 0.7.0) says whether the extension scrobbles to Spaceghost
+Scrobbles. The side whose audio plays submits listens: while the page is a remote of
+the extension, the extension is the only submitter and the page sends none.
 
 `track.audioUrl` is never sent to the page. While an ad plays, `track.ad` is true and
 `next`, `love`, `ban` and `tired` do nothing. `subscribe` is answered whatever the extension is doing, including idle, signed out and right after browser start (the content script asks the background again for about 20 s before answering with an error), and a `state` is pushed on every change from any source (popup, player tab, keyboard shortcut, media keys, sign-in and sign-out). While no Pandora session exists, commands

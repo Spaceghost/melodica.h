@@ -3,7 +3,7 @@
 # page is a view of the background's player state and sends it commands.
 
 import { browser, send } from './shared.imba'
-import { Login, StationList, NowPlaying, Transport, AccountLine, UpdateBanner, Top, Foot, UsernamePick } from "./ui.imba"
+import { Login, StationList, NowPlaying, Transport, AccountLine, UpdateBanner, Top, Foot, UsernamePick, ScrobbleNotice } from "./ui.imba"
 
 tag Popup
 	prop view = 'loading'
@@ -205,6 +205,8 @@ tag Popup
 						<div.ext-account>
 							<span#signed-in> (user.username or "Signed in")
 							<button#logout type="button" @click=logout> "Sign out"
+						if player and player.scrobbling and player.scrobbling.notice
+							<ScrobbleNotice scrobbling=player.scrobbling>
 						if user.prompt
 							<UsernamePick user=user>
 						<div.card.now.ext-compact>

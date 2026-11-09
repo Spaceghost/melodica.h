@@ -50,6 +50,10 @@ export function createAccountServer({ issuer = 'https://spacegho.st', accessTtl 
   const melodicaTokens = new Map();
   const loginOks = [];
   const usernameCalls = [];
+  const scrobbleSettings = new Map();
+  const listens = [];
+  const scrobbleRefused = [];
+  let scrobbleDown = false;
   const userOf = (email) => {
     if (!users.has(email)) users.set(email, { username: `listener-${sha(email).slice(0, 6).toLowerCase().replace(/[^a-z0-9]/g, '0')}`, chosen: false, suggested: '' });
     return users.get(email);
@@ -212,6 +216,34 @@ export function createAccountServer({ issuer = 'https://spacegho.st', accessTtl 
       Object.assign(u, { username: name, chosen: true });
       return json(res, 200, { username: name, username_chosen: true });
     }
+    // Spaceghost Scrobbles (spaceghost-scrobble src/worker.js api()): settings and
+    // listen ingest, bearer = the melodica token or an account access token.
+    if (p.startsWith('/scrobble/api/me/')) {
+      const m = /^Bearer (.+)$/.exec(req.headers.authorization || '');
+      const email = m && melodicaTokens.get(m[1]);
+      const a = !email && req.headers.authorization ? bearer(req) : null;
+      const who = email ? `m:${email}` : a ? `a:${a.id}` : '';
+      if (!who) return json(res, 401, { error: 'invalid_token' });
+      if (!scrobbleSettings.has(who)) scrobbleSettings.set(who, { scrobbling: true });
+      const st = scrobbleSettings.get(who);
+      if (p === '/scrobble/api/me/settings') {
+        if (req.method === 'POST') {
+          let q = null;
+          try { q = JSON.parse(body); } catch { q = null; }
+          if (q && typeof q.scrobbling === 'boolean') st.scrobbling = q.scrobbling;
+        }
+        return json(res, 200, { name: null, display_name: null, handle: null, github: null, scrobbling: st.scrobbling, opted_out_by: st.scrobbling ? null : 'user', leaderboard: true, crew: false, live: false });
+      }
+      if (p === '/scrobble/api/me/listens' && req.method === 'POST') {
+        if (scrobbleDown) return json(res, 503, { error: 'unavailable' });
+        let q = null;
+        try { q = JSON.parse(body); } catch { q = null; }
+        if (!q || !['single', 'playing_now'].includes(q.listen_type) || !Array.isArray(q.payload)) return json(res, 400, { error: 'invalid_request' });
+        if (!st.scrobbling) { scrobbleRefused.push(q); return json(res, 403, { error: 'scrobbling_off' }); }
+        listens.push({ who, body: q });
+        return json(res, 200, { status: 'ok' });
+      }
+    }
     if (p === '/oauth/melodica/policy') {
       if (!req.headers.authorization) return json(res, 200, { playback: { plus: false }, display: { name: null } });
       const a = bearer(req);
@@ -222,7 +254,8 @@ export function createAccountServer({ issuer = 'https://spacegho.st', accessTtl 
   }
 
   return {
-    issuer, accounts, calls, tokens, requests, handle, users, loginOks, usernameCalls,
+    issuer, accounts, calls, tokens, requests, handle, users, loginOks, usernameCalls, listens, scrobbleRefused, scrobbleSettings,
+    scrobbleOffline(down) { scrobbleDown = !!down; },
     allow(email, { ads = true } = {}) { allowList.set(String(email).trim().toLowerCase(), { ads: !!ads }); },
     disallow(email) { allowList.delete(String(email).trim().toLowerCase()); },
     setSlots(which, slots) { accounts[which].spots = !!slots; },

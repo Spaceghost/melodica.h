@@ -3,7 +3,7 @@
 # it stops nothing. It renders `player-state` and sends `player` commands.
 
 import { browser, send, FALLBACK_COVER } from './shared.imba'
-import { StationList, NowPlaying, Transport, AccountLine, UpdateBanner, Top, Foot, UsernamePick } from './ui.imba'
+import { StationList, NowPlaying, Transport, AccountLine, UpdateBanner, Top, Foot, UsernamePick, ScrobbleNotice } from './ui.imba'
 
 # While this page is open the background is asked for the account's policy this
 # often; it asks spacegho.st again once its last answer is an hour old.
@@ -217,6 +217,8 @@ tag Player
 							<aside.ext-side>
 								<StationList stations=stations active=(player and player.station and player.station.token) @select=select @refresh=reload @delete=remove>
 							<section.ext-main>
+								if player and player.scrobbling and player.scrobbling.notice
+									<ScrobbleNotice scrobbling=player.scrobbling>
 								if user.prompt
 									<UsernamePick user=user>
 								<div.card.now>

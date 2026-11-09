@@ -193,6 +193,20 @@ export tag Transport
 					<svg aria-hidden="true" viewBox="0 0 24 24">
 						<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z">
 
+# The first-run scrobbling notice; nothing is sent until it has been seen.
+export tag ScrobbleNotice
+	prop scrobbling = null
+	def seen
+		try
+			await send({type: 'scrobble-notice-seen'})
+		catch e
+			null
+	def render
+		<self.card.ext-scrobble-notice>
+			<p#scrobble-notice role="status"> scrobbling and scrobbling.notice
+			<div.ext-actions>
+				<button#scrobble-notice-ok type="button" @click=seen> "OK"
+
 # "Pick a username" (docs/ACCOUNT.md, Usernames): shown while the name is a generated
 # one, until it is saved or "Not now" (asked again at a later login). The server's
 # 409/422/423/429 text is shown under the field. Names render as text only.

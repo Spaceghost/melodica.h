@@ -195,6 +195,8 @@ await bundle('src/pandora.imba', resolve(root, 'build/node/pandora.js'), 'node')
 // ...and of the spacegho.st account helpers, for tests/account.test.mjs.
 await bundle('src/account.imba', resolve(root, 'build/node/account.js'), 'node');
 await bundle('src/update.imba', resolve(root, 'build/node/update.js'), 'node');
+// ...and of the Scrobbles helpers, for tests/scrobble.test.mjs.
+await bundle('src/scrobble.imba', resolve(root, 'build/node/scrobble.js'), 'node');
 
 const files = await listFiles(resolve(dist, 'chrome'));
 console.log(`built melodica-extension ${version}: ${files.join(', ')}`);

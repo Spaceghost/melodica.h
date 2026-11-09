@@ -57,6 +57,8 @@ jobs:
         run: node tests/account.test.mjs
       - name: Update awareness unit test (version compare, feeds, banner)
         run: node tests/update.test.mjs
+      - name: Scrobbles unit test (listen metadata, 50% / 4 min)
+        run: node tests/scrobble.test.mjs
       - name: Firefox manifest lint (web-ext)
         run: npx web-ext lint --source-dir dist/firefox --self-hosted
       - name: Package (zips, .xpi, .crx signed with CRX_PRIVATE_KEY, source tarball)
@@ -378,6 +380,7 @@ jobs:
           for f in smoke-extension.json smoke-brave.json; do
             node -e 'const f=process.argv[1]; const r=require("./"+f); if (!r.remember || r.remember.passwordInStorage!==false || r.remember.key!=="secret/false/AES-GCM") { console.error(f+": sealed password not proven"); process.exit(1); } const s=r.session; if (!s || !s.get || !s.refusedFromExtensionPage || !s.logoutBoth || !s.revoked || !s.offerSignedIn || !s.kept || !s.accountSignoutPending) { console.error(f+": session sharing not proven"); process.exit(1); } console.log(f+": password sealed; session shared both ways")' "$f"
             node -e 'const f=process.argv[1]; const u=require("./"+f).username; if (!u || u.chosen!=="night_owl" || u.changed!=="night_owl_2") { console.error(f+": username not proven"); process.exit(1); } console.log(f+": username picked and changed")' "$f"
+            node -e 'const f=process.argv[1]; const c=require("./"+f).scrobbles; if (!c || !c.notice || !(c.playingNow>0) || c.adScrobbled!==false || !c.optOut) { console.error(f+": scrobbling not proven"); process.exit(1); } console.log(f+": scrobbles sent; opt-out verified")' "$f"
           done
           sha256sum smoke-extension.json smoke-extension-*.png smoke-brave.json smoke-brave-*.png smoke-firefox.json smoke-firefox-*.png smoke-firefox-node-probe.json >> SHA256SUMS
           cat SHA256SUMS

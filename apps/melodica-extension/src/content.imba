@@ -96,19 +96,29 @@ def handleCommand data
 			r = await browser.runtime.sendMessage(msg)
 		return reply({ok: no, error: 'the extension did not answer'}) unless r
 		return reply({ok: no, error: r.error or 'extension error', kind: r.kind}) unless r.ok
-		reply({ok: yes, state: publicState(r.state)})
-		# Push the same state at once so a subscribed page need not wait for
-		# the background's next broadcast (the resume lag).
-		pushState(r.state) if subscribed and r.state
+		# A reply whose state is older than one already sent carries no state, so the
+		# page never draws it over the newer push.
+		const at = r.state and Number(r.state.changedAt) or 0
+		if at and at < newest
+			reply({ok: yes})
+		else
+			reply({ok: yes, state: publicState(r.state)})
+			# The same state as a push, at once (the page need not wait for a broadcast).
+			pushState(r.state) if subscribed and r.state
 	catch e
 		reply({ok: no, error: String(e and e.message or e)})
 
 # State pushes from the background reach a subscribed page; session pushes reach a
 # page that has asked for the session at least once.
-browser.runtime.onMessage.addListener do(msg)
-	pushState(msg.state) if subscribed and msg and msg.type === 'player-state'
-	postSession(msg.view) if sessionAsked and msg and msg.type === 'session-state' and msg.view
-	window.postMessage({melodica: 1, type: 'account-signout'}, ORIGIN) if sessionAsked and msg and msg.type === 'session-account-signout'
+# Every push is answered: a push left unanswered rejects in the background ("the
+# message port closed"), which used to drop this tab from the subscribers until its
+# next subscribe, up to a second later.
+browser.runtime.onMessage.addListener do(msg, sender, sendResponse)
+	return no unless msg and (msg.type === 'player-state' or msg.type === 'session-state' or msg.type === 'session-account-signout')
+	pushState(msg.state) if subscribed and msg.type === 'player-state'
+	postSession(msg.view) if sessionAsked and msg.type === 'session-state' and msg.view
+	window.postMessage({melodica: 1, type: 'account-signout'}, ORIGIN) if sessionAsked and msg.type === 'session-account-signout'
+	sendResponse({ok: yes, subscribed})
 	no
 
 # ---- session sharing (BRIDGE.md section 4); the background checks the sender.

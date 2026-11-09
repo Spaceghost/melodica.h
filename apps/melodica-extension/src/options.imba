@@ -31,6 +31,10 @@ tag Options
 	prop accountBusy = no
 	prop update = null
 	prop user = null
+	prop scrobbling = null
+	prop scrobbleKnown = no
+	prop scrobbleBusy = no
+	prop scrobbleMessage = ''
 	# The form is shown only once the stored settings are in; a value typed
 	# before that would be overwritten when they arrived (seen in Brave, where
 	# the page is interactive before storage answers).
@@ -45,9 +49,33 @@ tag Options
 		version = browser.runtime.getManifest().version
 		await checkPermission()
 		await loadAccount()
+		loadScrobbling()
 		self.notice = do(msg) onNotice(msg)
 		browser.runtime.onMessage.addListener(self.notice)
 		loaded = yes
+		imba.commit()
+
+	def loadScrobbling
+		try
+			const r = await send({type: 'scrobble-settings'})
+			scrobbling = r.scrobbling
+			scrobbleKnown = r.known
+		catch e
+			null
+		imba.commit()
+
+	def scrobbleSet e
+		const on = !!e.target.checked
+		scrobbleBusy = yes
+		scrobbleMessage = ''
+		try
+			const r = await send({type: 'scrobble-set', on})
+			scrobbling = r.scrobbling
+			scrobbleKnown = r.known
+			scrobbleMessage = scrobbling.on ? 'Scrobbling is on.' : 'Scrobbling is off.'
+		catch err
+			scrobbleMessage = String(err and err.message or err)
+		scrobbleBusy = no
 		imba.commit()
 
 	def unmount
@@ -224,6 +252,17 @@ tag Options
 									if user and user.username
 										<p.fine#options-username> "Your melodica username: {user.username}"
 										<UsernameChange user=user>
+								<section.panel.ext-form#options-scrobbling>
+									<h3> "Scrobbling"
+									<p.fine> "While you are signed in to Pandora, melodica scrobbles what you play to spacegho.st: a song counts after half its length or 4 minutes. Listens wait here while you are offline."
+									<label.check>
+										<input#scrobble-enabled type="checkbox" checked=(!scrobbling or scrobbling.on) disabled=(scrobbleBusy or !scrobbleKnown) @change=scrobbleSet>
+										<span> "Scrobble my listens"
+									<p.message#scrobble-message role="status"> scrobbleMessage
+									<p.fine>
+										<a#scrobble-history href="https://spacegho.st/scrobble/" target="_blank" rel="noopener"> "Your listens"
+										" · "
+										<a#scrobble-leaderboard href="https://spacegho.st/scrobble/leaderboard" target="_blank" rel="noopener"> "Leaderboard"
 								<section.panel.ext-form>
 									<h3> "Updates"
 									<p.fine#options-update> "Firefox and .crx or policy installs update themselves from the feeds on spacegho.st/extensions; an unpacked zip only gets the banner. Running {update and update.current or version}; the store serves {update and update.latest or 'unknown'}{update and update.checkedAt ? ', checked ' + new Date(update.checkedAt).toLocaleString() : ''}."
