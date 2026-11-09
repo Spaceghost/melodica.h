@@ -47,9 +47,8 @@ any CI.
    is not composed); accept/reject already matches the reference.
 3. Never run on the real platform: macOS/iOS (epimetheus, no CI), Windows clicks
    (elpis, pianobar-windows), in-game (xivpiano), phones (pandoroid, epimetheus).
-4. Tell the melodica-scrobble owner to erase the test account `u_scrobbletest01`, with its
-   listens, tokens, now playing and outbox rows. Listens are marked artist "Test Artist",
-   track "melodica-client-test ...".
+4. Done: the test account `u_scrobbletest01` was erased by the melodica-scrobble owner
+   (5 listens, 1 token, the account; 0 test listens remain) and its token file deleted.
 5. Refresh the snapshots after each app lands: `apps/pull.sh <dir> && git push`.
 6. Keep the vendored private reference parser (`listen-uri-reference.mjs`) out of the
    forks: melodica.h is public, and apps/pull.sh copies the forks into it.
