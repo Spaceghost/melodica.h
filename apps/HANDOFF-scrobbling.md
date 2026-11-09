@@ -31,7 +31,7 @@ progress when this was written. The main branch holds only what was pushed after
 | epimetheus | 616ac22 (dev), CI fix 134a855 | 42573142304 green (web, APK, web + Android smoke) | done | done: 4284a19 (CFBundleURLSchemes + intent filter; macOS/iOS never built; no station creation from links) |
 | pithos | cadd46f (master) | CI green; CodeQL failing (also failing before, at 685c964) | covered by the Python family (pydora) | done: 79dceb3, CI green (desktop x-scheme-handler) |
 | pydora | 8a1248f (master) | green | done, read back (Python family) | done: c64a407, CI green (CLI argument only) |
-| pianobar | e850ac0, 7735f87 (master) | green | done, read back (C family) | done: f3c04fd, CI green (.desktop wrapper); NFC only partial (6 value diffs vs reference on decomposed input) |
+| pianobar | e850ac0, 7735f87 (master) | green | done, read back (C family) | done: 2e973ba, full Unicode NFC via utf8proc; build CI green; release 2026.11.09 passed exact Linux tarball playback smoke |
 | pianobar-windows | 426404422 (develop) | smoke green (run 42573270253) | covered by the C family; no single listen on the runner | done: 981b47a + 542b52c, release workflow green (HKCU registry) |
 | umbra-piano | none needed | - | - | none: it has no Pandora playback; XivPiano scrobbles and takes links |
 
@@ -43,8 +43,7 @@ any CI.
 
 1. Done: scrobbling and listen:// are on every app's branch with CI green. The
    `wip/scrobble` branches are stale handoff snapshots; delete them when convenient.
-2. pianobar: finish NFC normalisation in src/listen_uri.c (a decomposed e + U+0301
-   is not composed); accept/reject already matches the reference.
+2. Done: pianobar now uses full NFC normalization after decoded-input checks. All 1,826 URI/route comparisons matched the private reference; only generic Unicode examples are in the public tests. Release 2026.11.09 downloaded tarballs match their checksums; its Linux package resolved all 177 libraries and decoded 5,296,128 PCM bytes against melodica-tuner on Ubuntu 24.04. No physical sound output or real Pandora playback was tested. Release CI: https://github.com/Spaceghost/pianobar/actions/runs/42597456642.
 3. Never run on the real platform: macOS/iOS (epimetheus, no CI), Windows clicks
    (elpis, pianobar-windows), in-game (xivpiano), phones (pandoroid, epimetheus).
 4. Done: the test account `u_scrobbletest01` was erased by the melodica-scrobble owner
