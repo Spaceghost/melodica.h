@@ -86,6 +86,15 @@ class NavigationDrawer extends StatelessWidget {
           ),
         ),
         const Divider(height: 0),
+        ListTile(
+          leading: const Icon(Icons.history),
+          title: const Text('Scrobbling'),
+          onTap: () {
+            final navigator = Navigator.of(context);
+            if (displayMobileLayout) navigator.pop();
+            navigator.pushNamed('/preferences/scrobble');
+          },
+        ),
         FlatButton(
           child: const Text('Sign out'),
           onPressed: () {

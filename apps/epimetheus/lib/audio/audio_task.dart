@@ -6,6 +6,8 @@ import 'package:audio_service/audio_service.dart';
 import 'package:epimetheus/audio/providers/music_provider.dart';
 import 'package:epimetheus/libepimetheus/authentication.dart';
 import 'package:epimetheus/libepimetheus/networking.dart';
+import 'package:epimetheus/scrobble/listenbrainz.dart';
+import 'package:epimetheus/scrobble/scrobble_settings.dart';
 import 'package:just_audio/just_audio.dart';
 
 final _usesIsolate = AudioService.usesIsolate;
@@ -15,11 +17,15 @@ class _AudioTaskPayload {
   final User user;
   final MusicProvider musicProvider;
   final String csrfToken;
+  final String scrobbleServer;
+  final String scrobbleToken;
 
   _AudioTaskPayload({
     this.user,
     this.musicProvider,
     this.csrfToken,
+    this.scrobbleServer,
+    this.scrobbleToken,
   });
 }
 
@@ -43,11 +49,16 @@ Future<void> launchMusicProvider(User user, MusicProvider musicProvider) async {
 
   if (!wasConnected) AudioService.disconnect();
 
+  // Scrobbling settings travel with the credentials (the audio task may run in another isolate).
+  final scrobble = await loadScrobbleConfig();
+
   (AudioService.usesIsolate ? IsolateNameServer.lookupPortByName('audio_task')?.send : _nonIsolatePayloadStreamController.add)(
     _AudioTaskPayload(
       user: user,
       musicProvider: musicProvider,
       csrfToken: csrfToken,
+      scrobbleServer: scrobble.server,
+      scrobbleToken: scrobble.activeToken,
     ),
   );
 }
@@ -72,6 +83,17 @@ class _AudioTask extends BackgroundAudioTask {
   ConcatenatingAudioSource _playerAudioSource;
 
   StreamSubscription<dynamic> _payloadSubscription;
+
+  // ListenBrainz-compatible scrobbling (lib/scrobble/). _scrobblePlayed counts real playing
+  // time of the current item, so seeking forward does not make a listen count.
+  final Scrobbler _scrobbler = Scrobbler(
+    store: PrefsListenStore(),
+    transport: httpScrobbleTransport,
+    client: scrobbleClient,
+    version: scrobbleClientVersion,
+  );
+  Timer _scrobbleTimer;
+  Duration _scrobblePlayed = Duration.zero;
 
   StreamSubscription<int> _playerCurrentIndexSubscription;
   StreamSubscription<bool> _playerPlayingSubscription;
@@ -118,7 +140,23 @@ class _AudioTask extends BackgroundAudioTask {
   }
 
   void _updateMetadata() {
-    AudioServiceBackground.setMediaItem(AudioServiceBackground.queue[_musicProvider.currentQueueIndex]);
+    final item = AudioServiceBackground.queue[_musicProvider.currentQueueIndex];
+    AudioServiceBackground.setMediaItem(item);
+    _scrobblePlayed = Duration.zero;
+    _scrobbler.started(ScrobbleListen(
+      artist: item.artist,
+      track: item.title,
+      album: item.album,
+      artUrl: item.artUri,
+      station: _musicProvider.stationName,
+      duration: item.duration,
+    ));
+  }
+
+  void _scrobbleTick(Timer _) {
+    if (!_player.playing) return;
+    _scrobblePlayed += const Duration(seconds: 1);
+    _scrobbler.progress(_scrobblePlayed);
   }
 
   // A function to update the playback state, used by the system.
@@ -160,6 +198,10 @@ class _AudioTask extends BackgroundAudioTask {
   Future<void> launchPayload(_AudioTaskPayload payload) async {
     // Set the user to authenticate load requests
     _user = payload.user;
+
+    _scrobbler.configure(payload.scrobbleServer, payload.scrobbleToken);
+    _scrobbler.retry();
+    _scrobbleTimer ??= Timer.periodic(const Duration(seconds: 1), _scrobbleTick);
 
     // Check that the given music provider isn't already playing
     if (_musicProvider != payload.musicProvider) {
@@ -264,6 +306,8 @@ class _AudioTask extends BackgroundAudioTask {
 
     // Cancel all stream subscriptions
     _cancelPlayerStreamSubscriptions();
+    _scrobbleTimer?.cancel();
+    _scrobbleTimer = null;
 
     // Stop and dispose the player
     await _player.stop();

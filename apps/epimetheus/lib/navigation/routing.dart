@@ -2,6 +2,7 @@ import 'package:epimetheus/pages/collection/collection_page.dart';
 import 'package:epimetheus/pages/collection/subsections/playlist_tracks.dart';
 import 'package:epimetheus/pages/now_playing/now_playing_page.dart';
 import 'package:epimetheus/pages/preferences/proxy_preferences_page.dart';
+import 'package:epimetheus/pages/preferences/scrobble_preferences_page.dart';
 import 'package:epimetheus/pages/signin/signin_page.dart';
 import 'package:flutter/material.dart';
 
@@ -12,6 +13,7 @@ final routes = <String, WidgetBuilder>{
   '/' + CollectionPage.pathPrefix: (context) => CollectionPage(),
   '/now-playing': (context) => NowPlayingPage(),
   '/preferences/proxy': (context) => ProxyPreferencesPage(),
+  '/preferences/scrobble': (context) => ScrobblePreferencesPage(),
 };
 
 /// In order to easily implement deep-linking from Pandora URLs later, browse and collection

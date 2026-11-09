@@ -83,6 +83,8 @@ jobs:
 
       - run: flutter config --no-analytics
       - run: flutter pub get
+      - name: Scrobbler tests (plain Dart, fake ListenBrainz server)
+        run: PATH="$(dirname "$(command -v flutter)")/cache/dart-sdk/bin:$PATH" sh tool/scrobble_test.sh
       - run: flutter build apk --release -v
       - name: Collect APK
         run: |

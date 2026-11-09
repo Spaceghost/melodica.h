@@ -36,6 +36,9 @@ abstract class MusicProvider {
   /// A human-readable title for the music collection.
   String get title;
 
+  /// The Pandora station's name when this provider plays a station (scrobbles carry it), else null.
+  String get stationName => null;
+
   /// The index of the currently playing item in the audio service queue.
   int get currentQueueIndex;
   set currentQueueIndex(int value);

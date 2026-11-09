@@ -27,6 +27,9 @@ class StationMusicProvider extends MusicProvider {
   String get title => _station.title;
 
   @override
+  String get stationName => _station.title;
+
+  @override
   int currentQueueIndex = 0;
 
   @override
