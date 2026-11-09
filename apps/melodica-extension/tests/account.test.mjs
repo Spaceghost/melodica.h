@@ -54,9 +54,10 @@ eq(accessFresh(st, 1000 + 3600000 - 30000), false, 'stale within the last minute
 eq(accessFresh(null), false, 'no tokens');
 
 // Policy: only a 200 with a boolean counts; everything else is the default.
-eq(policyFrom(200, { playback: { plus: true }, display: { name: 'alice' } }), { spots: false, name: 'alice' }, 'policy false + name');
-eq(policyFrom(200, { playback: { plus: false }, display: { name: null } }), { spots: true, name: null }, 'policy true');
-eq(policyFrom(200, { playback: { plus: 'false' } }), { spots: true, name: null }, 'string is not a boolean');
+eq(policyFrom(200, { playback: { plus: true }, display: { name: 'alice' } }), { spots: false, name: 'alice' }, 'plus true + name');
+eq(policyFrom(200, { playback: { plus: false }, display: { name: null } }), { spots: true, name: null }, 'plus false');
+eq(policyFrom(200, { playback: { plus: 'true' } }), { spots: true, name: null }, 'string is not a boolean');
+eq(policyFrom(200, { playback: {} }), { spots: true, name: null }, 'missing plus is the default');
 eq(policyFrom(401, { error: 'invalid_token' }), { spots: true, name: null }, '401');
 eq(policyFrom(503, null), { spots: true, name: null }, '5xx');
 eq(policyFrom(200, { playback: {} }), { spots: true, name: null }, 'missing flag');

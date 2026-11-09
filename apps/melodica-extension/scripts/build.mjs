@@ -133,6 +133,17 @@ for (const name of ['popup.html', 'player.html', 'options.html', 'offscreen.html
   await cp(resolve(root, 'public', name), resolve(common, name));
 }
 await cp(corePath, resolve(common, 'core/melodica_core.wasm'));
+// The shared Scrobbles UI at the commit and sha256 in scrobble-ui.pin, fetched into the
+// gitignored vendor/scrobble-ui/ (scripts/fetch-scrobble-ui.sh) and packaged here.
+{
+  const { spawnSync } = await import('node:child_process');
+  const r = spawnSync('bash', [resolve(root, 'scripts/fetch-scrobble-ui.sh')], { stdio: 'inherit' });
+  if (r.status !== 0) throw new Error('scrobble-ui: the pinned files could not be fetched (scrobble-ui.pin)');
+}
+await mkdir(resolve(common, 'scrobble-ui'), { recursive: true });
+for (const name of ['scrobble-ui.js', 'scrobble-ui.css', 'PIN']) {
+  await cp(resolve(root, 'vendor/scrobble-ui', name), resolve(common, 'scrobble-ui', name));
+}
 await cp(resolve(root, 'LICENSE'), resolve(common, 'LICENSE'));
 for (const size of [48, 128]) await writeFile(resolve(common, `icons/icon-${size}.png`), iconPng(size));
 

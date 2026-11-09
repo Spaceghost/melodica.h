@@ -482,3 +482,23 @@ html.ext-popup .top-right { flex-wrap: nowrap; }
 .ext-username-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.4rem; }
 .ext-username-row { display: flex; gap: 0.5rem; }
 .ext-username-row input { flex: 1; min-width: 0; }
+/* Scrobbling: the first-run notice and the recent listens card. */
+.ext-scrobble-notice { padding: 0.8rem 1rem; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
+.ext-scrobble-notice p { margin: 0; }
+.ext-recent { padding: 0.9rem 1rem; margin-top: 12px; }
+.ext-recent-head { font-size: 1.1rem; margin-bottom: 0.4rem; }
+.ext-recent-list { list-style: none; margin: 0; padding: 0; }
+.ext-recent-item { display: grid; grid-template-columns: 1fr auto; column-gap: 0.6rem; padding: 0.35rem 0; border-top: 1px solid var(--line, rgba(127,127,127,.18)); }
+.ext-recent-item:first-child { border-top: 0; }
+.ext-recent-title { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ext-recent-artist { grid-column: 1; color: var(--muted, inherit); font-size: 0.9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ext-recent-when { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+.ext-recent-links { margin: 0.6rem 0 0; }
+/* Player tab panels: Player, Listens, Leaderboard, Map (the shared Scrobbles UI). */
+.ext-root [hidden] { display: none !important; }
+.ext-panels { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin: 0 0 12px; }
+.ext-panels button { min-height: 36px; padding: 0 0.9rem; border-radius: 999px; }
+.ext-panels button[aria-pressed="true"] { background: var(--gold, #d8b26a); color: var(--ink, #1c212b); border-color: transparent; }
+.ext-panels-live { margin-left: auto; }
+.ext-panels-link { margin-left: 0.6rem; }
+.ext-panel { padding: 1rem; min-height: 60vh; }

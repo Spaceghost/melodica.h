@@ -57,6 +57,6 @@ eq(bannerState('0.2.0', '0.2.0', '0.3.0'), { version: '0.3.0', text: 'melodica 0
 eq(bannerState('0.2.0', '0.4.0', '0.3.0'), { version: '0.4.0', text: 'melodica 0.4.0 is available', url: STORE_URL, reload: true }, 'store newer than the fetched update, reload still offered');
 eq(bannerState('0.3.0', '0.2.0', '0.2.0'), null, 'fetched update older than running');
 eq(bannerState('0.2.0', 'junk', 'junk'), null, 'junk versions');
-eq(STORE_URL, 'https://spacegho.st/extensions/#melodica-extension', 'store url');
+eq(STORE_URL, 'https://spacegho.st/melodica/extension/', 'store url');
 
 console.log(`update: ${n} checks ok`);

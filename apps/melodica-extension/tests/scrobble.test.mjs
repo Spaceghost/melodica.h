@@ -1,9 +1,9 @@
 // Unit test of the Scrobbles helpers (src/scrobble.imba, bundled for Node by
 // scripts/build.mjs as build/node/scrobble.js): listen metadata, the 50% / 4 min
-// threshold, inserted items excluded from submissions, the endpoint check and the 15-item list.
+// threshold, slots never submitted, the endpoint check and the 15-item list.
 //   node tests/scrobble.test.mjs
 import {
-  trackMetadata, thresholdSeconds, playingNow, single, scrobbleBase, recentFrom, listenOf, prependListen, isAd, RECENT_MAX,
+  trackMetadata, genomeTraits, thresholdSeconds, playingNow, single, scrobbleBase, recentFrom, listenOf, prependListen, isSpot, RECENT_MAX,
   enqueue, outcome, QUEUE_MAX,
 } from '../build/node/scrobble.js';
 
@@ -18,9 +18,15 @@ const song = { title: 'Slow Light', artist: 'Aurora Fields', album: 'Night Bus',
 eq(trackMetadata(song), { artist_name: 'Aurora Fields', track_name: 'Slow Light', additional_info: { submission_client: 'melodica-extension', duration_ms: 200000, art_url: 'https://img.example/a.jpg' }, release_name: 'Night Bus' }, 'metadata: only artist, title, album, duration, art');
 eq(trackMetadata({ ...song, coverArt: 'http://img.example/a.jpg', album: '' }).additional_info.art_url, undefined, 'plain-http art dropped');
 eq(trackMetadata({ ...song, duration: 0 }, 180).additional_info.duration_ms, 180000, 'duration from the player');
-eq(trackMetadata({ ...song, ad: true }), null, 'an ad has no metadata');
-eq(trackMetadata({ ...song, kind: 'ad' }), null, 'an ad slot has no metadata');
-eq(isAd({ ad: true }) && isAd({ kind: 'ad' }) && !isAd(song), true, 'isAd');
+eq(genomeTraits([' minor key tonality ', 'electric guitar riffs', 'minor key tonality', 7, '', 'x'.repeat(65)]), ['minor key tonality', 'electric guitar riffs'], 'genome: trimmed strings of at most 64, no repeats');
+eq(genomeTraits(Array.from({ length: 20 }, (_, i) => `trait ${i}`)).length, 12, 'genome: at most 12');
+eq(genomeTraits('rock'), null, 'genome: not a list');
+eq(genomeTraits([]), null, 'genome: none left');
+eq(trackMetadata(song, 0, ['heavy electric distortion']).additional_info.genome, ['heavy electric distortion'], 'genome in additional_info');
+eq(trackMetadata(song, 0, []).additional_info.genome, undefined, 'no genome field without traits');
+eq(trackMetadata({ ...song, ad: true }), null, 'a slot has no metadata');
+eq(trackMetadata({ ...song, kind: 'spot' }), null, 'a slot has no metadata');
+eq(isSpot({ ad: true }) && isSpot({ kind: 'spot' }) && !isSpot(song), true, 'isSpot');
 eq(thresholdSeconds(200), 100, 'half of a 200 s track');
 eq(thresholdSeconds(600), 240, '4 minutes cap');
 eq(thresholdSeconds(30), null, '30 s never counts');

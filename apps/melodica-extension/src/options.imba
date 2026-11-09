@@ -260,9 +260,9 @@ tag Options
 										<span> "Scrobble my listens"
 									<p.message#scrobble-message role="status"> scrobbleMessage
 									<p.fine>
-										<a#scrobble-history href="https://spacegho.st/scrobble/" target="_blank" rel="noopener"> "Your listens"
+										<a#scrobble-history href="https://spacegho.st/melodica/listens/" target="_blank" rel="noopener"> "Your listens"
 										" · "
-										<a#scrobble-leaderboard href="https://spacegho.st/scrobble/leaderboard" target="_blank" rel="noopener"> "Leaderboard"
+										<a#scrobble-leaderboard href="https://spacegho.st/melodica/leaderboard/" target="_blank" rel="noopener"> "Leaderboard"
 								<section.panel.ext-form>
 									<h3> "Updates"
 									<p.fine#options-update> "Firefox and .crx or policy installs update themselves from the feeds on spacegho.st/extensions; an unpacked zip only gets the banner. Running {update and update.current or version}; the store serves {update and update.latest or 'unknown'}{update and update.checkedAt ? ', checked ' + new Date(update.checkedAt).toLocaleString() : ''}."

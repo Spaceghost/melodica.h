@@ -13,8 +13,8 @@ const engine = new Engine({
 		playlist: do(station, quality) (await send({type: 'playlist', stationToken: station.token, quality})).songs
 		rate: do(trackToken, positive) send({type: 'rate', trackToken, positive})
 		tired: do(trackToken) send({type: 'tired', trackToken})
-		adMetadata: do(placeholder, quality) (await send({type: 'ad-metadata', placeholder, quality})).ad
-		registerAd: do(ad) send({type: 'register-ad', adToken: ad.adToken, stationId: ad.stationId, trackingTokens: ad.trackingTokens})
+		spotMetadata: do(placeholder, quality) (await send({type: 'spot-metadata', placeholder, quality})).spot
+		registerSpot: do(s) send({type: 'register-spot', adToken: s.adToken, stationId: s.stationId, trackingTokens: s.trackingTokens})
 	}
 	report: do(state) browser.runtime.sendMessage({type: 'engine-state', state}).catch(do(e) null)
 	log: do(line)

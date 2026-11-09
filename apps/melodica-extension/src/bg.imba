@@ -17,8 +17,8 @@ import { Core } from './core.imba'
 import { Pandora, PandoraError, QUALITIES } from './pandora.imba'
 import { browser, loadSettings, normalizeEndpoint, fromBase64, toBase64, SETTINGS_DEFAULTS } from './shared.imba'
 import { seal, unseal, wipe, vaultAvailable } from './vault.imba'
-import { SCROBBLE_NOTICE, LEADERBOARD_URL, isAd, trackMetadata, thresholdSeconds, playingNow, single, enqueue, outcome } from './scrobble.imba'
-import { normalizeAccountBase, randomString, pkceChallenge, authorizeUrl, parseRedirect, tokenForm, storedTokens, accessFresh, policyFrom, accountLabel, jwtClaims, CLIENT_ID, TAB_CLIENT_ID, TAB_REDIRECT, POLICY_DEFAULT } from './account.imba'
+import { SCROBBLE_NOTICE, LEADERBOARD_URL, MELODICA_PAGES, recentFrom, listenOf, prependListen, isSpot, trackMetadata, thresholdSeconds, playingNow, single, enqueue, outcome, genomeTraits } from './scrobble.imba'
+import { normalizeAccountBase, randomString, pkceChallenge, authorizeUrl, parseRedirect, tokenForm, storedTokens, accessFresh, policyFrom, spotsFlag, accountLabel, jwtClaims, CLIENT_ID, TAB_CLIENT_ID, TAB_REDIRECT, POLICY_DEFAULT } from './account.imba'
 import { feedUrl, latestVersion, bannerState, compareVersions, STORE_URL } from './update.imba'
 import { Engine } from './engine.imba'
 
@@ -56,14 +56,14 @@ let offscreenReady = null
 # worker still knows them.
 let subscribers = null
 # The optional spacegho.st account (docs/ACCOUNT.md): {signedIn, label, email, sub,
-# spots, checkedAt, error}. Compatibility defaults apply without a verified response. Tokens
+# spots, checkedAt, error}. Without one the policy is the default. Tokens
 # live in storage.local `account` ({access, refresh, accessExp, idToken}).
 let account = {signedIn: no, label: '', email: '', sub: '', spots: yes, checkedAt: 0, error: ''}
 let accountChecking = null
 let accountBooted = no
 # melodica access: the spacegho.st answer for the Pandora login email, asked at
 # https://spacegho.st/oauth/melodica/access before auth.userLogin, then again at
-# boot and hourly (docs/ACCOUNT.md). The answer's `spots` is obeyed; nothing shows it.
+# boot and hourly (docs/ACCOUNT.md).
 const ACCESS_MAX_AGE = 60 * 60 * 1000
 const ACCESS_RETRY = 5 * 60 * 1000
 const ACCESS_DENIED = 'melodica access is by allow-list. Your request has been sent.'
@@ -89,6 +89,7 @@ let accessBooted = no
 const UPDATE_EVERY = 6 * 60 * 60 * 1000
 let update = {current: browser.runtime.getManifest().version, latest: null, available: null, checkedAt: 0, error: '', feed: ''}
 let updateChecking = null
+let stationsBooted = no
 let updateBooted = no
 
 # The background log: console.debug plus a ring of the last LOG_MAX lines kept
@@ -190,7 +191,19 @@ def ensure
 	unless updateBooted
 		updateBooted = yes
 		checkUpdate(yes).catch(do(e) null)
+	unless stationsBooted
+		stationsBooted = yes
+		restoreStations(state).catch(do(e) note("stations after restore failed: {(e and e.message) or e}"))
 	state
+
+# A session restored at boot (worker restart or "remember me" after a cold start)
+# may come without its station list; load it so no client has to ask.
+def restoreStations st
+	return unless st.client.loggedIn and !(st.saved.stations and st.saved.stations.length)
+	const stations = await st.client.stations()
+	await remember('stations', stations)
+	note("stations loaded after restore ({stations.length})")
+	playerChanged(player)
 
 # --- Updates ---------------------------------------------------------------
 
@@ -550,13 +563,12 @@ def pushSessionTabs message
 	for tabId in await sessionTabs()
 		browser.tabs.sendMessage(tabId, message).catch(do(e) null)
 
-# Engine playlist items follow verified compatibility state.
-# Slot handling follows verified access and account compatibility state.
-def adsOn
+# Playlist items for the engine, per the access answer and the account's policy.
+def spotsOn
 	!((access.allowed and access.spots === no) or (account.signedIn and account.spots === no))
 
 def playable items
-	(items or []).filter(do(x) x.kind !== 'ad' or adsOn())
+	(items or []).filter(do(x) x.kind !== 'spot' or spotsOn())
 
 # --- melodica access ---------------------------------------------------------
 
@@ -593,7 +605,7 @@ def accessAsk email
 	note("access check: HTTP {res.status}{known ? (body.allowed ? ', allowed' : ', not allowed') : ''}")
 	throw new PandoraError('Enter the email address of your Pandora account.', null, 0, 'access') if res.status === 400
 	throw new PandoraError(ACCESS_UNAVAILABLE, null, 0, 'access') unless known
-	{allowed: body.allowed, spots: body.plus === yes ? no : yes, message: body.allowed ? '' : String(body.message or ACCESS_DENIED)}
+	{allowed: body.allowed, spots: spotsFlag(body), message: body.allowed ? '' : String(body.message or ACCESS_DENIED)}
 
 def setAccess email, r
 	access = {email, allowed: !!r.allowed, spots: r.spots === no ? no : yes, checkedAt: Date.now(), message: r.message or '', error: ''}
@@ -636,7 +648,7 @@ def denyAccess
 # ---- Spaceghost Scrobbles (spacegho.st/scrobble; melodica-web docs/BRIDGE.md: the side
 # whose audio plays submits, so with the extension present only the extension does).
 # On by default; the account's own setting (/scrobble/api/me/settings) can turn it off.
-# Never an ad. playing_now at the start of a play; one single once it has played
+# playing_now at the start of a play; one single once it has played
 # half its length or 4 minutes (tracks of 30 s or less never count). Singles that
 # cannot be sent wait in storage.local (scrobbleQueue) and go out later.
 
@@ -646,7 +658,7 @@ let scrobble = {on: null, checkedAt: 0, noticeSeen: null, play: null, lastFlush:
 
 def scrobbleView
 	const loggedIn = !!(state and state.client.loggedIn)
-	{on: scrobble.on !== no, notice: loggedIn and scrobble.on !== no and scrobble.noticeSeen === no ? SCROBBLE_NOTICE : '', leaderboard: LEADERBOARD_URL, history: 'https://spacegho.st/scrobble/'}
+	{on: scrobble.on !== no, notice: loggedIn and scrobble.on !== no and scrobble.noticeSeen === no ? SCROBBLE_NOTICE : '', leaderboard: LEADERBOARD_URL, history: MELODICA_PAGES.listens}
 
 def noticeSeen
 	if scrobble.noticeSeen === null
@@ -698,6 +710,7 @@ def submitListen body
 	elif res === 'retry' or res === 'auth'
 		await browser.storage.local.set({scrobbleQueue: enqueue(await queueOf(), body)}) if body.listen_type === 'single'
 	elif res === 'ok'
+		addRecent(body)
 		flushListens().catch(do(e) null)
 
 # Send what waits in the queue, oldest first; stop at the first one that cannot go.
@@ -715,6 +728,7 @@ def flushListens
 				scrobble.on = no
 				q = []
 				break
+			addRecent(q[0]) if res === 'ok'
 			q = q.slice(1)
 			await browser.storage.local.set({scrobbleQueue: q})
 		await browser.storage.local.set({scrobbleQueue: q})
@@ -723,18 +737,61 @@ def flushListens
 	finally
 		flushing = no
 
+# The user's recent listens (GET /scrobble/api/me/listens), for the popup and the
+# player tab; a single this browser just sent is added at once.
+let recent = {listens: [], at: 0, crew: no}
+def recentView
+	{listens: recent.listens, at: recent.at, crew: recent.crew, pages: MELODICA_PAGES}
+
+def scrobbleRecent force = no
+	return recentView() unless state and state.client.loggedIn
+	return recentView() if !force and recent.at and Date.now() - recent.at < 30 * 1000
+	# /scrobble/api/me carries the recent listens and crew_viewer (GitHub sign-in: the Map).
+	const r = await melodicaCall('/scrobble/api/me')
+	if r.status === 200 and r.body
+		recent.listens = recentFrom({listens: r.body.recent})
+		recent.crew = r.body.crew_viewer === true
+		recent.at = Date.now()
+	recentView()
+
+def addRecent body
+	return unless body and body.listen_type === 'single'
+	const p = body.payload[0]
+	recent.listens = prependListen(recent.listens, listenOf(p.track_metadata, p.listened_at))
+	broadcast({type: 'scrobble-recent', recent: recentView()})
+
+def extensionPage sender
+	const own = browser.runtime.getURL('')
+	!!(sender and sender.id === browser.runtime.id and typeof sender.url === 'string' and sender.url.startsWith(own))
+
+# Genome traits per track (track.explainTrack, asked once per track; failures give
+# none and are not asked again).
+const genomeCache = new Map
+def genomeFor t
+	return genomeCache.get(t.trackToken) if genomeCache.has(t.trackToken)
+	let traits = null
+	try
+		traits = genomeTraits(await state.client.explain(t.trackToken))
+	catch e
+		traits = null
+	genomeCache.delete(genomeCache.keys().next().value) if genomeCache.size >= 200
+	genomeCache.set(t.trackToken, traits)
+	note("genome: {traits ? traits.length : 0} traits")
+	traits
+
 # Every player state: a new song starts a play (playing_now); the play's single goes
-# Count only qualifying song playback.
+# once it has played long enough.
 def scrobbleTick p
 	return unless state and state.client.loggedIn and scrobble.on !== no
 	const t = p and p.track
-	return unless t and !isAd(t) and t.trackToken
+	return unless t and !isSpot(t) and t.trackToken
 	if !scrobble.play or scrobble.play.key !== t.trackToken
 		return unless p.status === 'playing'
 		scrobble.play = {key: t.trackToken, startedAt: Math.floor(Date.now() / 1000) - Math.floor(Number(p.position) or 0), sent: no}
 		const meta = trackMetadata(t, p.duration)
 		scrobbleSettings().catch(do(e) null)
 		submitListen(playingNow(meta)).catch(do(e) null) if meta
+		genomeFor(t).catch(do(e) null) if meta
 		flushListens().catch(do(e) null) if Date.now() - scrobble.lastFlush > SCROBBLE_RETRY
 		return
 	return if scrobble.play.sent
@@ -742,7 +799,50 @@ def scrobbleTick p
 	const th = meta and thresholdSeconds((meta.additional_info.duration_ms or 0) / 1000)
 	return unless th and Number(p.position) >= th
 	scrobble.play.sent = yes
-	submitListen(single(meta, scrobble.play.startedAt)).catch(do(e) null)
+	const startedAt = scrobble.play.startedAt
+	genomeFor(t).catch(do(e) null).then(do(traits)
+		submitListen(single(trackMetadata(t, p.duration, traits), startedAt))).catch(do(e) null)
+
+# Conquest thumbs (Scrobbles docs/CLIENTS.md): every Pandora thumb of a song is also
+# sent for crew viewers. Fire and forget; 403/404/429 and failures are ignored.
+def gameThumb direction, t
+	return unless t and !isSpot(t) and t.artist and recent.crew
+	const body = {direction, artist_name: String(t.artist)}
+	body.track_name = String(t.title) if t.title
+	melodicaCall('/scrobble/api/game/thumb', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(body)}).then(do(r)
+		note("thumb {direction}: HTTP {r.status}{r.body and typeof r.body.thumbs_left === 'number' ? ", {r.body.thumbs_left} left" : ''}")).catch(do(e) null)
+
+# A Conquest terrain station: created on Pandora from its seeds (song first, else the
+# artist); the first seed that resolves creates it, the rest are added as variety.
+def seedToken seed
+	const artist = String(seed and seed.artist_name or '').trim()
+	const title = String(seed and seed.track_name or '').trim()
+	return null unless artist
+	const results = await state.client.search(title ? "{artist} {title}" : artist)
+	const song = title and results.find(do(r) r.kind === 'song' and r.token)
+	return song.token if song
+	const a = results.find(do(r) r.kind === 'artist' and r.token)
+	a ? a.token : null
+
+def createTerrainStation st
+	const seeds = (st and Array.isArray(st.seeds) ? st.seeds : []).slice(0, 10)
+	throw new Error('This region has no seeds yet.') unless seeds.length
+	let station = null
+	for seed in seeds
+		const token = await seedToken(seed).catch(do(e) null)
+		continue unless token
+		if !station
+			station = await state.client.createStation(token)
+		else
+			await state.client.addMusic(station.token, token).catch(do(e) null)
+	throw new Error('Pandora found none of the seeds.') unless station
+	const name = String(st.name or '').trim().slice(0, 64)
+	if name and station.name !== name
+		await state.client.renameStation(station.token, name).then((do station.name = name), (do(e) null))
+	const stations = await state.client.stations()
+	await remember('stations', stations)
+	playerChanged(player)
+	station
 
 # ---- the melodica username (docs/ACCOUNT.md, Usernames)
 
@@ -1030,8 +1130,8 @@ def localEngine
 				playable(songs)
 			rate: do(trackToken, positive) state.client.rate(trackToken, positive)
 			tired: do(trackToken) state.client.tired(trackToken)
-			adMetadata: do(placeholder, quality) adsOn() ? state.client.adMetadata(placeholder, quality) : null
-			registerAd: do(ad) state.client.registerAd(ad.stationId, ad.trackingTokens or [])
+			spotMetadata: do(placeholder, quality) spotsOn() ? state.client.spotMetadata(placeholder, quality) : null
+			registerSpot: do(s) state.client.registerSpot(s.stationId, s.trackingTokens or [])
 		}
 		report: do(s) playerChanged(s)
 		log: note
@@ -1119,8 +1219,14 @@ def playerCommand msg
 		when 'pause' then await engineCall('pause')
 		when 'toggle' then await engineCall('toggle')
 		when 'next' then await engineCall('next')
-		when 'love' then await engineCall('rate', [yes])
-		when 'ban' then await engineCall('rate', [no])
+		when 'love'
+			const t = player.track
+			await engineCall('rate', [yes])
+			gameThumb('up', t)
+		when 'ban'
+			const t = player.track
+			await engineCall('rate', [no])
+			gameThumb('down', t)
 		when 'tired' then await engineCall('tired')
 		when 'sleep' then await engineCall('tired')
 		when 'stop' then await engineCall('stop')
@@ -1175,7 +1281,7 @@ def handle msg, sender
 	const client = state.client
 	# Stale account and access answers are asked again; player traffic (the views,
 	# the bridge) is not held up by those round trips.
-	const quick = msg.type === 'player' or msg.type === 'player-get' or msg.type === 'player-subscribe' or msg.type === 'engine-state' or msg.type === 'engine-log'
+	const quick = msg.type === 'player' or msg.type === 'player-get' or msg.type === 'player-subscribe' or msg.type === 'engine-state' or msg.type === 'engine-log' or msg.type === 'wake'
 	if !accountChecking and account.checkedAt and Date.now() - account.checkedAt > ACCOUNT_MAX_AGE
 		quick ? checkAccount().catch(do(e) null) : await checkAccount()
 	if !accessChecking and access.checkedAt and Date.now() - access.checkedAt > ACCESS_MAX_AGE
@@ -1199,12 +1305,12 @@ def handle msg, sender
 			{account: await accountCode(msg, sender)}
 		when 'account-signout'
 			{account: await accountSignout()}
-		when 'ad-metadata'
-			{ad: adsOn() ? await client.adMetadata(msg.placeholder or {}, QUALITIES.includes(msg.quality) ? msg.quality : state.settings.quality) : null}
-		when 'register-ad'
+		when 'spot-metadata'
+			{spot: spotsOn() ? await client.spotMetadata(msg.placeholder or {}, QUALITIES.includes(msg.quality) ? msg.quality : state.settings.quality) : null}
+		when 'register-spot'
 			const st = (state.saved.stations or []).find(do(x) x.id === msg.stationId) or null
-			await client.registerAd(msg.stationId or (st and st.id), Array.isArray(msg.trackingTokens) ? msg.trackingTokens : [])
-			note("ad registered ({(msg.trackingTokens or []).length} tracking tokens)")
+			await client.registerSpot(msg.stationId or (st and st.id), Array.isArray(msg.trackingTokens) ? msg.trackingTokens : [])
+			note("registered ({(msg.trackingTokens or []).length} tracking tokens)")
 			{}
 		when 'update'
 			{update: await checkUpdate()}
@@ -1303,6 +1409,13 @@ def handle msg, sender
 			{user: userView()}
 		when 'username-set'
 			{user: await setUsername(String(msg.username or ''))}
+		when 'scrobble-token'
+			# For the shared Scrobbles UI in the extension's own pages (never a web page).
+			throw new PandoraError('not allowed', null, 0, 'client') unless extensionPage(sender)
+			const bs = await melodicaBearers()
+			{token: bs.length ? bs[0].token : null}
+		when 'scrobble-recent'
+			{recent: await scrobbleRecent(!!msg.force)}
 		when 'scrobble-notice-seen'
 			scrobble.noticeSeen = yes
 			await browser.storage.local.set({scrobbleNoticeSeen: yes})
@@ -1334,6 +1447,9 @@ def handle msg, sender
 			{traits: await client.explain(msg.trackToken)}
 		when 'search'
 			{results: await client.search(String(msg.query or ''))}
+		when 'terrain-station'
+			throw new Error('Only extension pages may create stations here.') unless extensionPage(sender)
+			{station: await createTerrainStation(msg.station)}
 		when 'create-station'
 			const station = await client.createStation(msg.musicToken)
 			const stations = await client.stations()
@@ -1349,6 +1465,9 @@ def handle msg, sender
 		when 'player-subscribe'
 			await subscribeTab(sender and sender.tab and sender.tab.id, msg.on !== no)
 			{state: playerView()}
+		when 'wake'
+			# A spacegho.st/melodica/ page loaded: ensure() above has restored the session.
+			{loggedIn: !!client.loggedIn}
 		when 'player-get'
 			{state: playerView(), settings: state.settings, account: accountView(), update: updateState()}
 		when 'player'

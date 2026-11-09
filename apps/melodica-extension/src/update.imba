@@ -4,7 +4,7 @@
 # extensions-site writes: `updates.json` (Firefox's format, read by the Firefox
 # build) and `releases.json` (the store manifest, read by the Chromium build).
 
-export const STORE_URL = 'https://spacegho.st/extensions/#melodica-extension'
+export const STORE_URL = 'https://spacegho.st/melodica/extension/'
 export const FEED_BASE = 'https://spacegho.st/extensions'
 export const EXTENSION_ID = 'melodica-extension'
 export const GECKO_ID = 'melodica-extension@spacegho.st'

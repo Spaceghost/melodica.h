@@ -42,7 +42,7 @@ Nothing is on the Chrome Web Store, Edge Add-ons or the AMO listings, and
 nothing will be (`docs/STORES.md`, "Why not the stores"). The releases carry an
 `.xpi` (signed by Mozilla on the unlisted channel, which lists nothing), a
 `.crx` and unpacked-extension zips, and
-<https://spacegho.st/extensions/#melodica-extension> (the self-hosted store,
+<https://spacegho.st/melodica/extension/> (the self-hosted store,
 repository Spaceghost/extensions-site) mirrors them with install buttons,
 checksums, the CI proof and the update feeds.
 
@@ -66,15 +66,6 @@ card shows the message; if a re-check cannot reach the server, the last answer
 stands and it asks again in five minutes. The bridge (docs/BRIDGE.md) refuses
 the web page's own Pandora calls past `auth.partnerLogin` only after an
 answer that said no.
-
-## Playlist items
-
-Pandora's inserted audio items play in the background player like songs: the ad slot in a
-playlist is filled with `ad.getAdMetadata`, its audio plays with the ad's title,
-company and image, **next**, love, ban and tired are disabled while it plays,
-and `ad.registerAd` is sent when it ends. Whether ad slots are played is set by
-the `plus` value the access check (or the spacegho.st account's policy) returns;
-it defaults to playing them, and nothing in the extension displays it.
 
 ## The spacegho.st account (optional)
 
@@ -120,7 +111,7 @@ sign-in and launchWebAuthFlow's own window are not exercised in CI.**
 
 ## Install
 
-Buttons and current steps: <https://spacegho.st/extensions/#melodica-extension>.
+Buttons and current steps: <https://spacegho.st/melodica/extension/>.
 
 - **Firefox:** `melodica-extension-<ver>.xpi`, served there as
   `application/x-xpinstall` so Firefox offers its install prompt. Since v0.1.4
@@ -224,14 +215,14 @@ is how the CI smoke runs).
 | `core/test.mjs`, `core/ref-blowfish.mjs` | Node unit test: libpiano's vector from melodica.h `tests/crypt.c`, an independent JS Blowfish for cross-checks, hex, syncTime, the envelope, the arena |
 | `src/core.imba` | JS wrapper around the wasm exports |
 | `src/pandora.imba` | JSON API v5 client: partnerLogin, userLogin, station list, playlist, feedback, sleep, explain, search, create/delete station; one re-login on code 1001; errors name the call and code ("Pandora rejected auth.userLogin (code 1002: invalid login). Wrong email address or password."); the client User-Agent (below) |
-| `src/bg.imba` | background: the access check (before the login, at boot, hourly; refusals), the optional spacegho.st account (sign-in, refresh, policy), the ad slots (`ad.getAdMetadata`, `ad.registerAd`), session (in `storage.session`), every Pandora request, the player state (`playerState`, persisted in `storage.session`, broadcast on every change), the player commands, the badge, the keyboard shortcuts, the offscreen document (Chromium) or the in-page engine (Firefox), the bridge relay, the diagnostics log (last 200 lines in `storage.session`, no tokens) |
+| `src/bg.imba` | background: the access check (before the login, at boot, hourly; refusals), the optional spacegho.st account (sign-in, refresh, policy), playlist slots (`ad.getAdMetadata`, `ad.registerAd`), session (in `storage.session`), every Pandora request, the player state (`playerState`, persisted in `storage.session`, broadcast on every change), the player commands, the badge, the keyboard shortcuts, the offscreen document (Chromium) or the in-page engine (Firefox), the bridge relay, the diagnostics log (last 200 lines in `storage.session`, no tokens) |
 | `src/engine.imba` | the playback engine: the `<audio>` element, playlist queue, track advance, ratings, volume, the play log, `navigator.mediaSession`; talks to Pandora only through the background |
 | `src/offscreen.imba`, `public/offscreen.html` | Chromium's home for the engine: the offscreen document (`chrome.offscreen`, reason `AUDIO_PLAYBACK`) |
 | `src/update.imba`, `tests/update.test.mjs` | update awareness: version compare, the store feeds, the "is available" banner state, and its Node unit test |
 | `src/account.imba`, `tests/account.test.mjs` | the spacegho.st account's PKCE, authorize URL, redirect, token and policy parsing, and its Node unit test |
 | `tests/fake-account.mjs` | the smokes' stand-in for spacegho.st's access check and OAuth endpoints (docs/ACCOUNT.md); `SPACEGHOST_AUTH_ADAPTER` swaps in another implementation |
 | `src/popup.imba`, `src/player.imba`, `src/options.imba`, `src/ui.imba`, `src/shared.imba` | the pages (views of the background's state) and shared tags |
-| `src/content.imba`, `docs/BRIDGE.md` | the bridge content script for `https://spacegho.st/melodica/app/*`: the request relay and the playback remote control |
+| `src/content.imba`, `docs/BRIDGE.md` | the bridge content script for `https://spacegho.st/melodica/*`: the request relay and the playback remote control |
 | `public/` | `manifest.json` (one template, two outputs), the HTML pages (no inline scripts), `theme.css`: part 1 is melodica-web's `web/app.css` copied unchanged (the phone layout: one centered column of cream cards, ink in dark mode), part 2 the extension's additions (popup width 380 px, the inline station list, the update banner, the options form) |
 | `scripts/build-core.sh` | Nelua → C (`--target wasm32-unknown-unknown`) → `clang -nostdlib` → audits exports/imports |
 | `scripts/build.mjs` | esbuild + `imba/compiler` → `dist/chrome`, `dist/firefox`, `build/node/{core,pandora,account,update}.js`; generated icons; CSP guards |
@@ -302,7 +293,7 @@ not errors).
 - `permissions`: `storage`, `identity` (the optional spacegho.st sign-in's `launchWebAuthFlow` / `getRedirectURL`); the Chromium build adds `offscreen` (the playback document).
 - `commands`: `toggle-play` (Alt+Shift+P) and `next-song` (Alt+Shift+N), handled in the background.
 - The Firefox build has no `service_worker` key and sets `background.persistent: true` (see "Playback without a tab").
-- `content_scripts`: `content.js` on `https://spacegho.st/melodica/app/*`.
+- `content_scripts`: `content.js` on `https://spacegho.st/melodica/*`, at `document_start`.
 - `content_security_policy.extension_pages`: `script-src 'self' 'wasm-unsafe-eval'; object-src 'self'` (the wasm needs `'wasm-unsafe-eval'`).
 - `browser_specific_settings.gecko.id`: `melodica-extension@spacegho.st`, `strict_min_version` 128.
 - The `browser` namespace is used everywhere with `globalThis.browser = globalThis.chrome` as the only polyfill (promise-returning APIs in MV3 Chrome; `onMessage` listeners answer through `sendResponse`).
@@ -367,7 +358,7 @@ Chromium build, `updates.json` in the Firefox build; host permission
 `https://spacegho.st/extensions/*`, and the feeds also allow CORS). When the
 store serves a newer version than `runtime.getManifest().version`, the popup,
 player and options page show "melodica `<v>` is available" with a link to
-<https://spacegho.st/extensions/#melodica-extension>. On Chromium, once the
+<https://spacegho.st/melodica/extension/>. On Chromium, once the
 browser has fetched an update (`runtime.onUpdateAvailable`) the background
 calls `runtime.reload()` immediately if nothing is playing, otherwise when
 playback stops, and the banner offers "Reload to update" meanwhile. Firefox
@@ -397,10 +388,10 @@ reads the real feed, so it shows none).
   sealed at start-up and erased. Where IndexedDB or WebCrypto is missing, nothing
   is remembered.
 - **Scrobbling** (on by default): while you are signed in to Pandora, what you
-  play is scrobbled to Spaceghost Scrobbles (spacegho.st/scrobble) under your
+  play is scrobbled to Spaceghost Scrobbles (spacegho.st/melodica/listens/) under your
   melodica account. A `playing_now` goes out when a song starts and one listen
   once it has played half its length or 4 minutes, whichever comes first; songs
-  of 30 s or less and inserted items are excluded from submissions. A listen carries the artist, title,
+  of 30 s or less are never sent. A listen carries the artist, title,
   album, length, cover URL and `submission_client: melodica-extension`, nothing
   else. Listens that cannot be sent (offline, server errors) wait in
   `storage.local` (`scrobbleQueue`, at most 50) and go out later. Nothing is sent
@@ -409,6 +400,14 @@ reads the real feed, so it shows none).
   (`/scrobble/api/me/settings`), so turning it off on the scrobble site turns it
   off here too. With the web app open as a remote, only the extension submits
   (docs/BRIDGE.md).
+- **Listens, Leaderboard, Map** (the player tab) and **Recent listens** (the popup):
+  the shared Scrobbles UI from Spaceghost/melodica-scrobble `ui/dist/`
+  (docs/CLIENTS.md there) at the commit in
+  commit and sha256 in `scrobble-ui.pin`, fetched at build time into the gitignored `vendor/scrobble-ui/` by `scripts/fetch-scrobble-ui.sh`, and shipped inside the
+  extension; no remote code runs. It talks to `spacegho.st/scrobble/api/` (host
+  permission `https://spacegho.st/scrobble/*`) and its live channel with the melodica
+  token. The Map tab shows only when Scrobbles says the account is signed in with
+  GitHub (`crew_viewer`). Links go to the pages under spacegho.st/melodica/.
 - **Check for updates**: reads the store feed now (above).
 - **Copy diagnostics**: the last 50 lines of the background log (boot,
   permissions, each request's method, size, syncTime, clock offset and which
@@ -585,9 +584,8 @@ the tuner's or the page's) plus `smoke-brave-login.png`,
 Playwright launches Chromium-family browsers with `--disable-component-update`,
 which in Brave leaves Shields without any filter list (`brave://components`
 says "No components are installed"); in Brave the spec drops that flag, waits
-up to a minute before the proof for `brave://components` to show the Brave
-Default Adblock Filters, Default Privacy Filters and Ad Block Resources Library
-as `Updated`, and records them with their versions in `shields`
+up to a minute before the proof for `brave://components` to show Brave's
+default filter components as `Updated`, and records them with their versions in `shields`
 (`filtersLoaded`, `waitedMs`, `components`). `filtersLoaded` is recorded, not
 asserted: read it before taking `blocked: []` as a statement about Shields.
 The `release` job requires both reports to say `ok: true` and attaches both
@@ -618,7 +616,59 @@ tagged commit; see the release notes for the run of each tag.
 
 ### What this does and does not prove
 
-The browser checks exercise playback, account policy, authentication and the requests recorded by the tuner. The attached reports provide the exact observations.
+- Proven by the tag's run: the exact `dist/chrome` build loads in Chromium
+  and in Brave and the exact `dist/firefox` build in Mozilla Firefox, their
+  options/popup/player pages work, the wasm core frames requests the strict
+  tuner accepts, audio plays from the tuner in the background with no
+  extension page open (5 s measured in Chromium and Brave, 45 s in Firefox),
+  the player tab is a view that can be closed without stopping it, the
+  bridge protocol round-trips through the content script and background and
+  remote-controls the playback (Chromium and Brave), and the real Pandora
+  accepts the request framing (the bogus-credentials probe).
+- **Background playback is measured for seconds, not hours.** Chrome's
+  closing of an idle offscreen document and its recreation, a Firefox
+  event-page termination later than 45 s, and the behaviour across a browser
+  restart or a system sleep are not exercised in CI.
+- **Brave: the stable of the day, Shields at defaults, on Linux.** The job
+  does not pin Brave, so each run proves whatever `brave-browser` apt
+  installed then (the version is in the report). Shields were not configured;
+  `blocked: []` says nothing of ours was refused during the run, and
+  `shields.filtersLoaded` says whether Brave's filter lists were in place
+  before it (waited for, recorded, not asserted). Brave on Windows or macOS,
+  Brave's `.crx` drag-install and Brave's policy install have not been
+  exercised.
+- **Real Pandora, without an account.** The `smoke-firefox` job talks to
+  `tuner.pandora.com` itself twice per run, from Node and from the installed
+  Firefox extension: `auth.partnerLogin` succeeds and `auth.userLogin` with
+  bogus credentials is answered with code 1002, which proves the framing
+  (query, envelope, syncTime, User-Agent) is one Pandora accepts. CI has no
+  Pandora account, so a login with valid credentials, the station list and
+  playback against Pandora are not observed anywhere in CI.
+- **Firefox is run, headless, on Linux, as a temporary add-on.** The `.xpi`
+  install prompt, a signed install, Firefox on Windows or macOS and the bridge
+  in Firefox are not exercised.
+- **Access and the account, against fakes.** All three browser jobs
+  check, against `tests/fake-account.mjs`: an email the server refuses is
+  not logged in and Pandora is not asked; the spacegho.st sign-in (begun and
+  finished in the background around a browser tab, GitHub chosen on the fake
+  authorize page) and sign-out, with token refresh and rotation in Chromium and
+  Brave; withdrawn access stops the music and signs out of Pandora. The
+  `release` job checks each report's `access` and `account`. The real
+  spacegho.st, a real GitHub sign-in and launchWebAuthFlow's own window are
+  not exercised in CI.
+- **Signature, no stores.** The `.xpi` is signed by Mozilla on the unlisted
+  channel (the sign step's log and `META-INF/` in the file are the evidence);
+  there are no store listings and no store jobs (`docs/STORES.md`). No job
+  installs the `.xpi` or `.crx` in a browser; Firefox's install prompt and
+  Chrome's policy install have not been exercised.
+- The three browser jobs install whatever Mozilla and Brave ship on the day
+  and Playwright's pinned Chromium; the versions are in the reports.
+- The web page's side of the bridge is being implemented in melodica-web; the
+  smoke test drives the protocol from the page context itself, so it proves
+  the extension's half against the agreed protocol, not the shipped page's
+  use of it.
+- The tuner's strict mode validates fields, `syncTime` and https, but it is
+  not Pandora: rate limits and geo-blocking are not exercised.
 
 ## Privacy
 

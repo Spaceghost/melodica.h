@@ -4,6 +4,21 @@
 
 import { browser, send, FALLBACK_COVER } from './shared.imba'
 import { StationList, NowPlaying, Transport, AccountLine, UpdateBanner, Top, Foot, UsernamePick, ScrobbleNotice } from './ui.imba'
+import { MELODICA_PAGES } from './scrobble.imba'
+
+# The shared Scrobbles UI (melodica-scrobble ui/, docs/CLIENTS.md), vendored into the
+# extension at a pinned commit (scrobble-ui.pin) and loaded from the package.
+let sui = null
+def scrobbleUi
+	return sui if sui
+	const sheet = document.createElement('link')
+	sheet.rel = 'stylesheet'
+	sheet.href = 'scrobble-ui/scrobble-ui.css'
+	document.head.appendChild(sheet)
+	const mod = await import(browser.runtime.getURL('scrobble-ui/scrobble-ui.js'))
+	const client = mod.createClient({base: 'https://spacegho.st', token: do (await send({type: 'scrobble-token'})).token})
+	sui = {mod, client, live: client.live()}
+	sui
 
 # While this page is open the background is asked for the account's policy this
 # often; it asks spacegho.st again once its last answer is an hour old.
@@ -21,6 +36,10 @@ tag Player
 	prop accountBusy = no
 	prop accountError = ''
 	prop update = null
+	prop panel = 'player'
+	prop crew = no
+	prop liveState = ''
+	prop panelError = ''
 
 	def mount
 		self.listener = do(msg, sender, sendResponse) onMessage(msg, sender, sendResponse)
@@ -34,6 +53,7 @@ tag Player
 			self.pollTimer = setInterval((do poll()), ACCOUNT_POLL)
 			if stations.length === 0 and loggedIn
 				await reload()
+			loadCrew() if loggedIn
 		catch e
 			if e.kind === 'auth'
 				loggedIn = no
@@ -41,8 +61,49 @@ tag Player
 				toast(String(e.message or e), 'error')
 		imba.commit()
 
+	def loadCrew
+		try
+			crew = !!(await send({type: 'scrobble-recent'})).recent.crew
+			imba.commit()
+		catch e
+			null
+
+	# Listens, Leaderboard and Map: each is mounted the first time it is shown.
+	def show name
+		panel = name
+		panelError = ''
+		imba.commit()
+		return if name === 'player'
+		self.views ||= {}
+		return if self.views[name]
+		try
+			const ui = await scrobbleUi()
+			const host = self.querySelector("#panel-{name}")
+			host.addEventListener('sui:error', do(e)
+				panelError = String(e.detail and e.detail.message or 'Scrobbles did not answer.')
+				imba.commit())
+			host.addEventListener('sui:live', do(e)
+				liveState = String(e.detail and e.detail.state or '')
+				imba.commit())
+			const opts = {client: ui.client, live: ui.live}
+			if name === 'listens'
+				self.views[name] = ui.mod.mountListens(host, Object.assign({pageSize: 25}, opts))
+			elif name === 'leaderboard'
+				self.views[name] = ui.mod.mountLeaderboard(host, Object.assign({window: '7d'}, opts))
+			elif name === 'map'
+				self.views[name] = ui.mod.mountMap(host, Object.assign({onStation: do(station)
+					const r = await send({type: 'terrain-station', station})
+					throw new Error(r and r.error or 'Pandora did not answer.') unless r and r.ok
+					r.station}, opts))
+		catch e
+			panelError = String(e and e.message or e)
+		imba.commit()
+
 	def unmount
 		browser.runtime.onMessage.removeListener(self.listener)
+		for own k, v of (self.views or {})
+			v.unmount()
+		sui.live.close() if sui
 		clearInterval(self.pollTimer) if self.pollTimer
 
 	def apply state
@@ -213,7 +274,20 @@ tag Player
 								<p.intro> "Sign in from the toolbar popup, then pick a station."
 								<button#open-login.primary type="button" @click=openPopupLogin> "Open sign-in"
 					else
-						<div.ext-desk>
+						<nav.ext-panels aria-label="melodica">
+							<button#tab-player type="button" aria-pressed=(panel === 'player') @click=show('player')> "Player"
+							<button#tab-listens type="button" aria-pressed=(panel === 'listens') @click=show('listens')> "Listens"
+							<button#tab-leaderboard type="button" aria-pressed=(panel === 'leaderboard') @click=show('leaderboard')> "Leaderboard"
+							if crew
+								<button#tab-map type="button" aria-pressed=(panel === 'map') @click=show('map')> "Map"
+							<span.ext-panels-live.fine> (panel !== 'player' and liveState === 'open' ? 'live' : '')
+							<a#tab-melodica.ext-panels-link href=MELODICA_PAGES.home target="_blank" rel="noopener"> "spacegho.st/melodica"
+						if panel !== 'player' and panelError
+							<p#panel-error.message.error role="status"> panelError
+						<section#panel-listens.ext-panel.card hidden=(panel !== 'listens')>
+						<section#panel-leaderboard.ext-panel.card hidden=(panel !== 'leaderboard')>
+						<section#panel-map.ext-panel.card hidden=(panel !== 'map')>
+						<div.ext-desk hidden=(panel !== 'player')>
 							<aside.ext-side>
 								<StationList stations=stations active=(player and player.station and player.station.token) @select=select @refresh=reload @delete=remove>
 							<section.ext-main>

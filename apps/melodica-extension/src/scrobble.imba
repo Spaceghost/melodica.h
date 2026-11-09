@@ -4,11 +4,21 @@
 
 export const SCROBBLE_NOTICE = 'Scrobbling to spacegho.st is on. Turn it off in settings.'
 export const RECENT_MAX = 15
-export const LEADERBOARD_URL = 'https://spacegho.st/scrobble/leaderboard'
+export const LEADERBOARD_URL = 'https://spacegho.st/melodica/leaderboard/'
 export const SUBMISSION_CLIENT = 'melodica-extension'
+# The melodica pages on spacegho.st every view links to.
+export const MELODICA_PAGES = {
+	home: 'https://spacegho.st/melodica/'
+	listens: 'https://spacegho.st/melodica/listens/'
+	leaderboard: 'https://spacegho.st/melodica/leaderboard/'
+	map: 'https://spacegho.st/melodica/map/'
+	app: 'https://spacegho.st/melodica/app/'
+	account: 'https://spacegho.st/melodica/account/'
+	extension: 'https://spacegho.st/melodica/extension/'
+}
 
-export def isAd song
-	!!(song and (song.ad or song.kind === 'ad'))
+export def isSpot song
+	!!(song and (song.ad or song.kind === 'spot'))
 
 def httpsUrl v
 	const s = String(v or '')
@@ -17,14 +27,28 @@ def httpsUrl v
 	catch e
 		return ''
 
-# Only artist, title, album, duration and an https art URL; never an ad.
-export def trackMetadata song, duration = 0
-	return null if !song or isAd(song) or !song.artist or !song.title
+# Pandora's explainTrack focus traits as the Scrobbles contract takes them: strings,
+# trimmed, at most 64 characters each, at most 12; null when none are left.
+export def genomeTraits list
+	return null unless Array.isArray(list)
+	const out = []
+	for x in list
+		continue unless typeof x === 'string'
+		const t = x.trim()
+		out.push(t) if t and t.length <= 64 and !out.includes(t)
+		break if out.length >= 12
+	out.length ? out : null
+
+# Only artist, title, album, duration, an https art URL and the genome traits.
+export def trackMetadata song, duration = 0, genome = null
+	return null if !song or isSpot(song) or !song.artist or !song.title
 	const info = {submission_client: SUBMISSION_CLIENT}
 	const secs = Math.max(Number(song.duration) or 0, Number(duration) or 0)
 	info.duration_ms = Math.round(secs * 1000) if secs > 0
 	const art = httpsUrl(song.coverArt)
 	info.art_url = art if art
+	const traits = genomeTraits(genome)
+	info.genome = traits if traits
 	const meta = {artist_name: String(song.artist), track_name: String(song.title), additional_info: info}
 	meta.release_name = String(song.album) if song.album
 	meta

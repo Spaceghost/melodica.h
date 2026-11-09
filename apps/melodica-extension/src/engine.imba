@@ -71,12 +71,16 @@ export class Engine
 
 	# One diagnostics line per transport change (src presence only, never the URL).
 	def trace what
-		log("{what}: status {state.status}, track {state.track ? (state.track.ad ? 'ad' : 'song') : 'none'}, src {audio.src ? 'set' : 'none'}, paused {audio.paused}, ended {audio.ended}, ready {audio.readyState}, held {held}, fetching {fetching}")
+		log("{what}: status {state.status}, track {state.track ? (state.track.ad ? 'spot' : 'song') : 'none'}, src {audio.src ? 'set' : 'none'}, paused {audio.paused}, ended {audio.ended}, ready {audio.readyState}, held {held}, fetching {fetching}")
 
 	def resume
 		trace('resume')
 		held = no
-		if state.track and audio.src
+		if (audio.ended or fetching) and state.station
+			# Between tracks: the next one is on its way and starts playing when it is in
+			# (held is off); the finished one is not restarted.
+			set({status: 'loading', error: ''})
+		elif state.track and audio.src
 			# Report "playing" at once (views and the web page update without
 			# waiting for the element's play event); a refused play reverts it.
 			set({status: 'playing', error: ''}) if audio.paused
@@ -98,8 +102,10 @@ export class Engine
 		audio.pause()
 		set({status: 'paused'}) if state.track and (state.status === 'playing' or state.status === 'loading')
 
+	# By the reported status, not the element: between two tracks the element has ended
+	# (paused) while the station is still playing and the next track is loading.
 	def toggle
-		if state.track and !audio.paused
+		if state.status === 'playing' or state.status === 'loading'
 			pause()
 		else
 			await resume()
@@ -121,16 +127,16 @@ export class Engine
 					return
 			return if gen !== generation
 			let item = queue.shift()
-			if item and item.kind === 'ad' and !item.audioUrl
-				# An ad slot: fetch what to play. One that cannot be played is passed over.
-				let ad = null
+			if item and item.kind === 'spot' and !item.audioUrl
+				# A slot with only a token: fetch what to play. One that cannot be played is passed over.
+				let spot = null
 				try
-					ad = api.adMetadata ? await api.adMetadata(item, state.quality) : null
+					spot = api.spotMetadata ? await api.spotMetadata(item, state.quality) : null
 				catch e
-					log("ad metadata failed: {e and e.message or e}")
+					log("slot metadata failed: {e and e.message or e}")
 				return if gen !== generation
-				return await next() unless ad
-				item = ad
+				return await next() unless spot
+				item = spot
 			start(item)
 		catch e
 			fetching = no
@@ -165,22 +171,22 @@ export class Engine
 		queue = []
 		set({status: 'stopped', track: null, position: 0, duration: 0, error: ''})
 
-	# Next is not available while an ad plays.
+	# Next is not available while `track.ad` is set.
 	def skip
 		return if state.track and state.track.ad
 		held = no
 		audio.pause()
 		await next()
 
-	# A track or ad finished: an ad is registered with Pandora, then the next one plays.
+	# A track finished: a slot is registered with Pandora, then the next one plays.
 	def ended
 		const song = state.track
-		if song and song.ad and api.registerAd
+		if song and song.ad and api.registerSpot
 			try
-				await api.registerAd(song)
+				await api.registerSpot(song)
 				song.registered = yes
 			catch e
-				log("ad registration failed: {e and e.message or e}")
+				log("registration failed: {e and e.message or e}")
 		await next()
 
 	def rate positive
@@ -259,11 +265,11 @@ export class Engine
 			lastReport = now
 			emit()
 
-	# A song or ad that cannot be played is skipped; several in a row stop the station.
+	# A track that cannot be played is skipped; several in a row stop the station.
 	def onError
 		const song = state.track
 		failures += 1
-		log("audio error {audio.error and audio.error.code} {audio.error and audio.error.message or ''} ({song and song.ad ? 'ad' : 'song'} {song and song.audioFormat or ''}; {failures} in a row)")
+		log("audio error {audio.error and audio.error.code} {audio.error and audio.error.message or ''} ({song and song.ad ? 'spot' : 'song'} {song and song.audioFormat or ''}; {failures} in a row)")
 		if failures >= 3
 			audio.pause()
 			queue = []

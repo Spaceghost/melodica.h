@@ -30,12 +30,12 @@
   "content_scripts": [
     {
       "matches": [
-        "https://spacegho.st/melodica/app/*"
+        "https://spacegho.st/melodica/*"
       ],
       "js": [
         "content.js"
       ],
-      "run_at": "document_idle"
+      "run_at": "document_start"
     }
   ],
   "permissions": [
@@ -46,6 +46,7 @@
     "https://tuner.pandora.com/*",
     "https://*.pandora.com/*",
     "https://spacegho.st/oauth/*",
+    "https://spacegho.st/scrobble/*",
     "https://spacegho.st/extensions/*"
   ],
   "optional_host_permissions": [

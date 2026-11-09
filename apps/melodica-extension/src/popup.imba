@@ -3,7 +3,7 @@
 # page is a view of the background's player state and sends it commands.
 
 import { browser, send } from './shared.imba'
-import { Login, StationList, NowPlaying, Transport, AccountLine, UpdateBanner, Top, Foot, UsernamePick, ScrobbleNotice } from "./ui.imba"
+import { Login, StationList, NowPlaying, Transport, AccountLine, UpdateBanner, Top, Foot, UsernamePick, ScrobbleNotice, RecentListens } from "./ui.imba"
 
 tag Popup
 	prop view = 'loading'
@@ -19,6 +19,7 @@ tag Popup
 	prop accountError = ''
 	prop loggedIn = no
 	prop update = null
+	prop recent = null
 
 	def mount
 		self.notice = do(msg, sender, sendResponse) onNotice(msg, sender, sendResponse)
@@ -44,6 +45,9 @@ tag Popup
 				kind = ''
 				pickView()
 			imba.commit()
+		if msg.type === 'scrobble-recent'
+			recent = msg.recent
+			imba.commit()
 		if msg.type === 'account'
 			account = msg.account
 			imba.commit()
@@ -64,6 +68,13 @@ tag Popup
 			message = a.message
 			kind = 'error'
 
+	def loadRecent
+		try
+			recent = (await send({type: 'scrobble-recent', force: yes})).recent
+			imba.commit()
+		catch e
+			null
+
 	def pickView
 		view = loggedIn ? 'player' : 'login'
 
@@ -78,6 +89,7 @@ tag Popup
 			update = s.update
 			loggedIn = s.loggedIn
 			pickView()
+			loadRecent() if loggedIn
 			accessMessage(s.access) unless s.loggedIn
 			if s.loggedIn and stations.length === 0
 				stations = (await send({type: 'stations'})).stations
@@ -214,6 +226,8 @@ tag Popup
 							<Transport now=now @control=control>
 							<p#player-status.ext-state> statusText
 						<StationList stations=stations active=(player and player.station and player.station.token) compact=yes @select=select @refresh=reload @delete=remove>
+						if recent
+							<RecentListens recent=recent max=5>
 						<p.message#player-message .error=(kind === 'error') .info=(kind === 'info')> message
 			<Foot version=version>
 				<AccountLine account=account busy=accountBusy message=accountError @signin=accountAction('account-signin') @signout=accountAction('account-signout')>

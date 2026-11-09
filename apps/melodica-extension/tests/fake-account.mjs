@@ -54,6 +54,8 @@ export function createAccountServer({ issuer = 'https://spacegho.st', accessTtl 
   const listens = [];
   const scrobbleRefused = [];
   let scrobbleDown = false;
+  const seededListens = [];
+  const scrobbleUiCalls = [];
   const userOf = (email) => {
     if (!users.has(email)) users.set(email, { username: `listener-${sha(email).slice(0, 6).toLowerCase().replace(/[^a-z0-9]/g, '0')}`, chosen: false, suggested: '' });
     return users.get(email);
@@ -216,9 +218,15 @@ export function createAccountServer({ issuer = 'https://spacegho.st', accessTtl 
       Object.assign(u, { username: name, chosen: true });
       return json(res, 200, { username: name, username_chosen: true });
     }
-    // Spaceghost Scrobbles (spaceghost-scrobble src/worker.js api()): settings and
+    // Spaceghost Scrobbles (melodica-scrobble src/worker.js api()): settings and
     // listen ingest, bearer = the melodica token or an account access token.
-    if (p.startsWith('/scrobble/api/me/')) {
+    if (p === '/scrobble/api/leaderboard') {
+      scrobbleUiCalls.push(p);
+      return json(res, 200, { window: url.searchParams.get('window') || '7d', songs: [{ artist: 'Board Artist', title: 'Board Song', listens: 7 }], artists: [{ artist: 'Board Artist', listens: 9 }], listeners: [{ name: 'board_listener', listens: 11 }], generated_at: new Date().toISOString() });
+    }
+    if (p === '/scrobble/api/live/poll') { scrobbleUiCalls.push(p); return json(res, 200, { events: [], now: Date.now() }); }
+    if (p === '/scrobble/api/live') return json(res, 404, { error: 'not_found' });
+    if (p === '/scrobble/api/me' || p.startsWith('/scrobble/api/me/')) {
       const m = /^Bearer (.+)$/.exec(req.headers.authorization || '');
       const email = m && melodicaTokens.get(m[1]);
       const a = !email && req.headers.authorization ? bearer(req) : null;
@@ -226,6 +234,14 @@ export function createAccountServer({ issuer = 'https://spacegho.st', accessTtl 
       if (!who) return json(res, 401, { error: 'invalid_token' });
       if (!scrobbleSettings.has(who)) scrobbleSettings.set(who, { scrobbling: true });
       const st = scrobbleSettings.get(who);
+      const mine = () => listens.filter((l) => l.who === who && l.body.listen_type === 'single').map((l, i) => {
+        const pl = l.body.payload[0]; const m = pl.track_metadata;
+        return { id: i + 1, listened_at: pl.listened_at, session: pl.listened_at, artist: m.artist_name, title: m.track_name, ...(m.release_name ? { album: m.release_name } : {}), client: m.additional_info.submission_client };
+      }).reverse();
+      if (p === '/scrobble/api/me' || p === '/scrobble/api/me/') {
+        return json(res, 200, { account: { name: null, github: a ? a.github || null : null }, settings: { scrobbling: st.scrobbling }, counts: { listens: mine().length }, now_playing: null, recent: [...seededListens, ...mine()].slice(0, 15), next_cursor: null, crew_viewer: !!(a && a.github), territory: null });
+      }
+      if (p === '/scrobble/api/me/listens' && req.method === 'GET') return json(res, 200, { listens: [...seededListens, ...mine()].slice(0, 25), next_cursor: null });
       if (p === '/scrobble/api/me/settings') {
         if (req.method === 'POST') {
           let q = null;
@@ -254,11 +270,12 @@ export function createAccountServer({ issuer = 'https://spacegho.st', accessTtl 
   }
 
   return {
-    issuer, accounts, calls, tokens, requests, handle, users, loginOks, usernameCalls, listens, scrobbleRefused, scrobbleSettings,
+    issuer, accounts, calls, tokens, requests, handle, users, loginOks, usernameCalls, listens, scrobbleRefused, scrobbleSettings, scrobbleUiCalls,
     scrobbleOffline(down) { scrobbleDown = !!down; },
-    allow(email, { ads = true } = {}) { allowList.set(String(email).trim().toLowerCase(), { ads: !!ads }); },
+    seedListen(l) { seededListens.unshift(l); },
+    allow(email, { spots = true } = {}) { allowList.set(String(email).trim().toLowerCase(), { spots: !!spots }); },
     disallow(email) { allowList.delete(String(email).trim().toLowerCase()); },
-    setSlots(which, slots) { accounts[which].spots = !!slots; },
+    setSpots(which, on) { accounts[which].spots = !!on; },
     // Make every access token issued so far stale, so the next check must refresh.
     expireAccess() { for (const v of access.values()) v.exp = 0; },
     refreshTokens() { return refresh.size; },

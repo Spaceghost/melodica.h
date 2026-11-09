@@ -67,10 +67,15 @@ export def storedTokens r, now = Date.now()
 export def accessFresh tokens, now = Date.now()
 	!!tokens and !!tokens.access and tokens.accessExp - 60000 > now
 
-# A valid compatibility answer requires a boolean playback.plus value.
+# The playback flag of an answer (docs/ACCOUNT.md): only a boolean `plus` counts;
+# anything else is the default, false. Slots play unless `plus` is true.
+export def spotsFlag o
+	!(o and typeof o === 'object' and o.plus === true)
+
+# The policy answer: only a 200 with a boolean playback flag counts.
 export def policyFrom status, body
 	return Object.assign({}, POLICY_DEFAULT) unless status === 200 and body and body.playback and typeof body.playback.plus === 'boolean'
-	{spots: !body.playback.plus, name: body.display and typeof body.display.name === 'string' and body.display.name ? body.display.name : null}
+	{spots: spotsFlag(body.playback), name: body.display and typeof body.display.name === 'string' and body.display.name ? body.display.name : null}
 
 # What the account chip shows: the display name, else the name or email from
 # userinfo, else a neutral label.

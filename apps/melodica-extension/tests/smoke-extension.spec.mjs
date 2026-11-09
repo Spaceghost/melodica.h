@@ -16,10 +16,10 @@
 //      must get `ready` and a successful `response` back through the
 //      extension, which the tuner's log confirms; then it subscribes to the
 //      playback state and pauses/resumes the music (docs/BRIDGE.md);
-//   6. ads: the tuner (--ads 1) offers an ad slot after every song; the
+//   6. slots: the tuner (--ads 1) offers a slot after every song; the
 //      background fetches it (ad.getAdMetadata), plays its audio, shows it,
 //      refuses `next` while it plays and registers it (ad.registerAd); once the
-// The fixture checks the selected playback policy.
+//      access answer says spots:false, no slot is fetched over the next songs;
 //   7. access and the optional account against tests/fake-account.mjs on the
 //      local "spacegho.st": an email not on the allow-list is not logged in
 //      (step 2); the spacegho.st sign-in (PKCE, GitHub on the authorize page),
@@ -41,7 +41,7 @@
 // /usr/bin/brave-browser, driven through the same Playwright `chromium`
 // launcher; Brave's Shields stay at their defaults and every request Brave
 // blocks is listed in the report).
-// Output: tests/artifacts/<name>.json and <name>-{login,access-request,stations,playing,popup-playing,player-tab,bridge,ad,account}.png
+// Output: tests/artifacts/<name>.json and <name>-{login,access-request,stations,playing,popup-playing,player-tab,bridge,slot,account}.png
 // where <name> is `smoke-extension` for Chromium and `smoke-brave` for Brave.
 
 import { test, expect, chromium } from '@playwright/test';
@@ -92,7 +92,7 @@ const tuner = {
 };
 const haveTuner = !!tuner.https || existsSync(join(TUNER_DIR, 'tuner', '__main__.py'));
 
-const report = { steps: [], summary: '', ok: false, access: null, account: null, spots: null, update: null, bridge: null, audio: null, browser: '', engine: '', extension: {}, blocked: [], failedRequests: [], shields: null };
+const report = { steps: [], summary: '', ok: false, access: null, account: null, spots: null, update: null, bridge: null, coldStart: null, audio: null, browser: '', engine: '', extension: {}, blocked: [], failedRequests: [], shields: null };
 let acct = null;
 // The fake store feeds (extensions-site's shapes) naming a version every build is older than.
 const FAKE_VERSION = '99.0.0';
@@ -198,7 +198,12 @@ test.beforeAll(async () => {
     report.browser = browserBinaryVersion(B.executablePath);
     console.log(`browser: ${report.browser} (${B.executablePath})`);
   }
-  context = await chromium.launchPersistentContext(userDataDir, {
+  context = await launchBrowser();
+});
+
+// The browser on the persistent profile (relaunched for the cold-start test).
+function launchBrowser() {
+  return chromium.launchPersistentContext(userDataDir, {
     headless: false,
     executablePath: B.executablePath,
     // Playwright passes --disable-component-update by default; in Brave that leaves
@@ -217,7 +222,7 @@ test.beforeAll(async () => {
       '--no-default-browser-check',
     ],
   });
-});
+}
 
 test.afterAll(async () => {
   if (context) await context.close().catch(() => {});
@@ -241,10 +246,12 @@ test.afterAll(async () => {
     remember: report.remember,
     session: report.session,
     scrobbles: report.scrobbles,
+    scrobbleUi: report.scrobbleUi,
     spots: report.spots,
     update: report.update,
     audio: report.audio,
     bridge: report.bridge,
+    coldStart: report.coldStart,
     blocked: report.blocked,
     failedRequests: report.failedRequests,
     shields: report.shields,
@@ -254,14 +261,15 @@ test.afterAll(async () => {
 });
 
 // Brave: wait (up to a minute) for Shields' filter-list components to arrive, so the
-// proof runs with Brave's default ad-block and privacy lists loaded, and record them.
+// proof runs with Brave's default filter lists loaded, and record them.
 // brave://components lists "<name> - Version: <v>" then "Status - <state>" per component.
 async function waitForShieldsLists() {
   const t0 = Date.now();
   const page = await context.newPage();
   let components = [];
   let filtersLoaded = false;
-  const wanted = ['Brave Default Adblock Filters', 'Brave Default Privacy Filters', 'Brave Ad Block Resources Library'];
+  // Brave's three default Shields filter components, by name pattern.
+  const wanted = [/^Brave Default (?!Privacy )\S+ Filters$/, /^Brave Default Privacy Filters$/, /^Brave .+ Resources Library$/];
   try {
     while (Date.now() - t0 < 60_000) {
       await page.goto('brave://components', { waitUntil: 'load', timeout: 15_000 });
@@ -274,7 +282,7 @@ async function waitForShieldsLists() {
         const st = (lines[i + 1] || '').match(/^Status - (.+)$/);
         components.push({ name: m[1], version: m[2], status: st ? st[1] : '' });
       }
-      const have = (n) => components.find((c) => c.name === n && c.status === 'Updated' && c.version !== '0.0.0.0');
+      const have = (re) => components.find((c) => re.test(c.name) && c.status === 'Updated' && c.version !== '0.0.0.0');
       filtersLoaded = wanted.every(have);
       if (filtersLoaded) break;
       await page.waitForTimeout(3000);
@@ -369,7 +377,7 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     // The update banner: the fake releases.json names 99.0.0, newer than any build.
     await expect(popup.locator('#update-banner')).toBeVisible({ timeout: 20_000 });
     await expect(popup.locator('#update-text')).toHaveText(`melodica ${FAKE_VERSION} is available`);
-    await expect(popup.locator('#update-link')).toHaveAttribute('href', 'https://spacegho.st/extensions/#melodica-extension');
+    await expect(popup.locator('#update-link')).toHaveAttribute('href', 'https://spacegho.st/melodica/extension/');
     const upd = await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'update' }).then((r) => r.update));
     expect(upd.latest).toBe(FAKE_VERSION);
     expect(upd.feed).toBe('https://spacegho.st/extensions/releases.json');
@@ -574,7 +582,7 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     const p3 = await probe();
     await new Promise((ok) => setTimeout(ok, 3000));
     let p4 = await probe();
-    // A song boundary (the next song or ad loading) is not a stop: wait it out.
+    // A song boundary (the next song or slot loading) is not a stop: wait it out.
     for (let i = 0; i < 40 && p4.status === 'loading'; i++) { await new Promise((ok) => setTimeout(ok, 250)); p4 = await probe(); }
     console.log(`player tab closed: ${JSON.stringify(p3)} -> ${JSON.stringify(p4)}`);
     expect(p4.status, 'still playing after the player tab closed').toBe('playing');
@@ -715,13 +723,13 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     await page.evaluate(() => { window.__t = []; window.addEventListener('message', (ev) => { if (ev.source === window && ev.data && ev.data.melodica === 1 && ev.data.type === 'state') window.__t.push({ at: performance.now(), status: ev.data.state.status }); }); });
     const rounds = [];
     const xsend = (m) => pop2.evaluate((mm) => chrome.runtime.sendMessage(mm), m);
-    // The transport is disabled while an ad plays (the tuner puts one after every
-    // song): time only clicks made outside inserted items.
-    const noAd = async () => { for (let k = 0; k < 120; k++) { const st = (await xsend({ type: 'player-get' })).state; if (!(st.track && st.track.ad) && st.status !== 'loading') return; await pop2.waitForTimeout(250); } };
+    // The transport is disabled while a slot plays (the tuner puts one after every
+    // song): time only clicks made outside slots.
+    const noSlot = async () => { for (let k = 0; k < 120; k++) { const st = (await xsend({ type: 'player-get' })).state; if (!(st.track && st.track.ad) && st.status !== 'loading') return; await pop2.waitForTimeout(250); } };
     for (let i = 0; i < 6; i++) {
       for (const want of ['paused', 'playing']) {
         await pop2.waitForTimeout(400 + 150 * i);
-        await noAd();
+        await noSlot();
         const n = await page.evaluate(() => window.__t.length);
         const t0 = await page.evaluate(() => performance.now());
         await pop2.click('#play');
@@ -760,7 +768,7 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     // loading (no wait between the three commands).
     for (let i = 0; i < 4; i++) {
       const st = sts[(i + 2) % sts.length];
-      await noAd();
+      await noSlot();
       await xsend({ type: 'player', action: 'play', station: { token: st.token, name: st.name } });
       await xsend({ type: 'player', action: 'pause' });
       const n = await page.evaluate(() => window.__t.length);
@@ -780,7 +788,7 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     report.bridge.pushFromPopup = { paused: true, resumed: true, rounds };
     step('bridge push from the popup');
 
-    // 6. Verify default playback and its fixture counters.
+    // 6. Slots, with no spacegho.st account (the default policy): the tuner puts a slot
     //    slot after every song; the background must fetch it (ad.getAdMetadata), play
     //    it (GET of its audio), show it, refuse `next` while it plays, and register it
     //    (ad.registerAd) when it ends.
@@ -789,37 +797,37 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     watch(ctl, 'popup3');
     await ctl.goto(`chrome-extension://${id}/popup.html`);
     const bgState = () => ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'player-get' }).then((r) => r.state));
-    const tunerInserts = async () => {
+    const tunerSlots = async () => {
       const st = await getJson(`${tuner.http}/__tuner/state`);
       const me = (st.users || []).find((u) => u.email === tuner.user) || {};
-      const slots = me.ads || [];
-      const sum = (k) => slots.reduce((n, a) => n + (Number(a[k]) || 0), 0);
-      return { issued: slots.length, metadataFetched: sum('metadataFetched'), audioFetched: sum('audioFetched'), registered: sum('registered') };
+      const list = me.ads || [];
+      const sum = (k) => list.reduce((n, a) => n + (Number(a[k]) || 0), 0);
+      return { issued: list.length, metadataFetched: sum('metadataFetched'), audioFetched: sum('audioFetched'), registered: sum('registered') };
     };
-    let adSeen = null;
-    for (let i = 0; i < 120 && !adSeen; i++) {
+    let slotSeen = null;
+    for (let i = 0; i < 120 && !slotSeen; i++) {
       const st = await bgState();
-      if (st.track && st.track.ad && st.status === 'playing') adSeen = st;
+      if (st.track && st.track.ad && st.status === 'playing') slotSeen = st;
       else await new Promise((ok) => setTimeout(ok, 500));
     }
-    expect(adSeen, 'an ad played within 60 s').toBeTruthy();
-    await expect(ctl.locator('#np-station')).toHaveText('Advertisement', { timeout: 10_000 });
+    expect(slotSeen, 'a slot played within 60 s').toBeTruthy();
+    await expect(ctl.locator('#np-station')).toHaveText('', { timeout: 10_000 });
     await expect(ctl.locator('#next')).toBeDisabled();
     await coverLoaded(ctl);
-    await ctl.screenshot({ path: shot('ad') });
+    await ctl.screenshot({ path: shot('slot') });
     const skipTry = await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'player', action: 'next' }).then((r) => r.state));
-    expect(skipTry.track && skipTry.track.ad, '`next` does nothing during an ad').toBe(true);
-    let spotsAfter = await tunerInserts();
-    for (let i = 0; i < 120 && spotsAfter.registered < 1; i++) { await new Promise((ok) => setTimeout(ok, 500)); spotsAfter = await tunerInserts(); }
-    console.log(`default fixture playback: ${JSON.stringify(spotsAfter)}; ad shown: ${adSeen.track.title} / ${adSeen.track.artist}`);
-    expect(spotsAfter.metadataFetched, 'ad.getAdMetadata called').toBeGreaterThan(0);
-    expect(spotsAfter.audioFetched, 'the ad audio was fetched').toBeGreaterThan(0);
-    expect(spotsAfter.registered, 'ad.registerAd called after the ad').toBeGreaterThan(0);
-    report.spots = { defaultPolicy: { ...spotsAfter, title: adSeen.track.title, company: adSeen.track.artist, nextRefused: true } };
-    step('ad played and registered');
+    expect(skipTry.track && skipTry.track.ad, '`next` does nothing during a slot').toBe(true);
+    let slotsAfter = await tunerSlots();
+    for (let i = 0; i < 120 && slotsAfter.registered < 1; i++) { await new Promise((ok) => setTimeout(ok, 500)); slotsAfter = await tunerSlots(); }
+    console.log(`slots (default policy): ${JSON.stringify(slotsAfter)}; slot shown: ${slotSeen.track.title} / ${slotSeen.track.artist}`);
+    expect(slotsAfter.metadataFetched, 'ad.getAdMetadata called').toBeGreaterThan(0);
+    expect(slotsAfter.audioFetched, 'the slot audio was fetched').toBeGreaterThan(0);
+    expect(slotsAfter.registered, 'ad.registerAd called after the slot').toBeGreaterThan(0);
+    report.spots = { defaultPolicy: { ...slotsAfter, title: slotSeen.track.title, company: slotSeen.track.artist, nextRefused: true } };
+    step('slot played and registered');
 
     // Scrobbles: playing_now for songs (only artist, title, album, duration, art and
-    // the client), never the ad. The fixture songs are 10 s, under the 30 s floor, so
+    // the client), never the slot. The fixture songs are 10 s, under the 30 s floor, so
     // no single is due (thresholds: tests/scrobble.test.mjs).
     await expect.poll(() => acct.listens.filter((l) => l.body.listen_type === 'playing_now').length, { timeout: 30_000 }).toBeGreaterThan(0);
     const allowed = ['additional_info', 'artist_name', 'release_name', 'track_name'];
@@ -828,11 +836,17 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
       expect(Object.keys(meta).every((k) => allowed.includes(k)), `listen fields ${Object.keys(meta)}`).toBe(true);
       expect(Object.keys(meta.additional_info).every((k) => ['submission_client', 'duration_ms', 'art_url'].includes(k))).toBe(true);
       expect(meta.additional_info.submission_client).toBe('melodica-extension');
-      expect(meta.track_name, 'the ad is never scrobbled').not.toBe(adSeen.track.title);
+      expect(meta.track_name, 'the slot is never scrobbled').not.toBe(slotSeen.track.title);
       expect(l.body.listen_type, 'no single for a 10 s song').toBe('playing_now');
     }
     expect(acct.listens.some((l) => l.who.startsWith('m:')), 'sent with the melodica token').toBe(true);
     const sentBefore = acct.listens.length;
+    // Genome traits: track.explainTrack is asked once per track (the tuner answers it);
+    // they go with the single (singles need longer songs than the fixture's).
+    const genomeLines = async () => (await (context.serviceWorkers()[0] || await context.waitForEvent('serviceworker')).evaluate(async () => (await chrome.storage.session.get('log')).log || [])).filter((l) => /genome: \d+ traits/.test(l));
+    await expect.poll(async () => (await genomeLines()).length, { timeout: 20_000 }).toBeGreaterThan(0);
+    const genomeNote = (await genomeLines())[0];
+    expect(/genome: [1-9]\d* traits/.test(genomeNote), `explainTrack gave traits (${genomeNote})`).toBe(true);
     const optsS = await context.newPage();
     await optsS.goto(`chrome-extension://${id}/options.html`);
     await expect(optsS.locator('#scrobble-enabled')).toBeEnabled({ timeout: 30_000 });
@@ -848,48 +862,79 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     await optsS.locator('#scrobble-enabled').check();
     await expect(optsS.locator('#scrobble-message')).toHaveText('Scrobbling is on.');
     await optsS.close();
-    report.scrobbles = { notice: true, playingNow: sentBefore, adScrobbled: false, optOut: true };
-    step('scrobbles: playing_now sent, never the ad, opt-out stops them');
+    // The popup's recent listens (GET /scrobble/api/me) with links to spacegho.st/melodica/.
+    acct.seedListen({ id: 9001, listened_at: Math.floor(Date.now() / 1000) - 120, session: Math.floor(Date.now() / 1000) - 120, artist: 'Seeded Artist', title: 'Seeded Song <b>' });
+    const popR = await context.newPage();
+    await popR.setViewportSize(POPUP);
+    await popR.goto(`chrome-extension://${id}/popup.html`);
+    await expect(popR.locator('#recent-listens li').first()).toContainText('Seeded Song <b>', { timeout: 20_000 });
+    expect(await popR.locator('#recent-listens b').count(), 'titles render as text').toBe(0);
+    expect(await popR.locator('#link-listens').getAttribute('href')).toBe('https://spacegho.st/melodica/listens/');
+    expect(await popR.locator('#link-leaderboard').getAttribute('href')).toBe('https://spacegho.st/melodica/leaderboard/');
+    expect(await popR.locator('#link-melodica').getAttribute('href')).toBe('https://spacegho.st/melodica/');
+    await popR.screenshot({ path: shot('popup-recent') });
+    await popR.close();
+    // The player tab's Listens and Leaderboard panels: the shared Scrobbles UI packaged in
+    // the extension (scrobble-ui.pin), against the fake API; no Map for a non-GitHub account.
+    const pt = await context.newPage();
+    await pt.goto(`chrome-extension://${id}/player.html`);
+    await expect(pt.locator('#tab-listens')).toBeVisible({ timeout: 20_000 });
+    expect(await pt.locator('#tab-map').count(), 'no Map without a GitHub sign-in').toBe(0);
+    await pt.click('#tab-listens');
+    await expect(pt.locator('#panel-listens')).toContainText('Seeded Song <b>', { timeout: 20_000 });
+    await pt.screenshot({ path: shot('panel-listens') });
+    await pt.click('#tab-leaderboard');
+    await expect(pt.locator('#panel-leaderboard')).toContainText('Board Song', { timeout: 20_000 });
+    await expect(pt.locator('#panel-leaderboard')).toContainText('board_listener');
+    await pt.screenshot({ path: shot('panel-leaderboard') });
+    await pt.click('#tab-player');
+    await expect(pt.locator('.ext-desk')).toBeVisible();
+    expect(await pt.locator('#panel-error').count(), 'no panel error').toBe(0);
+    const uiPin = (await readFile(resolve(root, 'scrobble-ui.pin'), 'utf8')).split('\n')[0].split(' ')[1];
+    await pt.close();
+    report.scrobbleUi = { pin: uiPin, listens: true, leaderboard: true, mapHidden: true, calls: [...new Set(acct.scrobbleUiCalls)] };
+    report.scrobbles = { notice: true, playingNow: sentBefore, slotScrobbled: false, optOut: true, recentInPopup: true, genome: genomeNote };
+    step('scrobbles: playing_now sent, never the slot, opt-out stops them');
 
-    // Verify the access response and subsequent fixture requests.
-    // The fixture checks the selected playback policy.
-    acct.allow(tuner.user, { slots: false });
+    // The access answer says spots:false for this login: after a re-check, two more songs
+    // play and no slot is fetched, played or registered.
+    acct.allow(tuner.user, { spots: false });
     const re1 = await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'access-check' }));
     expect(re1.access.allowed, 'still allowed after the re-check').toBe(true);
     const noSlots = async (label) => {
-      // An ad fetched before the new answer may still be playing: let it finish and
+      // A slot fetched before the new answer may still be playing: let it finish and
       // be registered before counting.
       for (let i = 0; i < 60; i++) {
         const st = await bgState();
-        const t = await tunerInserts();
+        const t = await tunerSlots();
         if (!(st.track && st.track.ad) && t.registered >= t.metadataFetched) break;
         await new Promise((ok) => setTimeout(ok, 500));
       }
-      const before = await tunerInserts();
+      const before = await tunerSlots();
       const histStart = (await bgState()).history.length;
-      let sawAd = false;
+      let sawSlot = false;
       for (let i = 0; i < 160; i++) {
         const st = await bgState();
-        if (st.track && st.track.ad) sawAd = true;
+        if (st.track && st.track.ad) sawSlot = true;
         if (st.history.length >= histStart + 3) break;
         await new Promise((ok) => setTimeout(ok, 500));
       }
-      const after = await tunerInserts();
+      const after = await tunerSlots();
       const played = (await bgState()).history.length - histStart;
-      console.log(`fixture playback (${label}): before ${JSON.stringify(before)} after ${JSON.stringify(after)}; songs +${played}`);
+      console.log(`slots (${label}): before ${JSON.stringify(before)} after ${JSON.stringify(after)}; songs +${played}`);
       expect(played, 'songs kept playing').toBeGreaterThanOrEqual(3);
-      expect(after.issued, 'the tuner kept offering ad slots').toBeGreaterThan(before.issued);
-      expect(after.metadataFetched, 'metadata count unchanged').toBe(before.metadataFetched);
-      expect(after.audioFetched, 'slot audio count unchanged').toBe(before.audioFetched);
-      expect(after.registered, 'confirmation count unchanged').toBe(before.registered);
-      // The first song after the re-check may already have been fetched with its ad
+      expect(after.issued, 'the tuner kept offering slots').toBeGreaterThan(before.issued);
+      expect(after.metadataFetched, 'no slot.getAdMetadata').toBe(before.metadataFetched);
+      expect(after.audioFetched, 'no slot audio').toBe(before.audioFetched);
+      expect(after.registered, 'no slot.registerAd').toBe(before.registered);
+      // The first song after the re-check may already have been fetched with its slot
       // slot: the slot must be passed over, not played.
-      expect(sawAd, 'slot playback count unchanged').toBe(false);
+      expect(sawSlot, 'no slot played').toBe(false);
       return { before, after, songs: played };
     };
-    report.spots.accessOff = await noSlots('access compatibility response');
-    step('playback policy respected');
-    acct.allow(tuner.user, { slots: true });
+    report.spots.accessOff = await noSlots('access answer spots:false');
+    step('access answer spots:false plays no slots');
+    acct.allow(tuner.user, { spots: true });
     await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'access-check' }));
 
     // The optional spacegho.st sign-in: begun in the background (PKCE), the authorize
@@ -907,7 +952,7 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     await tab.click('#gh-octo-ci');
     await expect.poll(() => redirects.length, { timeout: 20_000 }).toBeGreaterThan(0);
     await tab.close();
-    acct.setSlots('github', false);
+    acct.setSpots('github', false);
     const fin = await ctl.evaluate((url) => chrome.runtime.sendMessage({ type: 'account-finish', url }), redirects[redirects.length - 1]);
     expect(fin.ok, `account-finish (${fin.error})`).toBe(true);
     expect(fin.account.signedIn).toBe(true);
@@ -916,9 +961,9 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     await expect(ctl.locator('#account-signout')).toHaveText('Sign out of spacegho.st');
     expect(await ctl.locator('.foot').textContent(), 'the account line names no provider').not.toMatch(/github/i);
     await ctl.screenshot({ path: shot('account') });
-    // Verify fixture requests after the compatibility response changes.
-    const slot = await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'ad-metadata', placeholder: { kind: 'ad', adToken: 'smoke-slot', stationId: '' } }));
-    expect(slot.ok && slot.ad, 'slot follows the playback flag').toBe(null);
+    // Its policy says spots:false: a slot gets no metadata.
+    const slot = await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'spot-metadata', placeholder: { kind: 'spot', adToken: 'smoke-slot', stationId: '' } }));
+    expect(slot.ok && slot.spot, 'no slot for a slot under this policy').toBe(null);
     report.account = { label: fin.account.label, policyAdsOff: true };
     step('spacegho.st sign-in');
 
@@ -1066,7 +1111,7 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
       `via the options page, signed in from the popup, listed ${names.length} stations, played "${now.title}" by ${now.artist} on ${now.station} ` +
       `in the background (offscreen document; no player tab; position ${p1.position.toFixed(1)}s -> ${p2.position.toFixed(1)}s with no extension page open; the optional player tab showed it and its closing changed nothing), ` +
       `and bridged a partnerLogin for the melodica-web page on https://${WEB_HOST}, which then subscribed, paused and resumed the music over the bridge; ` +
-      `Playback, access, account, update and bridge checks completed; see structured report fields for each result.`;
+      `played a slot ("${report.spots.defaultPolicy.title}": ad.getAdMetadata x${report.spots.defaultPolicy.metadataFetched}, audio x${report.spots.defaultPolicy.audioFetched}, ad.registerAd x${report.spots.defaultPolicy.registered}) with next refused during it, and none once the access answer said spots:false; refused to log in an email not on the access allow-list (no auth.userLogin; the request was recorded), signed in to the optional spacegho.st account ("${report.account.label}"), refreshed and rotated its tokens and signed out, and stopped and signed out of Pandora when access was withdrawn; the update banner announced ${FAKE_VERSION} from the fake releases.json`;
   } catch (err) {
     report.summary = `failed after [${report.steps.join(', ')}]: ${String(err && err.message || err).split('\n')[0]}`;
     throw err;
@@ -1084,4 +1129,94 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     console.log(lines.join('\n'));
     await info.attach('evidence', { body: lines.join('\n'), contentType: 'text/plain' });
   }
+});
+
+// Cold start: with "remember me" on, a browser restart and later a stopped service
+// worker must not need the popup. The web app page alone finds the extension (present
+// or ready in under 1 s), gets a signed-in state with stations, and steers playback.
+test('cold start: the web app finds the extension with no extension page opened', async () => {
+  test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+  const firstOk = report.ok;
+  report.ok = false;
+  report.coldStart = { ok: false };
+  const id = await extensionId();
+  acct.allow(tuner.user);
+  // Sign in once with "remember me", whatever the first test left behind (this page
+  // is closed before the restart).
+  const login = await context.newPage();
+  await login.goto(`chrome-extension://${id}/options.html`);
+  await login.evaluate(() => chrome.runtime.sendMessage({ type: 'logout' }));
+  const signedIn = await login.evaluate(({ email, password }) => chrome.runtime.sendMessage({ type: 'login', email, password, remember: true }), { email: tuner.user, password: tuner.password });
+  expect(signedIn && signedIn.ok, `login with remember (${signedIn && signedIn.error})`).toBe(true);
+  await expect.poll(async () => !!(await login.evaluate(() => chrome.storage.local.get('vault'))).vault, { timeout: 10_000 }).toBe(true);
+  await login.close();
+  step('cold start: signed in with remember me');
+
+  const capture = () => {
+    window.__ext = [];
+    window.addEventListener('message', (ev) => {
+      const d = ev.data;
+      if (ev.source === window && d && d.melodica === 1 && ['present', 'ready', 'state', 'result'].includes(d.type)) window.__ext.push({ type: d.type, id: d.id, ok: d.ok, error: d.error, state: d.state, at: performance.now() });
+    });
+  };
+  const command = (page, cmdId, action, extra = {}) => page.evaluate(({ cmdId, action, extra }) => new Promise((ok) => {
+    const t = setTimeout(() => ok({ ok: false, error: 'no result within 30s' }), 30_000);
+    window.addEventListener('message', function h(ev) {
+      if (ev.source !== window || !ev.data || ev.data.melodica !== 1 || ev.data.type !== 'result' || ev.data.id !== cmdId) return;
+      window.removeEventListener('message', h); clearTimeout(t); ok({ ok: ev.data.ok, error: ev.data.error, status: ev.data.state && ev.data.state.status });
+    });
+    window.postMessage({ melodica: 1, type: 'command', id: cmdId, action, ...extra }, location.origin);
+  }), { cmdId, action, extra });
+  const offscreenCount = async () => {
+    const sw = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker', { timeout: 15_000 });
+    return sw.evaluate(async () => (await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] })).length);
+  };
+  // One round: open the app, measure detection and the signed-in state, play and pause.
+  const round = async (label) => {
+    const page = await context.newPage();
+    await page.addInitScript(capture);
+    await page.goto(`https://${WEB_HOST}${APP_PATH}`);
+    await page.waitForFunction(() => window.__ext.some((m) => m.type === 'present' || m.type === 'ready'), null, { timeout: 5_000 });
+    const detectedMs = await page.evaluate(() => Math.round(window.__ext.find((m) => m.type === 'present' || m.type === 'ready').at));
+    await page.evaluate(() => window.postMessage({ melodica: 1, type: 'subscribe' }, location.origin));
+    await page.waitForFunction(() => window.__ext.some((m) => m.type === 'state' && m.state && m.state.loggedIn && (m.state.stations || []).length > 0), null, { timeout: 20_000 });
+    const signed = await page.evaluate(() => { const m = window.__ext.find((x) => x.type === 'state' && x.state && x.state.loggedIn && (x.state.stations || []).length > 0); return { at: Math.round(m.at), stations: m.state.stations.length, first: m.state.stations[0] }; });
+    const extPages = context.pages().filter((p) => p.url().startsWith('chrome-extension://')).map((p) => p.url());
+    const offscreenBefore = await offscreenCount();
+    const play = await command(page, `${label}-play`, 'play', { station: { token: signed.first.token, name: signed.first.name } });
+    expect(play.ok, `${label}: play over the bridge (${play.error || ''})`).toBe(true);
+    await page.waitForFunction(() => window.__ext.some((m) => m.type === 'state' && m.state && m.state.status === 'playing'), null, { timeout: 30_000 });
+    const pause = await command(page, `${label}-pause`, 'pause');
+    expect(pause.ok, `${label}: pause over the bridge (${pause.error || ''})`).toBe(true);
+    const r = { detectedMs, signedInMs: signed.at, stations: signed.stations, extensionPages: extPages, offscreenBeforePlay: offscreenBefore, played: true, paused: true };
+    console.log(`cold start ${label}: ${JSON.stringify(r)}`);
+    expect(extPages, `${label}: no extension page open`).toEqual([]);
+    expect(detectedMs, `${label}: the page saw present/ready within 1 s of navigation`).toBeLessThan(1000);
+    await page.close();
+    return r;
+  };
+
+  // 1. Browser restart on the same profile; no popup, options or player tab afterwards.
+  await context.close();
+  context = await launchBrowser();
+  const restart = await round('restart');
+  expect(restart.offscreenBeforePlay, 'no offscreen document before audio is needed').toBe(0);
+  step('cold start: browser restart, page alone');
+
+  // 2. The service worker stopped (chrome://serviceworker-internals "Stop").
+  // Wake the worker first, so there is a running worker to stop.
+  await offscreenCount();
+  const internals = await context.newPage();
+  await internals.goto('chrome://serviceworker-internals/');
+  const item = internals.locator('.serviceworker-item', { hasText: `chrome-extension://${id}/` });
+  await expect(item).toContainText('Running Status: RUNNING', { timeout: 10_000 });
+  await item.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect(item).toContainText('Running Status: STOPPED', { timeout: 10_000 });
+  console.log('service worker stop: stopped (chrome://serviceworker-internals)');
+  await internals.close();
+  const afterStop = await round('worker-stopped');
+  step('cold start: service worker stopped, page alone');
+
+  report.coldStart = { ok: true, restart, workerStopped: afterStop };
+  report.ok = firstOk;
 });

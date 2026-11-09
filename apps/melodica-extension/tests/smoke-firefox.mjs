@@ -11,7 +11,7 @@
 //      background page plays it, and after 45 s with no extension page open
 //      at all the state must still be playing with the position advanced; the
 //      optional player tab shows the same track and closing it stops nothing;
-//      the tuner (--ads 1) offers an ad slot after every song, and the
+//      the tuner (--ads 1) offers a slot after every song, and the
 //      background must fetch, play and register one, refusing `next` during it;
 //   2. against the real tuner.pandora.com, with no account: the endpoint is
 //      reset to Pandora and bogus credentials are submitted. Pandora answers
@@ -29,11 +29,13 @@
 // start a checkout here; MELODICA_EXT_DIST (default dist/firefox);
 // MELODICA_FIREFOX (binary, default: firefox on PATH); GECKODRIVER (default: geckodriver on PATH); MELODICA_HEADLESS=0 for
 // a window; MELODICA_SKIP_REAL=1 skips part 2.
-// Output: tests/artifacts/smoke-firefox.json and smoke-firefox-{login,access-request,stations,playing,popup-playing,player-tab,ad,account,real-pandora}.png
+// Output: tests/artifacts/smoke-firefox.json and smoke-firefox-{login,access-request,stations,playing,popup-playing,player-tab,slot,account,real-pandora}.png
 import { Builder, By, until } from 'selenium-webdriver';
 import { startAccountServer } from './fake-account.mjs';
 import firefox from 'selenium-webdriver/firefox.js';
 import { spawn, execFileSync } from 'node:child_process';
+import https from 'node:https';
+import net from 'node:net';
 import { readFile, mkdir, writeFile, rm, mkdtemp } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
@@ -63,7 +65,7 @@ if (!haveTuner) { console.error('no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or
 
 const report = {
   ok: false, platform: 'firefox', browser: '', engine: '', summary: '', when: '', steps: [], tuner: '',
-  extension: {}, permissions: null, sessionStorage: null, background: null, access: null, account: null, spots: null, audio: null,
+  extension: {}, permissions: null, sessionStorage: null, background: null, access: null, account: null, spots: null, audio: null, coldStart: null,
   realPandora: null, log: [], errors: [],
 };
 const step = (s) => { if (!report.steps.includes(s)) report.steps.push(s); console.log(`step: ${s}`); };
@@ -156,6 +158,65 @@ async function diagnostics(driver, ext) {
   return text.split('\n');
 }
 
+// The web app's origin for the bridge checks: a local https server answers for
+// https://spacegho.st/melodica/app/, reached through a CONNECT proxy that sends only
+// spacegho.st:443 there (everything else, e.g. tuner.pandora.com, goes direct).
+const WEB_HOST = 'spacegho.st';
+const APP_PAGE = `<!doctype html><meta charset="utf-8"><title>melodica (smoke page)</title>
+<script>window.__ext=[];addEventListener('message',function(ev){var d=ev.data;if(ev.source===window&&d&&d.melodica===1&&['present','ready','state','result'].indexOf(d.type)>=0)window.__ext.push({type:d.type,id:d.id,ok:d.ok,error:d.error,state:d.state,at:performance.now()});});</script>
+<p>smoke page</p>`;
+const web = { server: null, proxy: null, port: 0, proxyPort: 0, dir: null };
+async function startWeb() {
+  web.dir = await mkdtemp(join(tmpdir(), 'melodica-web-'));
+  const key = join(web.dir, 'key.pem'); const cert = join(web.dir, 'cert.pem');
+  execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert,
+    '-days', '2', '-subj', `/CN=${WEB_HOST}`, '-addext', `subjectAltName=DNS:${WEB_HOST}`], { stdio: 'ignore' });
+  web.server = https.createServer({ key: await readFile(key), cert: await readFile(cert) }, (req, res) => {
+    if (!req.url.startsWith('/melodica/')) { res.writeHead(404); res.end(); return; }
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+    res.end(APP_PAGE);
+  });
+  await new Promise((ok) => web.server.listen(0, '127.0.0.1', ok));
+  web.port = web.server.address().port;
+  web.proxy = net.createServer((client) => {
+    client.once('data', (head) => {
+      const m = /^CONNECT ([^:\s]+):(\d+) HTTP/.exec(String(head));
+      if (!m) { client.end('HTTP/1.1 405 Method Not Allowed\r\n\r\n'); return; }
+      const [host, port] = m[1] === WEB_HOST ? ['127.0.0.1', web.port] : [m[1], Number(m[2])];
+      const up = net.connect(port, host, () => { client.write('HTTP/1.1 200 Connection Established\r\n\r\n'); up.pipe(client); client.pipe(up); });
+      up.on('error', () => client.destroy());
+      client.on('error', () => up.destroy());
+    });
+  });
+  await new Promise((ok) => web.proxy.listen(0, '127.0.0.1', ok));
+  web.proxyPort = web.proxy.address().port;
+  console.log(`web page server 127.0.0.1:${web.port}, proxy 127.0.0.1:${web.proxyPort}`);
+}
+
+// Chrome-context helpers: reload the add-on (what a browser restart does to a
+// temporary add-on's background, storage.local and IndexedDB kept) or stop its
+// background page (what Firefox does to an idle event page).
+async function inChrome(driver, fn, ...args) {
+  await driver.setContext(firefox.Context.CHROME);
+  try { return await driver.executeAsyncScript(fn, ...args); } finally { await driver.setContext(firefox.Context.CONTENT); }
+}
+async function reloadAddon(driver) {
+  return inChrome(driver, function (id) {
+    const done = arguments[arguments.length - 1];
+    const { AddonManager } = ChromeUtils.importESModule('resource://gre/modules/AddonManager.sys.mjs');
+    AddonManager.getAddonByID(id).then((a) => a.reload()).then(() => done('reloaded'), (e) => done(`reload failed: ${e}`));
+  }, GECKO_ID);
+}
+async function stopBackground(driver) {
+  return inChrome(driver, function (id) {
+    const done = arguments[arguments.length - 1];
+    try {
+      const ext = WebExtensionPolicy.getByID(id).extension;
+      Promise.resolve(ext.terminateBackground({ ignoreDevToolsAttached: true })).then(() => done('terminated'), (e) => done(`terminate failed: ${e}`));
+    } catch (e) { done(`terminate failed: ${e}`); }
+  }, GECKO_ID);
+}
+
 let driver = null;
 let fakeAuth = null;
 const bin = process.env.MELODICA_FIREFOX || 'firefox';
@@ -178,6 +239,11 @@ try {
 
   const options = new firefox.Options().setBinary(bin);
   if (process.env.MELODICA_HEADLESS !== '0') options.addArguments('-headless');
+  await startWeb();
+  options.setPreference('network.proxy.type', 1);
+  options.setPreference('network.proxy.ssl', '127.0.0.1');
+  options.setPreference('network.proxy.ssl_port', web.proxyPort);
+  options.setPreference('network.proxy.no_proxies_on', 'localhost, 127.0.0.1');
   options.setAcceptInsecureCerts(true); // the tuner's throwaway certificate, in pages and in the extension's fetch
   options.setPreference('extensions.webextensions.uuids', JSON.stringify({ [GECKO_ID]: UUID })); // fixed moz-extension:// origin
   options.setPreference('xpinstall.signatures.required', false);
@@ -342,45 +408,46 @@ try {
   await driver.switchTo().window(popupHandle);
   const st4 = await playerState();
   await sleep(3000);
-  const st5 = await playerState();
+  // A track boundary right here reads 'loading' for a moment; wait it out.
+  const st5 = await waitFor(driver, async () => { const s = await playerState(); return s.status === 'loading' ? null : s; }, 'not loading after the player tab closed', 20_000);
   check(st5.status === 'playing', `still playing after the player tab closed (${st5.status})`);
   check(st5.track.trackToken !== st4.track.trackToken || st5.position > st4.position + 1, 'position advanced after the player tab closed');
   report.audio.playerTab = { title: st3.track && st3.track.title, afterClose: { status: st5.status, position: st5.position } };
   step('player tab optional');
 
-  // Verify default playback and the rendered player state.
+  // Slots (default policy, no account): wait for a slot to play, check the popup shows it
   // and refuses next, then that the tuner saw it fetched, played and registered.
-  const tunerInserts = async () => {
+  const tunerSlots = async () => {
     const st = await getJson(`${tuner.http}/__tuner/state`);
     const u = (st.users || []).find((x) => x.email === tuner.user) || {};
-    const slots = u.ads || [];
-    const sum = (k) => slots.reduce((n, a) => n + (Number(a[k]) || 0), 0);
-    return { issued: slots.length, metadataFetched: sum('metadataFetched'), audioFetched: sum('audioFetched'), registered: sum('registered') };
+    const list = u.ads || [];
+    const sum = (k) => list.reduce((n, a) => n + (Number(a[k]) || 0), 0);
+    return { issued: list.length, metadataFetched: sum('metadataFetched'), audioFetched: sum('audioFetched'), registered: sum('registered') };
   };
-  const adState = await waitFor(driver, async () => { const s = await playerState(); return s.track && s.track.ad && s.status === 'playing' ? s : null; }, 'an ad playing', 60_000);
-  await waitFor(driver, async () => (await driver.executeScript(() => document.getElementById('np-station')?.textContent.trim() || '')) === 'Advertisement' ? true : null, 'popup shows the ad');
-  check(await driver.executeScript(() => !!document.getElementById('next')?.disabled), 'next is disabled during the ad');
-  await screenshot(driver, 'ad');
+  const slotState = await waitFor(driver, async () => { const s = await playerState(); return s.track && s.track.ad && s.status === 'playing' ? s : null; }, 'a slot playing', 60_000);
+  await waitFor(driver, async () => (await driver.executeScript(() => document.getElementById('np-station')?.textContent.trim() || '')) === '' ? true : null, 'popup shows the slot');
+  check(await driver.executeScript(() => !!document.getElementById('next')?.disabled), 'next is disabled during the slot');
+  await screenshot(driver, 'slot');
   const skipTry = await ask(driver, { type: 'player', action: 'next' });
-  check(skipTry.state && skipTry.state.track && skipTry.state.track.ad, '`next` does nothing during an ad');
-  const spotsSeen = await waitFor(driver, async () => { const a = await tunerInserts(); return a.registered > 0 ? a : null; }, 'ad.registerAd', 60_000);
-  check(spotsSeen.metadataFetched > 0, 'ad.getAdMetadata called');
-  check(spotsSeen.audioFetched > 0, 'the ad audio was fetched');
-  report.spots = { defaultPolicy: { ...spotsSeen, title: adState.track.title, company: adState.track.artist, nextRefused: true } };
+  check(skipTry.state && skipTry.state.track && skipTry.state.track.ad, '`next` does nothing during a slot');
+  const slotsSeen = await waitFor(driver, async () => { const a = await tunerSlots(); return a.registered > 0 ? a : null; }, 'ad.registerAd', 60_000);
+  check(slotsSeen.metadataFetched > 0, 'ad.getAdMetadata called');
+  check(slotsSeen.audioFetched > 0, 'the slot audio was fetched');
+  report.spots = { defaultPolicy: { ...slotsSeen, title: slotState.track.title, company: slotState.track.artist, nextRefused: true } };
   console.log(`slots: ${JSON.stringify(report.spots)}`);
-  step('ad played and registered');
+  step('slot played and registered');
 
-  // Verify fixture requests after the compatibility response changes.
-  fakeAuth.allow(tuner.user, { slots: false });
+  // The access answer says spots:false: after a re-check a slot gets no metadata.
+  fakeAuth.allow(tuner.user, { spots:false });
   const re1 = await ask(driver, { type: 'access-check' });
   check(re1.access.allowed === true, 'still allowed after the re-check');
-  const metaBefore = (await tunerInserts()).metadataFetched;
-  const slot = await ask(driver, { type: 'ad-metadata', placeholder: { kind: 'ad', adToken: 'smoke-slot', stationId: '' } });
-  check(slot.ad === null && (await tunerInserts()).metadataFetched === metaBefore, `slot follows the playback flag (${JSON.stringify(slot)})`);
-  report.spots.accessOff = { adSlot: slot.ad };
-  fakeAuth.allow(tuner.user, { slots: true });
+  const metaBefore = (await tunerSlots()).metadataFetched;
+  const slot = await ask(driver, { type: 'spot-metadata', placeholder: { kind: 'spot', adToken: 'smoke-slot', stationId: '' } });
+  check(slot.spot === null && (await tunerSlots()).metadataFetched === metaBefore, `no metadata for a slot once the answer says spots:false (${JSON.stringify(slot)})`);
+  report.spots.accessOff = { slot: slot.spot };
+  fakeAuth.allow(tuner.user, { spots:true });
   await ask(driver, { type: 'access-check' });
-  step('playback policy respected');
+  step('access answer spots:false: no slot');
 
   // The optional spacegho.st sign-in: begun in the background, the authorize page
   // loaded in this tab, GitHub chosen there, and the redirect to the extension's
@@ -416,6 +483,49 @@ try {
   check(out.account.signedIn === false && fakeAuth.tokens.revoked > 0, 'signed out; refresh token revoked');
   report.account = { label: fin.account.label, revoked: fakeAuth.tokens.revoked };
   step('spacegho.st sign-in');
+
+  // Cold start: with "remember me" on, the web app page alone finds the extension
+  // (present or ready within 1 s), gets a signed-in state with stations and steers
+  // playback, after an add-on reload and after the background page was stopped.
+  // No extension page is open in either round.
+  await goExt(driver, `${ext}/options.html`);
+  const relog = await ask(driver, { type: 'login', email: tuner.user, password: tuner.password, remember: true });
+  check(relog && relog.ok !== false, `login with remember (${relog && relog.error})`);
+  await waitFor(driver, async () => (await inPage(driver, `return !!(await browser.storage.local.get('vault')).vault;`)).value ? true : null, 'sealed remember', 15_000);
+  await driver.get('about:blank');
+  const coldRound = async (label) => {
+    await driver.get(`https://${WEB_HOST}/melodica/app/`);
+    const seen = await waitFor(driver, async () => driver.executeScript(() => { const m = window.__ext.find((x) => x.type === 'present' || x.type === 'ready'); return m ? Math.round(m.at) : null; }), `${label}: present/ready`, 5_000, 50);
+    await driver.executeScript(() => window.postMessage({ melodica: 1, type: 'subscribe' }, location.origin));
+    const signed = await waitFor(driver, async () => driver.executeScript(() => { const m = window.__ext.find((x) => x.type === 'state' && x.state && x.state.loggedIn && (x.state.stations || []).length > 0); return m ? { at: Math.round(m.at), stations: m.state.stations.length, first: m.state.stations[0] } : null; }), `${label}: signed-in state with stations`, 20_000, 100);
+    const cmd = async (cid, action, extra = {}) => {
+      await driver.executeScript((c, a, x) => window.postMessage({ melodica: 1, type: 'command', id: c, action: a, ...x }, location.origin), cid, action, extra);
+      return waitFor(driver, async () => driver.executeScript((c) => window.__ext.find((x) => x.type === 'result' && x.id === c) || null, cid), `${label}: ${action} result`, 30_000, 100);
+    };
+    const play = await cmd(`${label}-play`, 'play', { station: { token: signed.first.token, name: signed.first.name } });
+    check(play.ok, `${label}: play over the bridge (${play.error || ''})`);
+    await waitFor(driver, async () => driver.executeScript(() => window.__ext.some((x) => x.type === 'state' && x.state && x.state.status === 'playing') || null), `${label}: playing`, 30_000, 200);
+    const pause = await cmd(`${label}-pause`, 'pause');
+    check(pause.ok, `${label}: pause over the bridge (${pause.error || ''})`);
+    const handles = await driver.getAllWindowHandles();
+    const r = { detectedMs: seen, signedInMs: signed.at, stations: signed.stations, played: true, paused: true, windows: handles.length, extensionPages: [] };
+    console.log(`cold start ${label}: ${JSON.stringify(r)}`);
+    check(seen < 1000, `${label}: the page saw present/ready within 1 s (${seen} ms)`);
+    await driver.get('about:blank');
+    return r;
+  };
+  const reloaded = await reloadAddon(driver);
+  console.log(`add-on: ${reloaded}`);
+  check(reloaded === 'reloaded', 'add-on reloaded');
+  const coldRestart = await coldRound('addon-reload');
+  step('cold start: add-on reloaded, page alone');
+  const terminated = await stopBackground(driver);
+  console.log(`background: ${terminated}`);
+  check(terminated === 'terminated', 'background page stopped');
+  const coldStopped = await coldRound('background-stopped');
+  step('cold start: background stopped, page alone');
+  report.coldStart = { ok: true, restart: coldRestart, workerStopped: coldStopped, note: 'Firefox: a temporary add-on does not survive a browser restart, so the restart round is an add-on reload' };
+  await goExt(driver, `${ext}/popup.html`);
 
   // Access withdrawn: the next check stops the music and signs out of Pandora.
   fakeAuth.disallow(tuner.user);
@@ -466,7 +576,7 @@ try {
   }
 
   report.ok = true;
-  report.summary = `${report.browser}: playback, account policy, lifecycle recovery and bridge control; ` +
+  report.summary = `${report.browser}: temporary add-on ${GECKO_ID} with host permission ${origins.join(' ')}; refused an email not on the access allow-list without asking Pandora, signed in to the tuner (${tuner.version}), listed ${names.length} stations, played "${now.title}" in the background page with no tab (still playing after ${NO_PAGE_MS / 1000}s with no extension page open; the optional player tab showed it and its closing changed nothing; a slot was fetched x${report.spots.defaultPolicy.metadataFetched}, played and registered x${report.spots.defaultPolicy.registered}, with next refused during it, and no slot once the access answer said spots:false); signed in to the optional spacegho.st account (${report.account.label}) and out; stopped and signed out of Pandora when access was withdrawn; ` +
     (report.realPandora.skipped ? 'real Pandora probe skipped' : `real tuner.pandora.com with bogus credentials -> auth.userLogin code ${report.realPandora.code} ("${report.realPandora.message}")`);
 } catch (e) {
   report.ok = false;
@@ -477,7 +587,7 @@ try {
   console.error(report.summary);
   if (tuner.http) {
     const tl = await getJson(`${tuner.http}/__tuner/log`).catch(() => []);
-    console.log(`tuner log (first 40 audio/ad/playlist of ${tl.length}):\n  ${tl.filter((e) => e.protocol !== "json" || /ad\.|getPlaylist/.test(e.method || "")).slice(0, 40).map((e) => `${e.protocol} ${e.httpMethod} ${e.method || e.path} -> ${e.status}${e.code == null ? '' : ` code=${e.code}`}${e.headers && e.headers.range ? ` range=${e.headers.range}` : ''}`).join('\n  ')}`);
+    console.log(`tuner log (first 40 audio/slot/playlist of ${tl.length}):\n  ${tl.filter((e) => e.protocol !== "json" || /ad\.|getPlaylist/.test(e.method || "")).slice(0, 40).map((e) => `${e.protocol} ${e.httpMethod} ${e.method || e.path} -> ${e.status}${e.code == null ? '' : ` code=${e.code}`}${e.headers && e.headers.range ? ` range=${e.headers.range}` : ''}`).join('\n  ')}`);
   }
   if (driver) {
     try { await screenshot(driver, 'failure'); } catch {}
@@ -488,6 +598,9 @@ try {
   if (fakeAuth) await new Promise((ok) => fakeAuth.server.close(ok));
   if (tuner.proc) { tuner.proc.kill('SIGTERM'); tuner.proc = null; }
   if (tuner.dir) await rm(tuner.dir, { recursive: true, force: true }).catch(() => {});
+  if (web.server) web.server.close();
+  if (web.proxy) web.proxy.close();
+  if (web.dir) await rm(web.dir, { recursive: true, force: true }).catch(() => {});
   report.when = new Date().toISOString();
   await writeFile(resolve(ARTIFACTS, `${NAME}.json`), JSON.stringify(report, null, 2) + '\n');
   console.log(`${NAME}.json: ok=${report.ok} ${report.summary}`);

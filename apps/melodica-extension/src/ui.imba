@@ -36,7 +36,7 @@ export tag Foot
 			<slot>
 			<span>
 				"melodica-extension {version} · "
-				<a href="https://spacegho.st/extensions/#melodica-extension" target="_blank" rel="noopener"> "spacegho.st/extensions"
+				<a href="https://spacegho.st/melodica/extension/" target="_blank" rel="noopener"> "spacegho.st/melodica/extension"
 				" · MIT / libpiano"
 
 # "melodica <v> is available": shown by every page when the store serves a newer
@@ -150,7 +150,7 @@ export tag NowPlaying
 			<figure.art>
 				<img.cover#np-cover src=(song and song.coverArt or FALLBACK_COVER) alt=(song and song.album ? "Cover of {song.album}" : '')>
 			<div.meta>
-				<p.eyebrow.station-name#np-station> (song and song.ad ? "Advertisement" : (song and now.station ? "on {now.station.name}" : ''))
+				<p.eyebrow.station-name#np-station> (song and !song.ad and now.station ? "on {now.station.name}" : '')
 				<h2.title#np-title> (song ? song.title : "Pick a station")
 				<p.artist#np-artist> (song ? song.artist : '')
 				if !compact
@@ -171,7 +171,7 @@ export tag Transport
 		const song = now and now.song
 		const rating = song and song.rating or 0
 		const playing = now and !now.paused
-		# During an ad only play/pause works.
+		# While `track.ad` is set only play/pause works.
 		const fixed = !song or !!song.ad
 		<self.controls-bar>
 			<div.controls role="group" aria-label="Playback controls">
@@ -192,6 +192,44 @@ export tag Transport
 				<button#tired.round type="button" title="Tired of this song (a month off)" aria-label="Tired" disabled=fixed @click=emit('control', 'tired')>
 					<svg aria-hidden="true" viewBox="0 0 24 24">
 						<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z">
+
+def ago at
+	const s = Math.max(0, Math.floor(Date.now() / 1000) - (Number(at) or 0))
+	return 'now' if s < 60
+	return "{Math.floor(s / 60)} min ago" if s < 3600
+	return "{Math.floor(s / 3600)} h ago" if s < 86400
+	"{Math.floor(s / 86400)} d ago"
+
+# Recent listens (Spaceghost Scrobbles), compact: titles and artists render as text.
+export tag RecentListens
+	prop recent = null
+	prop max = 5
+	def render
+		const r = recent or {}
+		const list = (r.listens or []).slice(0, max)
+		const pages = r.pages or {}
+		<self.card.ext-recent>
+			<h3.ext-recent-head> "Recent listens"
+			if list.length
+				<ol#recent-listens.ext-recent-list>
+					for l in list
+						<li.ext-recent-item>
+							<span.ext-recent-title> l.title
+							<span.ext-recent-artist> l.artist
+							<span.ext-recent-when.fine> ago(l.listened_at)
+			else
+				<p#recent-empty.fine> "No listens yet."
+			<p.ext-recent-links.fine>
+				<a#link-listens href=pages.listens target="_blank" rel="noopener"> "Listens"
+				" · "
+				<a#link-leaderboard href=pages.leaderboard target="_blank" rel="noopener"> "Leaderboard"
+				if r.crew
+					" · "
+					<a#link-map href=pages.map target="_blank" rel="noopener"> "Map"
+				" · "
+				<a#link-account href=pages.account target="_blank" rel="noopener"> "Account"
+				" · "
+				<a#link-melodica href=pages.home target="_blank" rel="noopener"> "melodica"
 
 # The first-run scrobbling notice; nothing is sent until it has been seen.
 export tag ScrobbleNotice

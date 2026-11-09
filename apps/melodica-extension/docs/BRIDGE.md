@@ -1,6 +1,6 @@
 # Bridge protocol
 
-The content script (`src/content.imba`) runs on `https://spacegho.st/melodica/app/*` and
+The content script (`src/content.imba`) runs on `https://spacegho.st/melodica/*` (at `document_start`) and
 talks to the page over `window.postMessage` (same window, same origin, every message has
 `melodica: 1`). Two layers:
 
@@ -10,14 +10,20 @@ The page sends its own Pandora calls through the extension instead of its relay.
 
 | Direction | Message |
 | --- | --- |
+| ext → page | `{melodica:1, type:'present', name:'melodica-extension', version}` (since 0.8.2: once, as soon as the content script is injected, before the background has answered; "extension present, state pending") |
 | page → ext | `{melodica:1, type:'hello'}` |
-| ext → page | `{melodica:1, type:'ready', name:'melodica-extension', version, player: true}` (also sent once when the content script loads; `player: true` since 0.3.0 says layer 2 exists) |
+| ext → page | `{melodica:1, type:'ready', name:'melodica-extension', version, player: true}` (also sent unasked at `document_start`, `DOMContentLoaded` and `load`; `player: true` since 0.3.0 says layer 2 exists) |
 | page → ext | `{melodica:1, type:'request', id, search:'?method=…', body: Uint8Array}` |
 | ext → page | `{melodica:1, type:'response', id, ok, status, body: Uint8Array, error}` |
 
 Only `method`s matching `/^[a-z]+\.[A-Za-z]+$/` are forwarded; the background POSTs the body
 to `<endpoint><search>` with `content-type: text/plain` and no cookies. A page that never
 sends `subscribe` gets exactly this behaviour, unchanged.
+
+The content script answers `hello` itself, without the background. Since 0.8.2 it also
+wakes the background on load, which restores a remembered Pandora session and its
+station list with no extension page open; no popup or player tab is needed after a
+browser start or after the service worker was stopped.
 
 ## 2. Remote control (since 0.3.0)
 
@@ -53,7 +59,7 @@ becomes a view of that playback and a remote for it, instead of running its own 
 Scrobbles. The side whose audio plays submits listens: while the page is a remote of
 the extension, the extension is the only submitter and the page sends none.
 
-`track.audioUrl` is never sent to the page. While an ad plays, `track.ad` is true and
+`track.audioUrl` is never sent to the page. While `track.ad` is true,
 `next`, `love`, `ban` and `tired` do nothing. `subscribe` is answered whatever the extension is doing, including idle, signed out and right after browser start (the content script asks the background again for about 20 s before answering with an error), and a `state` is pushed on every change from any source (popup, player tab, keyboard shortcut, media keys, sign-in and sign-out). While no Pandora session exists, commands
 fail with `ok: false` and the reason; `state.loggedIn` says so, and `state.access` carries
 the access answer's message when access was not allowed (README "Access"). Relayed

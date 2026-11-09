@@ -2,7 +2,7 @@
 
 melodica-extension is not on the Chrome Web Store, Microsoft Edge Add-ons or the
 addons.mozilla.org listings, and will not be. The only distribution is the self-hosted
-store at <https://spacegho.st/extensions/#melodica-extension>: the release `.xpi`,
+store at <https://spacegho.st/melodica/extension/>: the release `.xpi`,
 `.crx` and unpacked zips from GitHub, mirrored with their checksums and update feeds.
 
 melodica is distributed only from spacegho.st/extensions; access is decided by

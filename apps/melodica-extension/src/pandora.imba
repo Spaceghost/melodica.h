@@ -148,24 +148,24 @@ export def normalizeSong item, quality
 		detailUrl: item.songDetailUrl or ''
 	}
 
-# A playlist item that is an audio ad: Pandora sends only its adToken; the
-# metadata (audio, title, company, art) comes from ad.getAdMetadata.
-export def adPlaceholder item, station
+# A playlist item with only an adToken: its metadata (audio, title, company, art)
+# comes from ad.getAdMetadata.
+export def spotPlaceholder item, station
 	return null unless item and item.adToken and !item.songName
-	{kind: 'ad', adToken: String(item.adToken), stationId: String(item.stationId or (station and station.id) or '')}
+	{kind: 'spot', adToken: String(item.adToken), stationId: String(item.stationId or (station and station.id) or '')}
 
-export def normalizeAd meta, placeholder, quality
+export def normalizeSpot meta, placeholder, quality
 	return null unless meta
 	const audio = pickAudio(meta.audioUrlMap, quality)
 	return null unless audio
 	const gain = Number(meta.trackGain)
 	{
-		kind: 'ad'
+		kind: 'spot'
 		ad: yes
 		adToken: placeholder.adToken
-		trackToken: "ad:{placeholder.adToken}"
+		trackToken: "spot:{placeholder.adToken}"
 		stationId: placeholder.stationId
-		title: meta.title or 'Advertisement'
+		title: meta.title or ''
 		artist: meta.companyName or ''
 		album: ''
 		coverArt: meta.imageUrl or ''
@@ -303,15 +303,15 @@ export class Pandora
 
 	def playlist station, quality = 'high'
 		const r = await self.authed('station.getPlaylist', {stationToken: station.token, includeTrackLength: yes})
-		(r.items or []).map(do(item) normalizeSong(item, quality) or adPlaceholder(item, station)).filter(do(s) !!s)
+		(r.items or []).map(do(item) normalizeSong(item, quality) or spotPlaceholder(item, station)).filter(do(s) !!s)
 
-	# The ad behind an adToken from a playlist, ready to play like a track.
-	def adMetadata placeholder, quality = 'high'
+	# The item behind an adToken from a playlist, ready to play like a track.
+	def spotMetadata placeholder, quality = 'high'
 		const r = await self.authed('ad.getAdMetadata', {adToken: placeholder.adToken, returnAdTrackingTokens: yes, supportAudioAds: yes, includeBannerAd: no})
-		normalizeAd(r, placeholder, quality)
+		normalizeSpot(r, placeholder, quality)
 
-	# After an ad has played: tell Pandora, with its tracking tokens.
-	def registerAd stationId, trackingTokens
+	# After it has played: tell Pandora, with its tracking tokens.
+	def registerSpot stationId, trackingTokens
 		self.authed('ad.registerAd', {stationId: String(stationId), adTrackingTokens: trackingTokens})
 
 	def rate trackToken, positive
@@ -338,6 +338,12 @@ export class Pandora
 	def createStation musicToken
 		const r = await self.authed('station.createStation', {musicToken})
 		normalizeStation(r)
+
+	def addMusic stationToken, musicToken
+		self.authed('station.addMusic', {stationToken, musicToken})
+
+	def renameStation stationToken, stationName
+		self.authed('station.renameStation', {stationToken, stationName})
 
 	def deleteStation station
 		await self.authed('station.deleteStation', {stationToken: station.token})

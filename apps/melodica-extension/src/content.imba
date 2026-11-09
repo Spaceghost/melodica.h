@@ -1,4 +1,4 @@
-# Bridge content script for https://spacegho.st/melodica/app/*. Two layers
+# Bridge content script for https://spacegho.st/melodica/* (document_start). Two layers
 # (docs/BRIDGE.md): the relay, which lets the web client route its own Pandora
 # calls through the extension, and since 0.3.0 the remote control, which lets a
 # page that sends `subscribe` show and steer the extension's own background
@@ -6,6 +6,7 @@
 # the relay exactly as before.
 #
 # Protocol (window.postMessage, same window, same origin, data.melodica === 1):
+#   ext  -> {melodica:1, type:'present', name, version}   (once, at injection)
 #   page -> {melodica:1, type:'hello'}
 #   ext  -> {melodica:1, type:'ready', name:'melodica-extension', version, player:true}
 #   page -> {melodica:1, type:'request', id, search:'?method=…', body:Uint8Array}
@@ -24,9 +25,9 @@ const NAME = 'melodica-extension'
 const VERSION = browser.runtime.getManifest().version
 const METHOD = /^[a-z]+\.[A-Za-z]+$/
 # melodica-web docs/BRIDGE.md section 1: messages go to and come from this exact
-# origin only, on the web app's path.
+# origin only, under /melodica/.
 const ORIGIN = 'https://spacegho.st'
-const PATH = '/melodica/app/'
+const PATH = '/melodica/'
 
 let subscribed = no
 
@@ -204,4 +205,12 @@ window.addEventListener 'message', do(event)
 	elif data.type === 'session-get' or data.type === 'session-offer' or data.type === 'session-logout' or data.type === 'account-signout'
 		sessionMessage(data)
 
+# The content script answers on its own: it announces at document_start, again
+# once the page's scripts have run, and wakes the background (service worker or
+# event page) so the remembered session is restored before the page asks.
+# `present` (melodica-web 0.10.3) says "extension here, state pending".
+window.postMessage({melodica: 1, type: 'present', name: NAME, version: VERSION}, ORIGIN)
 announce()
+document.addEventListener('DOMContentLoaded', (do announce()), {once: yes})
+window.addEventListener('load', (do announce()), {once: yes})
+browser.runtime.sendMessage({type: 'wake'}).catch(do(e) null)
