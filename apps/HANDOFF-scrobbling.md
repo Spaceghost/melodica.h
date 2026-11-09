@@ -7,7 +7,7 @@ preset, keeps its existing scrobbling, and opens `listen://` links
 
 Working clones: `~/workspaces/melodica-scrobble-clients-2026-11-08/<dir>` on alienware
 (shared spec: `SPEC.txt` there; fake ListenBrainz server: `tools/fake_lb.py`).
-Build/test containers on bak: `melodica-clients` (Python, C, mingw), `melodica-dotnet`,
+Build/test containers (moved to the incus remote `fedora:` on 2026-11-08; the bak copies are stopped backups, do not restart them): `melodica-clients` (Python, C, mingw), `melodica-dotnet`,
 `melodica-mobile`.
 
 Decisions:
