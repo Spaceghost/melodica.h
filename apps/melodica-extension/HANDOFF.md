@@ -16,7 +16,7 @@
 - Mozilla unlisted signing is preserved. Both browser update feeds and eight public installable downloads passed checksum verification.
 - Both catalogs passed browser checks at 390 and 1280 pixels; the Melodica catalog contains only its browser extension and keeps the player bar pinned.
 - The Worker release manifests were updated in R2; all other Melodica projects were preserved. No player or Worker code was deployed by this publication.
-- Evidence: https://github.com/Spaceghost/melodica-extension/actions/runs/42696407259.
+- Evidence: https://github.com/Spaceghost/melodica-extension/actions/runs/42696537716.
 <!-- extension-publication:end -->
 
 Updated 2026-11-09. Self-hosted 0.9.2 published and verified; full tag browser suites remain in progress.
