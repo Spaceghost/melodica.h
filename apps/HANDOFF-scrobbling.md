@@ -29,8 +29,8 @@ progress when this was written. The main branch holds only what was pushed after
 | elpis | 9ff388c (master) | green (Windows build + Linux checks) | covered by the C# family (xivpiano) | done: 786ae13, CI green (HKCU registry) |
 | pandoroid | 3fcabfa (master) | green | done | in progress (wip/scrobble) |
 | epimetheus | 616ac22 (dev), CI fix 134a855 | 134a855 Release green | done | in progress (wip/scrobble) |
-| pithos | cadd46f (master) | CI green; CodeQL failing (also failing before, at 685c964) | covered by the Python family (pydora) | in progress (wip/scrobble) |
-| pydora | 8a1248f (master) | green | done, read back (Python family) | in progress (wip/scrobble) |
+| pithos | cadd46f (master) | CI green; CodeQL failing (also failing before, at 685c964) | covered by the Python family (pydora) | done: 79dceb3, CI green (desktop x-scheme-handler) |
+| pydora | 8a1248f (master) | green | done, read back (Python family) | done: c64a407, CI green (CLI argument only) |
 | pianobar | 7735f87 (master) | green | not reported yet | in progress (wip/scrobble) |
 | pianobar-windows | 41c1044 (develop) | release workflow failing (also failing at a02c887 and dc29f54); not yet investigated | not reported yet | not started |
 | umbra-piano | none needed | - | - | none: it has no Pandora playback; XivPiano scrobbles and takes links |
