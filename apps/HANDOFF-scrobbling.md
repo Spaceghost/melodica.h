@@ -27,8 +27,8 @@ progress when this was written. The main branch holds only what was pushed after
 | --- | --- | --- | --- | --- |
 | xivpiano | 19b81f6 (integration/melodica) | green | done, read back | done: c145454, CI green (chat command + IPC) |
 | elpis | 9ff388c (master) | green (Windows build + Linux checks) | covered by the C# family (xivpiano) | done: 786ae13, CI green (HKCU registry) |
-| pandoroid | 3fcabfa (master) | green | done | in progress (wip/scrobble) |
-| epimetheus | 616ac22 (dev), CI fix 134a855 | 134a855 Release green | done | in progress (wip/scrobble) |
+| pandoroid | 3fcabfa (master) | green | done | done: c76ce85, CI green incl. emulator link smoke (intent filters) |
+| epimetheus | 616ac22 (dev), CI fix 134a855 | 42573142304 green (web, APK, web + Android smoke) | done | done: 4284a19 (CFBundleURLSchemes + intent filter; macOS/iOS never built; no station creation from links) |
 | pithos | cadd46f (master) | CI green; CodeQL failing (also failing before, at 685c964) | covered by the Python family (pydora) | done: 79dceb3, CI green (desktop x-scheme-handler) |
 | pydora | 8a1248f (master) | green | done, read back (Python family) | done: c64a407, CI green (CLI argument only) |
 | pianobar | 7735f87 (master) | green | not reported yet | in progress (wip/scrobble) |
