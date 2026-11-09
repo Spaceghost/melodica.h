@@ -21,7 +21,7 @@ grep -v '^#' apps/apps.tsv | while IFS="$(printf '\t')" read -r dir repo branch 
   git rm -rq --ignore-unmatch "apps/$dir"
   git read-tree --prefix="apps/$dir/" -u FETCH_HEAD
   # Paths the app repository keeps private (apps.tsv column 6), e.g. melodica-web's site/.
-  for p in $(printf '%s' "${excl:-}" | tr ',' ' '); do git rm -rq --ignore-unmatch "apps/$dir/$p"; done
+  for p in $(printf '%s' "${excl:-}" | tr ',' ' '); do git rm -rqf --ignore-unmatch "apps/$dir/$p"; done
   if git diff --cached --quiet; then echo "   tree unchanged ($new)"; continue; fi
   git commit -q -m "apps/$dir: snapshot of $repo $branch at ${new%????????????????????????????????}
 
