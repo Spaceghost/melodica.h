@@ -263,4 +263,63 @@ if [ -n "$first" ]; then
         log "first station tapped; no player screen with a song within 60s (not counted)"
     fi
 fi
+
+# --- listen:// links (docs: melodica-scrobble LISTEN-URI.md) -------------------
+# Each link must bring up a question first (links never play by themselves); the
+# answer decides. Not counted towards ok unless every link step passes.
+open_link() { # <uri>: through the intent filters (-p keeps the browser out of it)
+    adb shell am start -W -a android.intent.action.VIEW -c android.intent.category.BROWSABLE -d "\"$1\"" -p "$pkg" 2>&1 \
+        | tr -d '\r' | sed 's/^/[am] /' >> "$out/smoke-android.txt"
+}
+dialog_button() { # <text>: tap the dialog button with that text
+    local xy
+    xy=$(printf '%s' "$ui" | python3 -c '
+import re, sys
+want, xml = sys.argv[1], sys.stdin.read()
+for m in re.finditer(r"<node[^>]*>", xml):
+    n = m.group(0)
+    if ("text=\"%s\"" % want.lower()) in n.lower() and "android.widget.button" in n.lower():
+        b = re.search(r"bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\"", n)
+        x1, y1, x2, y2 = map(int, b.groups()); print((x1 + x2) // 2, (y1 + y2) // 2); break
+' "$1")
+    [ -n "$xy" ] && tap "$xy"
+}
+listen_ok=true
+# 1. artist with a station in the list -> "Start Copper Lanterns Radio?" -> Start -> plays it
+open_link "listen://artist/Copper%20Lanterns"
+if wait_for_node 'text="Start Copper Lanterns Radio\?"' 30; then
+    screenshot smoke-android-listen-ask.png
+    log "listen://artist/Copper%20Lanterns asked: Start Copper Lanterns Radio?"
+    dialog_button Start
+    if wait_for_node "text=\"[^\"]+ by The Copper Lanterns\"" 60; then
+        log "after Start: $(printf '%s' "$ui" | grep -o 'text="[^"]* by The Copper Lanterns"' | head -n1)"; steps+=("listen link: existing station")
+    else listen_ok=false; log "listen link: Start did not play Copper Lanterns Radio"; fi
+else listen_ok=false; screenshot smoke-android-listen-ask.png; log "listen link: no question for listen://artist/Copper%20Lanterns"; fi
+# 2. artist with no station -> "Create and start a Mira Solano station?" -> music.search + station.createStation
+open_link "https://spacegho.st/listen/artist/Mira%20Solano"
+if wait_for_node 'text="Create and start a Mira Solano station\?"' 30; then
+    log "https://spacegho.st/listen/artist/Mira%20Solano asked: Create and start a Mira Solano station?"
+    dialog_button Start
+    if wait_for_node "text=\"[^\"]+ by Mira Solano\"" 60; then
+        screenshot smoke-android-listen-created.png
+        log "after Start: $(printf '%s' "$ui" | grep -o 'text="[^"]* by Mira Solano"' | head -n1)"
+        if [ -z "$tuner_log_url" ] || { tuner_log_has xmlrpc music.search && tuner_log_has xmlrpc station.createStation; }; then
+            steps+=("listen link: created station")
+        else listen_ok=false; log "listen link: no music.search/station.createStation in the tuner log"; fi
+    else listen_ok=false; log "listen link: created station did not play"; fi
+else listen_ok=false; log "listen link: no question for the https form"; fi
+# 3. station link -> Cancel -> still playing Mira Solano (nothing started without a yes)
+open_link "listen://station/1000000000000004"
+if wait_for_node 'text="Start Cartografia Radio\?"' 30; then
+    dialog_button Cancel
+    sleep 3
+    if wait_for_node "text=\"[^\"]+ by Mira Solano\"" 10; then
+        log "listen://station/1000000000000004 asked; Cancel left Mira Solano playing"; steps+=("listen link: cancel")
+    else listen_ok=false; log "listen link: Cancel changed what plays"; fi
+else listen_ok=false; log "listen link: no question for listen://station/1000000000000004"; fi
+if $listen_ok; then
+    summary="$summary; listen:// and https://spacegho.st/listen/ links ask before playing (existing station, created station, cancel)"
+else
+    ok=false; finish 10 "listen:// link steps failed"
+fi
 finish 0

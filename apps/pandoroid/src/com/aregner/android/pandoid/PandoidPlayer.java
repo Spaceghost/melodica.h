@@ -28,6 +28,14 @@ import android.media.MediaPlayer;
 import android.media.MediaPlayer.OnCompletionListener;
 import android.media.MediaPlayer.OnPreparedListener;
 import android.os.AsyncTask;
+import android.app.AlertDialog;
+import android.content.ActivityNotFoundException;
+import android.content.DialogInterface;
+import android.net.Uri;
+import java.util.ArrayList;
+import com.aregner.pandora.Station;
+import org.melodica.listen.ListenUri;
+import org.melodica.listen.StationMatch;
 import android.os.Bundle;
 import android.preference.PreferenceManager;
 import android.view.Menu;
@@ -40,6 +48,11 @@ import android.widget.Toast;
 
 
 public class PandoidPlayer extends Activity {
+
+	// A listen:// (or https://spacegho.st/listen/) link waiting for sign-in. Links never play by
+	// themselves: handleListenLink asks first.
+	private String pendingLink;
+
 
 	public static final int REQUIRE_SELECT_STATION = 0x10;
 	public static final int REQUIRE_LOGIN_CREDS = 0x20;
@@ -61,6 +74,7 @@ public class PandoidPlayer extends Activity {
 
 		// handle for the preferences for us to use everywhere
 		prefs = PreferenceManager.getDefaultSharedPreferences(getBaseContext());
+		takeLink(getIntent());
 
 		if(PandoraRadioService.getInstance(false) == null) {
 			// look for what we need to continue with pandora auth
@@ -76,6 +90,103 @@ public class PandoidPlayer extends Activity {
 			pandora = PandoraRadioService.getInstance(false);
 			updateForNewSong(pandora.getCurrentSong());
 		}
+	}
+
+	@Override
+	protected void onNewIntent(Intent intent) {
+		super.onNewIntent(intent);
+		setIntent(intent);
+		takeLink(intent);
+		PandoraRadioService service = PandoraRadioService.getInstance(false);
+		if(service != null && service.isAlive()) {
+			pandora = service;
+			handleListenLink();
+		}
+	}
+
+	private void takeLink(Intent intent) {
+		if(intent != null && Intent.ACTION_VIEW.equals(intent.getAction()) && intent.getData() != null) {
+			pendingLink = intent.getDataString();
+		}
+	}
+
+	private void say(String message) {
+		Toast.makeText(getApplicationContext(), message, Toast.LENGTH_LONG).show();
+	}
+
+	private void openOnSite(ListenUri link) {
+		try {
+			startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(ListenUri.SITE + link.route())));
+		} catch(ActivityNotFoundException e) {
+			say("No browser to open " + link.https);
+		}
+	}
+
+	private void confirm(String question, String yes, DialogInterface.OnClickListener onYes) {
+		new AlertDialog.Builder(this).setMessage(question).setPositiveButton(yes, onYes)
+			.setNegativeButton(android.R.string.cancel, null).show();
+	}
+
+	private void startStation(Station station) {
+		pandora.setCurrentStationId(station.getId());
+		(new PlayStationTask()).execute();
+	}
+
+	/**
+	 * artist/genre: the matching station from the user's list ("Start <name>?"), or, for an
+	 * artist with none, "Create and start a <name> station?". station/<id>: that station if it
+	 * is in the list. Everything else opens on spacegho.st in the browser.
+	 */
+	private void handleListenLink() {
+		final String raw = pendingLink;
+		pendingLink = null;
+		if(raw == null) return;
+		final ListenUri link = ListenUri.parse(raw);
+		if(link == null) { say(getString(R.string.listen_unsupported)); return; }
+		if(!link.target.equals("artist") && !link.target.equals("genre") && !link.target.equals("station")) { openOnSite(link); return; }
+		(new AsyncTask<Void, Void, ArrayList<Station>>() {
+			@Override
+			protected ArrayList<Station> doInBackground(Void... arg) {
+				try { return pandora.getStations(); } catch(Exception ex) { return null; }
+			}
+			@Override
+			protected void onPostExecute(ArrayList<Station> stations) {
+				if(stations == null) { say(getString(R.string.listen_no_stations)); return; }
+				ArrayList<String> ids = new ArrayList<String>(), names = new ArrayList<String>();
+				for(Station st : stations) { ids.add(st.getStationId()); names.add(st.getName()); }
+				int i = StationMatch.match(link, ids, names);
+				if(i >= 0) {
+					final Station station = stations.get(i);
+					confirm(getString(R.string.listen_start, station.getName()), getString(R.string.listen_start_button), new DialogInterface.OnClickListener() {
+						public void onClick(DialogInterface d, int w) { startStation(station); }
+					});
+				} else if(link.target.equals("station")) {
+					say(getString(R.string.listen_station_missing));
+				} else if(link.target.equals("artist")) {
+					confirm(getString(R.string.listen_create, link.get("name")), getString(R.string.listen_start_button), new DialogInterface.OnClickListener() {
+						public void onClick(DialogInterface d, int w) { createAndStart(link); }
+					});
+				} else {
+					confirm(getString(R.string.listen_open_site, link.get("name")), getString(R.string.listen_open_button), new DialogInterface.OnClickListener() {
+						public void onClick(DialogInterface d, int w) { openOnSite(link); }
+					});
+				}
+			}
+		}).execute();
+	}
+
+	private void createAndStart(final ListenUri link) {
+		(new AsyncTask<Void, Void, Station>() {
+			@Override
+			protected Station doInBackground(Void... arg) {
+				try { return pandora.createArtistStation(link.get("name")); } catch(Exception ex) { return null; }
+			}
+			@Override
+			protected void onPostExecute(Station station) {
+				if(station == null) { say(getString(R.string.listen_create_failed, link.get("name"))); return; }
+				startStation(station);
+			}
+		}).execute();
 	}
 
 	@Override
@@ -107,6 +218,7 @@ public class PandoidPlayer extends Activity {
 		PandoraRadioService service = PandoraRadioService.getInstance(false);
 		if(service != null && service.isAlive()) {
 			pandora = service;
+			handleListenLink();
 			return;
 		}
 		if(setupTask != null && setupTask.getStatus() != AsyncTask.Status.FINISHED) {
@@ -230,7 +342,10 @@ public class PandoidPlayer extends Activity {
 			}
 			if(result.booleanValue()) {
 
-				if(!pandora.isPlaying()) {
+				if(pendingLink != null) {
+					handleListenLink();
+				}
+				else if(!pandora.isPlaying()) {
 
 					if(pandora.isPlayable()) {
 						// play it or resume playback or something smart like that

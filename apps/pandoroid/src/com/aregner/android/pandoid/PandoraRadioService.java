@@ -272,6 +272,10 @@ public class PandoraRadioService extends Service {
 
 		return stations;
 	}
+	/** See PandoraRadio.createArtistStation; network, so never on the main thread. */
+	public Station createArtistStation(String artistName) {
+		return pandora.createArtistStation(artistName);
+	}
 	public void setCurrentStationId(long sid) {
 		if(sid < 0) return;
 		currentStation = pandora.getStationById(sid);

@@ -21,3 +21,21 @@ is never logged.
 `tools/test-scrobble.sh` tests the plain-Java scrobbler (`src/org/melodica/scrobble/`) against
 `tools/fake_lb.py`; CI runs it. The Android glue (preferences, service hooks) is checked by the
 CI build only, not on a device.
+
+listen:// links
+---------------
+
+Pandoroid opens `listen://` links and `https://spacegho.st/listen/` links (melodica-scrobble
+docs/LISTEN-URI.md); Android offers it for both. A link never starts playback by itself:
+- `artist/<name>` or `genre/<name>`: a station of that name (or "<name> Radio") from your list,
+  after "Start <station>?". An artist with no station gets "Create and start a <name> station?"
+  (Pandora's music.search and station.createStation). A genre with no station offers the page on
+  spacegho.st instead.
+- `station/<id>`: that station if it is in your list, after the same question.
+- Anything else (track, map, user, listens, leaderboard) opens on spacegho.st in the browser.
+- A link the parser rejects shows "That link isn't supported."
+
+`src/org/melodica/listen/ListenUri.java` ports the reference parser; `tools/test-listen-uri.sh`
+runs the reference's test cases (CI), and with `LISTEN_URI_REFERENCE` pointing at the reference
+`listen-uri.js` also a 30000-link differential run against it. The release workflow's emulator
+smoke opens three links against melodica-tuner (existing station, created station, cancel).

@@ -6,4 +6,13 @@
     <string name="loading">Loading %s...</string>
     <string name="baned_song">Buzz-kill...</string>
     <string name="loved_song">Rock on!</string>
+    <string name="listen_unsupported">That link isn\'t supported.</string>
+    <string name="listen_no_stations">Your stations could not be loaded, so the link was not opened.</string>
+    <string name="listen_start">Start %1$s?</string>
+    <string name="listen_start_button">Start</string>
+    <string name="listen_station_missing">That station isn\'t in your station list.</string>
+    <string name="listen_create">Create and start a %1$s station?</string>
+    <string name="listen_create_failed">No %1$s station could be created.</string>
+    <string name="listen_open_site">There is no %1$s station in your list. Open it on spacegho.st?</string>
+    <string name="listen_open_button">Open</string>
 </resources>

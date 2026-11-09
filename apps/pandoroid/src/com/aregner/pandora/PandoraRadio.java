@@ -264,6 +264,38 @@ public class PandoraRadio {
 		return stations;
 	}
 	
+	/**
+	 * Creates a station seeded with the artist that music.search finds for this name (an exact,
+	 * case-insensitive name match first, else the first artist). Null when none is found.
+	 * Only called after the user said yes (a listen:// link never changes the account by itself).
+	 */
+	@SuppressWarnings("unchecked")
+	public Station createArtistStation(String artistName) {
+		Vector<Object> args = new Vector<Object>(1);
+		args.add(artistName);
+		Object result = xmlrpcCall("music.search", args);
+		if(!(result instanceof HashMap<?,?>)) return null;
+		Object artists = ((HashMap<String,Object>) result).get("artists");
+		if(!(artists instanceof Object[])) return null;
+		String musicId = null;
+		for(Object a : (Object[]) artists) {
+			if(!(a instanceof HashMap<?,?>)) continue;
+			HashMap<String,Object> artist = (HashMap<String,Object>) a;
+			String id = (String) artist.get("musicId");
+			if(id == null) continue;
+			if(musicId == null) musicId = id;
+			if(artistName.equalsIgnoreCase(String.valueOf(artist.get("artistName")).trim())) { musicId = id; break; }
+		}
+		if(musicId == null) return null;
+		Vector<Object> create = new Vector<Object>(1);
+		create.add("mi" + musicId);
+		Object created = xmlrpcCall("station.createStation", create);
+		if(!(created instanceof HashMap<?,?>)) return null;
+		long id = new Station((HashMap<String,Object>) created, this).getId();
+		getStations();
+		return stations == null ? null : getStationById(id);
+	}
+
 	public Station getStationById(long sid) {
 		Iterator<Station> stationIter = stations.iterator();
 		Station station = null;
