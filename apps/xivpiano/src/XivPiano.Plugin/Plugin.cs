@@ -52,6 +52,7 @@ public sealed class Plugin : IDalamudPlugin
     private static readonly JsonSerializerOptions AudioFeatureJson = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     private readonly ICallGateProvider<string, object> songChangedGate;
     private readonly ICallGateProvider<string, bool> controlGate;
+    private readonly ICallGateProvider<string, string> listenLinkGate;
     private IDtrBarEntry? dtr;
 
     private bool? musicWasMuted; // the game's own BGM setting before we muted it; null = we did not
@@ -101,7 +102,7 @@ public sealed class Plugin : IDalamudPlugin
         pi.UiBuilder.OpenConfigUi += ToggleWindow;
         commands.AddHandler(Command, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open XivPiano. /piano play|pause|next|love|ban|tired|stop, /piano station <name>",
+            HelpMessage = "Open XivPiano. /piano play|pause|next|love|ban|tired|stop, /piano station <name>, /piano listen <listen:// link>",
         });
         framework.Update += OnUpdate;
 
@@ -112,6 +113,9 @@ public sealed class Plugin : IDalamudPlugin
         songChangedGate = pi.GetIpcProvider<string, object>("XivPiano.SongChanged");
         controlGate = pi.GetIpcProvider<string, bool>("XivPiano.Control");
         controlGate.RegisterFunc(action => Control(action));
+        // listen:// links from other plugins (a Dalamud plugin cannot register an OS scheme). Never plays by itself.
+        listenLinkGate = pi.GetIpcProvider<string, string>("XivPiano.OpenListenLink");
+        listenLinkGate.RegisterFunc(link => OpenListenLink(link));
 
         if (Config.AutoStart && Config.Email.Length > 0 && Secrets.Unprotect(Config.ProtectedPassword) is { } saved)
             SignIn(Config.Email, saved, resume: true);
@@ -436,8 +440,69 @@ public sealed class Plugin : IDalamudPlugin
             return;
         }
 
+        if (parts[0].Equals("listen", StringComparison.OrdinalIgnoreCase) && parts.Length == 2)
+        {
+            OpenListenLink(parts[1]);
+            return;
+        }
+
         if (!Control(parts[0]))
             chat.PrintError($"Unknown or unavailable: {parts[0]}. Try /piano play|pause|next|love|ban|tired|stop|station <name>.", "XivPiano");
+    }
+
+    /// <summary>The listen:// link waiting for the listener to confirm in the window.</summary>
+    public ListenLinkPlan? PendingLink { get; private set; }
+
+    /// <summary>
+    /// A listen://, web+listen:// or https://spacegho.st/listen/ link: shows what it would do and waits for the
+    /// listener to confirm (<see cref="ConfirmListenLink"/>). Returns the question or the answer.
+    /// </summary>
+    public string OpenListenLink(string link)
+    {
+        var plan = ListenLinks.Plan(link, Radio != null && Pandora.LoggedIn ? Radio.Stations : null);
+        if (plan.Action is ListenLinkAction.Unsupported or ListenLinkAction.StationMissing)
+        {
+            chat.PrintError(plan.Message, "XivPiano");
+            return plan.Message;
+        }
+
+        PendingLink = plan;
+        window.IsOpen = true;
+        return plan.Message;
+    }
+
+    public void DismissListenLink() => PendingLink = null;
+
+    public void ConfirmListenLink()
+    {
+        if (PendingLink is not { } plan)
+            return;
+        PendingLink = null;
+        switch (plan.Action)
+        {
+            case ListenLinkAction.Browser when plan.BrowserUrl is { } url:
+                Dalamud.Utility.Util.OpenLink(url);
+                break;
+            case ListenLinkAction.Station when plan.Station is { } s && Radio is { } r:
+                Run(ct => r.PlayStationAsync(s, ct));
+                break;
+            case ListenLinkAction.SeedStation when Radio is { } radio && plan.Link is { } link:
+                if (ListenLinks.FindSeedStation(link, radio.Stations) is { } have)
+                {
+                    Run(ct => radio.PlayStationAsync(have, ct));
+                    break;
+                }
+
+                Run(async ct =>
+                {
+                    var seed = ListenLinks.PickSeed(link, await Pandora.SearchAsync(link.Name, ct).ConfigureAwait(false));
+                    if (seed == null)
+                        chat.PrintError($"Pandora has no {link.Target} called {link.Name}.", "XivPiano");
+                    else
+                        await radio.CreateAndPlayAsync(() => Pandora.CreateStationAsync(seed.MusicToken, ct), ct).ConfigureAwait(false);
+                });
+                break;
+        }
     }
 
     /// <summary>play, pause, toggle, next, love, ban, tired, stop. False when unknown or not signed in.</summary>
@@ -509,6 +574,7 @@ public sealed class Plugin : IDalamudPlugin
         nowPlayingGate.UnregisterFunc();
         audioFeaturesGate.UnregisterFunc();
         controlGate.UnregisterFunc();
+        listenLinkGate.UnregisterFunc();
         commands.RemoveHandler(Command);
         pi.UiBuilder.Draw -= windows.Draw;
         pi.UiBuilder.OpenMainUi -= ToggleWindow;

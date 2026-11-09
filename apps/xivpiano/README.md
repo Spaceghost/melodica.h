@@ -33,6 +33,7 @@ from any artist, song or genre.
 - **History** of the last 20 songs, each still rateable and bookmarkable; **Up next**; **Open on Pandora**; Pandora's
   **genre stations** to browse.
 - **Scrobbling** to **Last.fm** (your own free API key) and to a **ListenBrainz-compatible server**: spacegho.st's scrobble service by default (a token from <https://spacegho.st/melodica/account/>), listenbrainz.org, or your own. Listens that cannot be sent wait in a queue and are sent again.
+- **listen:// links**: `/piano listen <link>` (or the `XivPiano.OpenListenLink` IPC, string in, message out) opens listen://, web+listen:// and https://spacegho.st/listen/ links. Artist and genre links offer their station, station links offer yours, other links offer their spacegho.st page; nothing happens until you confirm. A plugin cannot register the listen:// scheme with Windows.
 - **Toasts** for new songs, the keyboard's **media keys**, and Pandora's **explicit content filter**.
 - **Song-change IPC** for other plugins, alongside the existing Now Playing and playback-control gates. See [IPC contract](docs/IPC.md).
 - **The song in the server info bar**: click opens XivPiano, right-click pauses.

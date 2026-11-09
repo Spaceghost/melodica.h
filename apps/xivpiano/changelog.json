@@ -11,6 +11,10 @@
    "items": [
     {
      "status": "beta",
+     "text": "listen:// links: `/piano listen <link>` and the XivPiano.OpenListenLink IPC take listen://, web+listen:// and https://spacegho.st/listen/ links. An artist or genre link offers to start your station for it (or make one); a station link offers your station; the other links offer to open their spacegho.st page. Nothing plays or opens until you say yes, and anything that is not a valid link is refused."
+    },
+    {
+     "status": "beta",
      "text": "Scrobbling to any ListenBrainz-compatible server, with spacegho.st's scrobble service as the preset (tokens at spacegho.st/melodica/account) and listenbrainz.org or your own server as choices; *Check token* asks the server. Listens carry the album art, the station, the length and the Pandora service. A listen that cannot be sent (offline, the server busy, a rejected token) waits in a queue next to the settings and goes out with the next contact or within five minutes. Existing ListenBrainz tokens stay on listenbrainz.org."
     },
     {

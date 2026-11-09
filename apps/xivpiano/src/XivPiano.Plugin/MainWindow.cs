@@ -68,6 +68,7 @@ public sealed class MainWindow : Window, IDisposable
 
     public override void Draw()
     {
+        DrawListenLink();
         if (plugin.Radio == null || !plugin.Pandora.LoggedIn)
         {
             DrawLogin();
@@ -240,6 +241,37 @@ public sealed class MainWindow : Window, IDisposable
 
         if (ImGui.MenuItem("Delete…"))
             deleting = s;
+    }
+
+    /// <summary>A listen:// link waits here for the listener: nothing plays or opens until they say yes.</summary>
+    private void DrawListenLink()
+    {
+        if (plugin.PendingLink is not { } plan)
+            return;
+        ImGui.OpenPopup("listen:// link###listenlink");
+        if (ImGui.BeginPopupModal("listen:// link###listenlink", ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            ImGui.TextUnformatted(plan.Message);
+            var yes = plan.Action switch
+            {
+                ListenLinkAction.Browser => "Open",
+                _ => "Start",
+            };
+            if (ImGui.Button(yes))
+            {
+                plugin.ConfirmListenLink();
+                ImGui.CloseCurrentPopup();
+            }
+
+            ImGui.SameLine();
+            if (ImGui.Button("Cancel"))
+            {
+                plugin.DismissListenLink();
+                ImGui.CloseCurrentPopup();
+            }
+
+            ImGui.EndPopup();
+        }
     }
 
     private void DrawPopups(Radio radio)
