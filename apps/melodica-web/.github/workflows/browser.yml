@@ -16,7 +16,9 @@ name: browser
 on:
   push:
     branches: [master]
+    paths-ignore: ['site/**', '.github/workflows/site.yml']
   pull_request:
+    paths-ignore: ['site/**', '.github/workflows/site.yml']
   workflow_dispatch:
     inputs:
       hosted:

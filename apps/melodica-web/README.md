@@ -8,6 +8,15 @@ no external scripts.
 
 Hosted copy: <https://spacegho.st/melodica/app/>
 
+
+The spacegho.st/melodica/ site Worker (the landing page, downloads, the relay
+`/melodica/api/`, GitHub sign-in compatibility routes, and the R2 mirror of
+`/melodica/app/`) lives in `site/` (folded in from Spaceghost/melodica-site
+with its history on 2026-11-09). Deploy: `cd site && npx wrangler deploy`;
+publish a release: `node site/scripts/sync.mjs melodica-web` (or the app's
+name). CI: `.github/workflows/site.yml` (tests, dry run; deploys from master
+when the `cloudflare` environment has `CLOUDFLARE_API_TOKEN`). `site/` is
+left out of the public melodica.h snapshot.
 ## Access through the spacegho.st relay
 
 The spacegho.st relay can run open (anyone may log in) or by allow-list
