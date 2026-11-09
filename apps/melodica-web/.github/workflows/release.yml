@@ -29,6 +29,8 @@ jobs:
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF_NAME#v}"; else v="0.0.0-$(git rev-parse --short HEAD)"; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: Fetch the shared Scrobbles UI (pinned, sha256-checked)
+        run: scripts/fetch-scrobble-ui.sh
       - name: Build dist/
         run: scripts/build.sh
         env:
@@ -69,7 +71,7 @@ jobs:
             echo
             echo "## Assets"
             echo
-            echo "- \`melodica-web-$v.tar.gz\`: the built site. Unpacks to \`dist/\` (index.html, app.js, piano.js, bridge.js, account.js, app.css, melodica.js, melodica.wasm, licenses)."
+            echo "- \`melodica-web-$v.tar.gz\`: the built site. Unpacks to \`dist/\` (index.html, app.js, piano.js, bridge.js, account.js, app.css, melodica.js, melodica.wasm, licenses, and vendor/scrobble-ui/: the shared Scrobbles UI from Spaceghost/spaceghost-scrobble, pinned in scrobble-ui.pin)."
             echo "- \`melodica-web-$v-src.tar.gz\`: source tree including the vendored melodica.h."
             echo "- \`SHA256SUMS\`"
             echo

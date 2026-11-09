@@ -155,6 +155,7 @@ test.beforeAll(async () => {
   // Scrobbles on the same origin; off unless a scrobbling test turns it on (no notice elsewhere).
   scrobbles = makeScrobbles({ who: (t) => account.who(t) });
   scrobbles.defaultOn = false;
+  scrobbles.attach(server);
   // The page talks to the fake relay (the allow-list in front of the tuner), as the
   // hosted page talks to spacegho.st/melodica/api/.
   relay = makeRelay({ upstream: `${tuner.https}/services/json/`, access: account });
@@ -162,6 +163,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  if (scrobbles) scrobbles.closeSockets();
   if (server) await new Promise((ok) => server.close(ok));
   if (tuner.proc) tuner.proc.kill('SIGTERM');
   if (tuner.dir) await rm(tuner.dir, { recursive: true, force: true });
@@ -434,7 +436,7 @@ test.describe.serial('usernames through the relay', () => {
     await expect(sheet).toBeHidden();
     await expect(page.locator('#signed-in')).toHaveText('moonlit');
     expect(account.person(tuner.user)).toMatchObject({ username: 'moonlit', chosen: true });
-    await expect(page.locator('header')).not.toContainText('@');
+    await expect(page.locator('header.top')).not.toContainText('@');
     expect(errors).toEqual([]);
   });
 
@@ -600,17 +602,23 @@ test.describe.serial('remember me on this device', () => {
 // The listens scroll inside their own box (about 15 rows; at most 60vh on phones): the
 // page's own scrolling never loads more, scrolling the box does, and the page footer
 // stays reachable below it.
+// The listens are the shared Scrobbles UI's (mountListens into #sui-listens, the box).
+const LISTEN_ROWS = '#sui-listens li.hist';
 async function scrollListensBox(page, width) {
-  const box = page.locator('#listens-box');
+  const box = page.locator('#sui-listens');
+  await expect.poll(async () => page.locator(LISTEN_ROWS).count()).toBeGreaterThan(0);
+  await page.waitForTimeout(800);
+  const first = await page.locator(LISTEN_ROWS).count();
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
   await page.waitForTimeout(800);
-  expect(await page.locator('#listens li').count(), 'scrolling the page loads nothing').toBe(15);
-  for (let i = 0; i < 6 && await page.locator('#listens li').count() < 40; i++) {
+  expect(await page.locator(LISTEN_ROWS).count(), 'scrolling the page loads nothing').toBe(first);
+  expect(first, 'one page at first').toBeLessThan(40);
+  for (let i = 0; i < 8 && await page.locator(LISTEN_ROWS).count() < 40; i++) {
     await box.evaluate((b) => { b.scrollTop = b.scrollHeight; });
-    await page.waitForTimeout(600);
+    await page.waitForTimeout(700);
   }
-  await expect(page.locator('#listens li')).toHaveCount(40);
-  await expect(page.locator('#listens-more')).toBeHidden();
+  await expect(page.locator(LISTEN_ROWS)).toHaveCount(40);
+  expect(await box.evaluate((b) => [...b.querySelectorAll('*')].filter((e) => e !== b && /auto|scroll/.test(getComputedStyle(e).overflowY) && e.scrollHeight > e.clientHeight).length), 'no nested scrollbar').toBe(0);
   const m = await box.evaluate((b) => ({ client: b.clientHeight, scroll: b.scrollHeight, rem: parseFloat(getComputedStyle(document.documentElement).fontSize), vh: innerHeight, overflow: getComputedStyle(b).overflowY }));
   report[`listensBox${width}`] = m;
   expect(m.overflow).toBe('auto');
@@ -627,7 +635,6 @@ test.describe.serial('scrobbling to spacegho.st', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await begin(page, { ads: 0, scrobble: true });
     await expect(page.locator('#listens-panel')).toBeVisible();
-    await expect(page.locator('#listens li')).toHaveCount(15);
     await scrollListensBox(page, 390);
     await page.screenshot({ path: resolve(ARTIFACTS, 'scrobble-listens-390.png'), fullPage: true });
   });
@@ -645,9 +652,9 @@ test.describe.serial('scrobbling to spacegho.st', () => {
     await expect(page.locator('#scrobble-on')).toBeChecked();
     await expect(page.locator('#scrobble-board')).toBeChecked();
     await expect(page.locator('#scrobble-crew-wrap')).toBeVisible();
-    await expect(page.locator('#scrobble-crew')).toHaveAttribute('href', `${origin}/scrobble/crew`);
-    await expect(page.locator('#scrobble-leaderboard')).toHaveAttribute('href', `${origin}/scrobble/leaderboard`);
-    await expect(page.locator('#scrobble-dashboard')).toHaveAttribute('href', `${origin}/scrobble/`);
+    await expect(page.locator('#scrobble-crew')).toHaveAttribute('href', `${origin}/melodica/map/`);
+    await expect(page.locator('#scrobble-leaderboard')).toHaveAttribute('href', `${origin}/melodica/leaderboard/`);
+    await expect(page.locator('#scrobble-dashboard')).toHaveAttribute('href', `${origin}/melodica/listens/`);
     await expect(page.locator('#username-change label')).toHaveText('Listener name (your username)');
     await page.screenshot({ path: resolve(ARTIFACTS, 'scrobble-settings.png') });
 
@@ -676,9 +683,65 @@ test.describe.serial('scrobbling to spacegho.st', () => {
     if ((await page.locator('#account').getAttribute('open')) === null) await page.click('#account summary');
     await page.click('#logout');
     await expect(page.locator('#app')).toHaveAttribute('data-view', 'login');
-    await expect(page.locator('#listens li')).toHaveCount(0);
+    await expect(page.locator(LISTEN_ROWS)).toHaveCount(0);
     await expect(page.locator('#listens-panel')).toBeHidden();
     await expect(page.locator('#scrobble-settings')).toBeHidden();
+  });
+
+  test('panels: leaderboard, live listens, and the map for the crew, at 1280 and 390 wide', async ({ page }) => {
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    scrobbles.crewViewers.add(key());
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e)));
+    const csp = [];
+    await page.addInitScript(() => document.addEventListener('securitypolicyviolation', (e) => (window.__csp = window.__csp || []).push(`${e.violatedDirective} ${e.blockedURI}`)));
+    await begin(page, { ads: 0, scrobble: true });
+    await expect(page.locator('#site-nav a[aria-current="page"]')).toHaveAttribute('data-k', 'app');
+    for (const k of ['home', 'listens', 'leaderboard', 'map', 'extension', 'account']) {
+      const path = k === 'home' ? '/melodica/' : `/melodica/${k}/`;
+      await expect(page.locator(`#site-nav a[data-k="${k}"]`)).toHaveAttribute('href', `${origin}${path}`);
+    }
+    await expect(page.locator(`${LISTEN_ROWS}`).first()).toBeVisible();
+    // A listen arriving over the live channel (the fake's WebSocket).
+    await expect(page.locator('#live-state')).toHaveText('live', { timeout: 10_000 });
+    expect(scrobbles.requests.filter((r) => r.startsWith('WS ')), 'the WebSocket carried the bearer').not.toContain('WS /scrobble/api/live (refused)');
+    scrobbles.emit(key(), { type: 'listen', listen: { id: 'live-1', listened_at: Math.floor(Date.now() / 1000), session: Math.floor(Date.now() / 1000), artist: 'Live Artist', title: 'Live Song' } });
+    await expect(page.locator(`${LISTEN_ROWS} .hist-title`, { hasText: 'Live Song' })).toBeVisible({ timeout: 10_000 });
+    await page.click('#tab-leaderboard');
+    await expect(page.locator('#pane-leaderboard')).toBeVisible();
+    await expect(page.locator('#pane-listens')).toBeHidden();
+    await expect(page.locator('#sui-leaderboard')).toContainText('Slow Light', { timeout: 10_000 });
+    await page.locator('#listens-panel').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: resolve(ARTIFACTS, 'panels-leaderboard-1280.png') });
+    await expect(page.locator('#tab-map')).toBeVisible();
+    await page.locator('#tab-map').press('ArrowRight'); // keyboard: wraps to the first tab
+    await expect(page.locator('#tab-listens')).toHaveAttribute('aria-selected', 'true');
+    await page.click('#tab-map');
+    await expect(page.locator('#sui-map svg').first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('#sui-map')).not.toContainText('Invalid');
+    expect(scrobbles.requests.some((r) => r.startsWith('GET /scrobble/api/game')), 'the map read the game').toBe(true);
+    await page.locator('#listens-panel').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: resolve(ARTIFACTS, 'panels-map-1280.png') });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(500);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth), 'no sideways page scroll at 390').toBeLessThanOrEqual(390);
+    await page.locator('#listens-panel').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: resolve(ARTIFACTS, 'panels-map-390.png') });
+    await page.click('#tab-leaderboard');
+    await page.screenshot({ path: resolve(ARTIFACTS, 'panels-leaderboard-390.png') });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: resolve(ARTIFACTS, 'panels-nav-390.png') });
+    expect(errors, 'page errors').toEqual([]);
+    expect(await page.evaluate(() => window.__csp || []), 'CSP violations').toEqual([]);
+  });
+
+  test('no map for a listener outside the crew', async ({ page }) => {
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    await begin(page, { ads: 0, scrobble: true });
+    await expect(page.locator('#listens-panel')).toBeVisible();
+    await expect(page.locator(LISTEN_ROWS).first()).toBeVisible();
+    await expect(page.locator('#tab-map')).toBeHidden();
+    expect(scrobbles.requests.filter((r) => r.startsWith('GET /scrobble/api/game')), 'no game request').toEqual([]);
   });
 
   test('no crew link for a listener the server does not mark as crew', async ({ page }) => {
@@ -693,10 +756,9 @@ test.describe.serial('scrobbling to spacegho.st', () => {
     const evidence = await begin(page, { ads: 1, scrobble: true });
     await expect(page.locator('#listens-panel')).toBeVisible();
     expect(scrobbles.requests[0], 'the first request').toBe('GET /scrobble/api/me');
-    await expect.poll(async () => page.locator('#listens li').count()).toBeGreaterThanOrEqual(15);
-    await expect(page.locator('#listens li .hist-title').first()).toHaveText('Seed Song 1');
+    await expect(page.locator(`${LISTEN_ROWS} .hist-title`).first()).toHaveText('Seed Song 1');
     await scrollListensBox(page, 1280);
-    expect(scrobbles.requests.filter((r) => r.startsWith('GET /scrobble/api/me/listens?') && /before=/.test(r)).length, 'pages after the first').toBe(2);
+    expect(scrobbles.requests.filter((r) => r.startsWith('GET /scrobble/api/me/listens?') && /cursor=/.test(r)).length, 'pages after the first, by cursor').toBeGreaterThanOrEqual(1);
     await page.screenshot({ path: resolve(ARTIFACTS, 'scrobble-listens.png'), fullPage: true });
 
     // A song, an ad, and the song after it play through.
@@ -716,7 +778,7 @@ test.describe.serial('scrobbling to spacegho.st', () => {
     expect(posts.every((p) => p.client === 'melodica-web')).toBe(true);
     expect(posts.map((p) => p.title), 'never the ad').not.toContain(adTitle);
     for (const p of posts) expect(logged, `${p.title} is a song from the play log`).toContain(p.title);
-    await expect(page.locator('#listens-board')).toHaveAttribute('href', `${origin}/scrobble/leaderboard`);
+    await expect(page.locator('#site-nav a[data-k="leaderboard"]')).toHaveAttribute('href', `${origin}/melodica/leaderboard/`);
     expect(evidence.errors).toEqual([]);
   });
 });

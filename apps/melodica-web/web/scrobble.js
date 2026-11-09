@@ -50,7 +50,9 @@ export class Scrobbles {
   }
 
   get links() {
-    return { dashboard: `${this.base}/`, leaderboard: `${this.base}/leaderboard`, crew: `${this.base}/crew` };
+    // The pages under /melodica/ (spaceghost-scrobble docs/CLIENTS.md); the old /scrobble/ pages redirect there.
+    const site = this.base.slice(0, -BASE_PATH.length);
+    return { dashboard: `${site}/melodica/listens/`, leaderboard: `${site}/melodica/leaderboard/`, crew: `${site}/melodica/map/` };
   }
 
   async call(path, init = {}) {

@@ -79,11 +79,13 @@ test.beforeAll(async () => {
       res.writeHead(404); res.end('not found');
     }
   });
+  scrobbles.attach(server);
   await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
   base = `http://127.0.0.1:${server.address().port}${APP_PATH}`;
 });
 
 test.afterAll(async () => {
+  scrobbles.closeSockets();
   if (server) await new Promise((ok) => server.close(ok));
 });
 
@@ -453,7 +455,7 @@ test.describe.serial('sessions with the extension (docs/BRIDGE.md 4)', () => {
     const evidence = await open(page, { session: true, extSession: SESSION('S7'), credential: { email: 'listener@example.com', password: 'pw-S7-secret' },
       access: 'eyJhbGciOiJFUzI1NiJ9.eyJleHAiOjQxMDI0NDQ4MDB9.sig' });
     await expect(page.locator('#listens-panel')).toBeVisible({ timeout: 10_000 });
-    await expect(page.locator('#listens li')).toHaveCount(3);
+    await expect(page.locator('#sui-listens li.hist')).toHaveCount(3);
     await expect(page.locator('#scrobble-notice')).toBeHidden();
     await page.locator('#station-list button.station', { hasText: 'Aurora Fields Radio' }).click();
     await expect(page.locator('#np-title')).toHaveText('Slow Light');
@@ -464,6 +466,22 @@ test.describe.serial('sessions with the extension (docs/BRIDGE.md 4)', () => {
     await page.click('#account summary');
     await expect(page.locator('#scrobble-on')).toBeChecked();
     expect(scrobbles.posts.map((p) => p.body && p.body.listen_type), 'listens the page submitted').toEqual([]);
+    await finish(page, evidence, info);
+  });
+
+  test('remote mode with only the spacegho.st account: the listens and leaderboard panels use its token', async ({ page }, info) => {
+    scrobbles.requests.length = 0;
+    scrobbles.auth.length = 0;
+    scrobbles.posts.length = 0;
+    await page.addInitScript(() => { if (!sessionStorage.getItem('t')) { sessionStorage.setItem('t', '1'); localStorage.setItem('melodica.account', JSON.stringify({ access: 'ACCOUNT-TOKEN', refresh: 'R', expiresAt: Date.now() + 3600_000 })); } });
+    const evidence = await open(page, { session: true, extSession: SESSION('S8'), credential: null });
+    await expect(page.locator('#app')).toHaveAttribute('data-mode', 'remote');
+    await expect(page.locator('#listens-panel')).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('#sui-listens li.hist')).toHaveCount(3);
+    await page.click('#tab-leaderboard');
+    await expect(page.locator('#sui-leaderboard')).toContainText('Slow Light');
+    expect(scrobbles.auth.filter((a) => a !== 'Bearer ACCOUNT-TOKEN'), 'every Scrobbles request carried the account token').toEqual([]);
+    expect(scrobbles.posts, 'nothing submitted').toEqual([]);
     await finish(page, evidence, info);
   });
 

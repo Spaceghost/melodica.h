@@ -5,3 +5,4 @@ node_modules/
 tests/artifacts/playwright/
 tests/artifacts/login-*.png
 tests/artifacts/smoke-web*
+web/vendor/

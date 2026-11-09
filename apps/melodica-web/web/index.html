@@ -6,12 +6,22 @@
 <meta name="referrer" content="no-referrer">
 <meta name="color-scheme" content="dark light">
 <title>melodica — Pandora in the browser</title>
+<link rel="stylesheet" href="vendor/scrobble-ui/scrobble-ui.css">
 <link rel="stylesheet" href="app.css">
 <link rel="icon" href="data:,">
 </head>
 <body>
 <header class="top">
   <h1 class="brand">melodica <span class="brand-tag">web</span></h1>
+  <nav id="site-nav" class="sui-nav site-nav" aria-label="melodica">
+    <a href="https://spacegho.st/melodica/" data-k="home">melodica</a>
+    <a href="https://spacegho.st/melodica/app/" data-k="app" aria-current="page">Player</a>
+    <a href="https://spacegho.st/melodica/listens/" data-k="listens">Listens</a>
+    <a href="https://spacegho.st/melodica/leaderboard/" data-k="leaderboard">Leaderboard</a>
+    <a href="https://spacegho.st/melodica/map/" data-k="map">Map</a>
+    <a href="https://spacegho.st/melodica/extension/" data-k="extension">Extension</a>
+    <a href="https://spacegho.st/melodica/account/" data-k="account">Account</a>
+  </nav>
   <div class="top-right">
     <details id="account" class="account" hidden>
       <summary class="account-summary" title="Account menu">
@@ -28,9 +38,9 @@
           <label class="check menu-check"><input id="scrobble-on" type="checkbox"><span>Scrobble to spacegho.st</span></label>
           <label class="check menu-check"><input id="scrobble-board" type="checkbox"><span>Show me on the leaderboard</span></label>
           <p id="scrobble-message" class="message" role="status"></p>
-          <p class="scrobble-links fine"><a id="scrobble-dashboard" href="https://spacegho.st/scrobble/" rel="noopener">Your listens</a> ·
-            <a id="scrobble-leaderboard" href="https://spacegho.st/scrobble/leaderboard" rel="noopener">Leaderboard</a><span id="scrobble-crew-wrap" hidden> ·
-            <a id="scrobble-crew" href="https://spacegho.st/scrobble/crew" rel="noopener">Crew</a></span></p>
+          <p class="scrobble-links fine"><a id="scrobble-dashboard" href="https://spacegho.st/melodica/listens/" rel="noopener">Your listens</a> ·
+            <a id="scrobble-leaderboard" href="https://spacegho.st/melodica/leaderboard/" rel="noopener">Leaderboard</a><span id="scrobble-crew-wrap" hidden> ·
+            <a id="scrobble-crew" href="https://spacegho.st/melodica/map/" rel="noopener">Map</a></span></p>
         </div>
         <form id="username-change" class="username-change" hidden novalidate>
           <label class="field" for="username-change-input"><span>Listener name (your username)</span></label>
@@ -189,14 +199,31 @@
         <ol id="history" class="history"></ol>
         <p id="history-empty" class="fine">Songs you hear will collect here, with their ratings.</p>
       </section>
-      <section id="listens-panel" class="panel listens" aria-labelledby="listens-head" hidden>
-        <div class="panel-head"><h3 id="listens-head">Your listens</h3>
-          <a id="listens-board" class="fine nowrap" href="https://spacegho.st/scrobble/leaderboard" rel="noopener">Leaderboard</a></div>
-        <div id="listens-box" class="listens-box" tabindex="0" aria-label="Your listens, scrollable">
-          <ol id="listens" class="history listens-list"></ol>
-          <button id="listens-more" type="button" class="quiet listens-more" hidden>Show more</button>
+      <section id="listens-panel" class="panel listens scrobbles" aria-label="Scrobbles" hidden>
+        <div class="panel-head">
+          <div class="tabs" role="tablist" aria-label="Scrobbles">
+            <button id="tab-listens" type="button" role="tab" class="tab" aria-selected="true" aria-controls="pane-listens" data-pane="listens">Your listens</button>
+            <button id="tab-leaderboard" type="button" role="tab" class="tab" aria-selected="false" aria-controls="pane-leaderboard" data-pane="leaderboard" tabindex="-1">Leaderboard</button>
+            <button id="tab-map" type="button" role="tab" class="tab" aria-selected="false" aria-controls="pane-map" data-pane="map" tabindex="-1" hidden>Map</button>
+          </div>
+          <span id="live-state" class="fine nowrap live-state" role="status"></span>
         </div>
-        <p id="listens-empty" class="fine">Listens counted on spacegho.st show here.</p>
+        <div id="pane-listens" class="pane" role="tabpanel" aria-labelledby="tab-listens">
+          <div id="sui-listens" class="sui-host listens-box" tabindex="0" aria-label="Your listens, scrollable"></div>
+          <div id="listens-fallback" hidden>
+            <div id="listens-box" class="listens-box" tabindex="0" aria-label="Your listens, scrollable">
+              <ol id="listens" class="history listens-list"></ol>
+              <button id="listens-more" type="button" class="quiet listens-more" hidden>Show more</button>
+            </div>
+            <p id="listens-empty" class="fine">Listens counted on spacegho.st show here.</p>
+          </div>
+        </div>
+        <div id="pane-leaderboard" class="pane" role="tabpanel" aria-labelledby="tab-leaderboard" hidden>
+          <div id="sui-leaderboard" class="sui-host"></div>
+        </div>
+        <div id="pane-map" class="pane" role="tabpanel" aria-labelledby="tab-map" hidden>
+          <div id="sui-map" class="sui-host sui-map-host"></div>
+        </div>
       </section>
     </section>
   </section>

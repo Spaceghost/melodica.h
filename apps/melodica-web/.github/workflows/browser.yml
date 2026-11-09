@@ -39,6 +39,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Fetch the shared Scrobbles UI (pinned, sha256-checked)
+        run: scripts/fetch-scrobble-ui.sh
       - name: Build dist/
         run: scripts/build.sh
       - name: Static checks
@@ -96,6 +98,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Fetch the shared Scrobbles UI (pinned, sha256-checked)
+        run: scripts/fetch-scrobble-ui.sh
       - name: Build dist/
         run: scripts/build.sh
       - name: Install Playwright

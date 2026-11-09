@@ -44,6 +44,12 @@ emcc -O2 -std=c99 -Wall -Wextra \
     -o dist/melodica.js
 
 cp web/index.html web/app.js web/app.css web/piano.js web/bridge.js web/account.js web/vault.js web/scrobble.js dist/
+# The shared Scrobbles UI, fetched by scripts/fetch-scrobble-ui.sh (pinned, not in git).
+for f in scrobble-ui.js scrobble-ui.css; do
+  [ -f "web/vendor/scrobble-ui/$f" ] || { echo "build: web/vendor/scrobble-ui/$f missing: run scripts/fetch-scrobble-ui.sh" >&2; exit 1; }
+done
+mkdir -p dist/vendor/scrobble-ui
+cp web/vendor/scrobble-ui/scrobble-ui.js web/vendor/scrobble-ui/scrobble-ui.css dist/vendor/scrobble-ui/
 cp LICENSE dist/LICENSE
 cp "$VENDOR/LICENSE.libpiano" dist/LICENSE.libpiano
 cp "$VENDOR/THIRD_PARTY_NOTICES.md" dist/THIRD_PARTY_NOTICES.md

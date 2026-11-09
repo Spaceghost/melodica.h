@@ -349,6 +349,27 @@ button.round:disabled { opacity: 0.4; }
 .listens-box:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 @media (max-width: 760px) { .listens-box { max-height: min(calc(15 * 3.3rem), 60vh); } }
 
+/* the site nav shared with spacegho.st/melodica/ (spaceghost-scrobble docs/CLIENTS.md) */
+.top { flex-wrap: wrap; }
+.site-nav { display: flex; gap: 0.15rem; flex: 1 1 auto; justify-content: center; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.site-nav::-webkit-scrollbar { display: none; }
+.site-nav a { font: 600 0.72rem var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); text-decoration: none; padding: 0.45rem 0.55rem; border-radius: 999px; white-space: nowrap; }
+.site-nav a:hover { color: var(--gold-2); }
+.site-nav a[aria-current="page"] { color: var(--gold); background: var(--ink-2); }
+.site-nav a[data-k="home"] { display: none; }
+@media (max-width: 760px) { .site-nav { order: 3; flex-basis: 100%; justify-content: flex-start; margin: 0 -0.3rem; } }
+
+/* the Scrobbles panels: tabs over the shared UI's views */
+.scrobbles .panel-head { align-items: center; }
+.tabs { display: flex; gap: 0.25rem; flex-wrap: wrap; }
+.tab { font: 1.05rem var(--display); color: var(--muted); background: none; border: 1px solid transparent; border-radius: 999px; padding: 0.2rem 0.75rem; }
+.tab[aria-selected="true"] { color: var(--gold-2); border-color: var(--line); background: var(--ink-2); }
+.tab:hover { color: var(--gold-2); }
+.live-state:empty { display: none; }
+.live-state[data-state="open"]::before { content: ''; display: inline-block; width: 0.5em; height: 0.5em; border-radius: 50%; background: var(--gold); margin-right: 0.35em; vertical-align: 0.05em; }
+.sui-host { min-width: 0; }
+.sui-map-host { min-height: 240px; }
+
 /* "Remember me on this device" in the account menu */
 .menu-check { padding: 0.45rem 0.8rem; font-size: 0.85rem; }
 
@@ -411,3 +432,10 @@ button.primary.danger:hover { background: var(--warn); border-color: var(--warn)
 .remote-signin { margin-top: 12px; display: grid; gap: 8px; justify-items: start; }
 .remote-signin p { margin: 0; }
 .remote-signin[hidden] { display: none; }
+@media (max-width: 760px) {
+  .tab { font-size: 0.95rem; padding: 0.2rem 0.55rem; }
+}
+@media (max-width: 480px) {
+  .live-state { font-size: 0; } /* the dot alone */
+  .live-state[data-state="open"]::before { width: 0.6rem; height: 0.6rem; margin: 0; }
+}

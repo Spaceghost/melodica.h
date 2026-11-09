@@ -83,6 +83,7 @@ const el = {
   listensPanel: $('listens-panel'), listens: $('listens'), listensEmpty: $('listens-empty'), listensMore: $('listens-more'),
   scrobbleSettings: $('scrobble-settings'), scrobbleOn: $('scrobble-on'), scrobbleBoard: $('scrobble-board'),
   scrobbleMessage: $('scrobble-message'), scrobbleCrewWrap: $('scrobble-crew-wrap'), scrobbleNotice: $('scrobble-notice'),
+  listensFallback: $('listens-fallback'), liveState: $('live-state'), siteNav: $('site-nav'),
   audio: $('audio'),
 };
 
@@ -1123,6 +1124,15 @@ async function accountSignOut() {
   updateAccountLine();
   store.set(STORAGE.accountSignout, '1');
   deliverAccountSignout();
+  scrobblesAfterAccountChange();
+}
+
+// The spacegho.st account went away: the Scrobbles views start again with whatever
+// token remains (the relay's), or close when none does.
+async function scrobblesAfterAccountChange() {
+  if (!state.scrobble) return;
+  clearScrobbles();
+  if (await scrobbleToken()) loadScrobbles();
 }
 
 async function deliverAccountSignout() {
@@ -1142,6 +1152,7 @@ async function onExtensionAccountSignout() {
   await a.signOut();
   await refreshPolicy();
   updateAccountLine();
+  scrobblesAfterAccountChange();
 }
 
 // ---------------------------------------------------------------- username
@@ -1543,7 +1554,7 @@ function renderScrobbleSettings() {
   if (!sc || !sc.loaded) return;
   const links = state.scrobbles.links; // on this page's origin
   $('scrobble-dashboard').href = links.dashboard;
-  $('scrobble-leaderboard').href = $('listens-board').href = links.leaderboard;
+  $('scrobble-leaderboard').href = links.leaderboard;
   $('scrobble-crew').href = links.crew;
   el.scrobbleOn.checked = !!(sc.settings && sc.settings.scrobbling);
   el.scrobbleBoard.checked = !!(sc.settings && sc.settings.leaderboard);
@@ -1618,6 +1629,7 @@ async function loadScrobbles() {
     sc.ids.clear();
     addListens((me.recent || []).slice(0, PAGE_SIZE));
     renderScrobbleSettings();
+    startUi();
     if (scrobbleOn() && !state.remote) showScrobbleNotice();
     // A song already playing (a resume) still counts from here.
     if (!state.remote && state.song && !sc.tracker) scrobbleStart(state.song);
@@ -1750,6 +1762,7 @@ async function setScrobbleSetting(patch) {
 
 // Logout (here or in the extension): nothing of this listener stays on the page.
 function clearScrobbles() {
+  stopUi();
   clearTimeout(listensTimer);
   if (state.scrobble) state.scrobble.gen += 1;
   state.scrobble = null;
@@ -1760,7 +1773,116 @@ function clearScrobbles() {
   renderScrobbleSettings();
 }
 
+// ---------------------------------------------------------------- scrobbles panels
+// The shared Scrobbles UI (spaceghost-scrobble ui/, contract v1 in its docs/CLIENTS.md),
+// fetched pinned into vendor/scrobble-ui/ at build time: Your listens (live), Leaderboard
+// and, for the GitHub crew, the Map. It loads after the first /scrobble/api/me answer;
+// without it the listens list above (v0.9.0) is the fallback.
+const UI_MODULE = './vendor/scrobble-ui/scrobble-ui.js';
+const PANES = { listens: 'mountListens', leaderboard: 'mountLeaderboard', map: 'mountMap' };
+let ui = null;          // {mod, client, live, views, crew}
+let uiPane = 'listens';
+
+// Here the relay token first (as for submitting); in remote mode the spacegho.st account
+// first. null means the spacegho.st session cookie, when there is one.
+async function uiToken() {
+  if (state.remote) {
+    const a = state.account;
+    if (a && a.signedIn) { try { const t = await a.accessToken(); if (t) return t; } catch (_) { /* below */ } }
+  }
+  return (await scrobbleToken()) || null;
+}
+
+function uiLiveState(st) {
+  el.liveState.textContent = st === 'open' ? 'live' : st === 'polling' ? 'updating' : '';
+  el.liveState.dataset.state = st || '';
+}
+
+async function startUi() {
+  if (ui) return;
+  const mine = ui = { views: {}, crew: !!(state.scrobble && state.scrobble.crew) };
+  let mod;
+  try {
+    mod = await import(UI_MODULE);
+  } catch (err) {
+    console.debug('[scrobble-ui]', describeError(err));
+    if (ui === mine) el.listensFallback.hidden = false;
+    return;
+  }
+  if (ui !== mine) return; // signed out meanwhile
+  mine.mod = mod;
+  mine.client = mod.createClient({ base: location.origin, token: uiToken });
+  mine.live = mine.client.live();
+  mine.live.addEventListener('state', (e) => uiLiveState((e.detail && e.detail.state) || e.state));
+  el.listensFallback.hidden = true;
+  $('tab-map').hidden = !mine.crew;
+  if (uiPane === 'map' && !mine.crew) uiPane = 'listens';
+  showPane(uiPane, false);
+}
+
+function showPane(name, focus = true) {
+  uiPane = name;
+  for (const tab of el.listensPanel.querySelectorAll('[role="tab"]')) {
+    const on = tab.dataset.pane === name;
+    tab.setAttribute('aria-selected', String(on));
+    tab.tabIndex = on ? 0 : -1;
+    if (on && focus) tab.focus();
+  }
+  for (const k of Object.keys(PANES)) $(`pane-${k}`).hidden = k !== name;
+  if (!ui || !ui.mod || ui.views[name]) return;
+  const host = $(`sui-${name}`);
+  try {
+    const opts = { client: ui.client, live: ui.live };
+    if (name === 'listens') { opts.pageSize = 25; opts.scrollRoot = host; } // scrolls inside its own box (0.9.1)
+    if (name === 'leaderboard') opts.window = '7d';
+    ui.views[name] = ui.mod[PANES[name]](host, opts);
+  } catch (err) {
+    console.debug('[scrobble-ui]', describeError(err));
+  }
+}
+
+function stopUi() {
+  const mine = ui;
+  ui = null;
+  uiPane = 'listens';
+  if (mine) {
+    for (const v of Object.values(mine.views)) { try { v.unmount(); } catch (_) { /* gone */ } }
+    try { if (mine.live) mine.live.close(); } catch (_) { /* closed */ }
+  }
+  for (const k of Object.keys(PANES)) $(`sui-${k}`).replaceChildren();
+  $('tab-map').hidden = true;
+  el.listensFallback.hidden = true;
+  uiLiveState('');
+  showPane('listens', false);
+}
+
+function installUiEvents() {
+  const tabs = () => [...el.listensPanel.querySelectorAll('[role="tab"]')].filter((t) => !t.hidden);
+  for (const tab of el.listensPanel.querySelectorAll('[role="tab"]')) {
+    tab.addEventListener('click', () => showPane(tab.dataset.pane));
+    tab.addEventListener('keydown', (ev) => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(ev.key)) return;
+      ev.preventDefault();
+      const list = tabs();
+      const i = list.indexOf(tab);
+      const next = ev.key === 'Home' ? list[0] : ev.key === 'End' ? list[list.length - 1]
+        : list[(i + (ev.key === 'ArrowRight' ? 1 : list.length - 1)) % list.length];
+      showPane(next.dataset.pane);
+    });
+  }
+  for (const k of Object.keys(PANES)) {
+    $(`sui-${k}`).addEventListener('sui:error', (ev) => console.debug('[scrobble-ui]', k, ev.detail && ev.detail.code));
+    $(`sui-${k}`).addEventListener('sui:live', (ev) => uiLiveState(ev.detail && ev.detail.state));
+  }
+  // The site nav: same pages on this origin (a self-hosted copy keeps its own host).
+  for (const a of el.siteNav.querySelectorAll('a')) {
+    const u = new URL(a.getAttribute('href'));
+    a.href = `${location.origin}${u.pathname}`;
+  }
+}
+
 function installScrobbleEvents() {
+  installUiEvents();
   el.scrobbleOn.addEventListener('change', () => setScrobbleSetting({ scrobbling: el.scrobbleOn.checked }));
   el.scrobbleBoard.addEventListener('change', () => setScrobbleSetting({ leaderboard: el.scrobbleBoard.checked }));
   el.listensMore.addEventListener('click', () => moreListens());

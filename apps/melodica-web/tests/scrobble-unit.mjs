@@ -68,7 +68,7 @@ log('body ok');
   const fetch = async (url, init) => { calls.push({ url, init }); return answer(url, init); };
   let token = 'mat.one';
   const s = new Scrobbles({ origin: 'https://spacegho.st', fetch, token: async () => token });
-  assert.deepEqual(s.links, { dashboard: 'https://spacegho.st/scrobble/', leaderboard: 'https://spacegho.st/scrobble/leaderboard', crew: 'https://spacegho.st/scrobble/crew' });
+  assert.deepEqual(s.links, { dashboard: 'https://spacegho.st/melodica/listens/', leaderboard: 'https://spacegho.st/melodica/leaderboard/', crew: 'https://spacegho.st/melodica/map/' });
   await s.submit('single', { title: 'S', artist: 'B' }, 200, 1700000000.7);
   const c = calls.at(-1);
   assert.equal(c.url, 'https://spacegho.st/scrobble/api/me/listens');

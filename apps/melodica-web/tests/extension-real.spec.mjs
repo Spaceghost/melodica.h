@@ -145,6 +145,7 @@ test.beforeAll(async () => {
   await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
   backend = makeBackend(ORIGIN, {});
   scrobbles = makeScrobbles({ who: (t) => backend.who(t) });
+  scrobbles.attach(server);
   backend.allow(tuner.user, { inserts: true });
   // A chosen username: no "Pick a username" sheet over the page when it plays on its own.
   backend.setPerson(tuner.user, { username: 'tuner_listener', chosen: true });
@@ -170,6 +171,7 @@ function launch(dir, withExtension) {
 
 test.afterAll(async () => {
   if (context) await context.close().catch(() => {});
+  if (scrobbles) scrobbles.closeSockets();
   if (server) await new Promise((ok) => server.close(ok));
   if (tuner.proc) tuner.proc.kill('SIGTERM');
   for (const d of [tmp, tuner.dir]) if (d) await rm(d, { recursive: true, force: true }).catch(() => {});

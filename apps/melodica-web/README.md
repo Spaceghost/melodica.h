@@ -548,6 +548,12 @@ plays on its own without a new `auth.userLogin` (observed in
 
 ## Scrobbling
 
+The Listens, Leaderboard and Map panels are the shared Scrobbles UI from
+Spaceghost/spaceghost-scrobble (`ui/dist`), pinned by commit and sha256 in
+`scrobble-ui.pin`. `scripts/fetch-scrobble-ui.sh` fetches it at build time, and it
+is bundled in `dist/vendor/scrobble-ui/` and the release tarball but not kept in
+this repository.
+
 `web/scrobble.js`, against Spacegho.st Scrobbles
 (`https://spacegho.st/scrobble/`, on the page's own origin):
 
@@ -560,10 +566,17 @@ plays on its own without a new `auth.userLogin` (observed in
   not count. "Playing now" goes out when a song starts. Inserted items are excluded from submissions.
 - The bearer is the relay's access token (or the extension's, kept with a
   shared session), else the spacegho.st account's token.
-- "Your listens" shows the last 15 from the server and loads more as you
-  scroll. It links to the leaderboard. The menu links to your listens and the
-  leaderboard, and to Crew when the server says the account may see it
-  (GitHub accounts).
+- The Scrobbles panel has three tabs. "Your listens" updates live over
+  `wss://…/scrobble/api/live` (polling every 15 s when that fails) and scrolls
+  inside its own box: about 15 rows, at most 60vh on phones, with a fade at the
+  bottom, so the rest of the page stays reachable. "Leaderboard" is the 7-day,
+  30-day and all-time board. "Map" is the Conquest map, shown only when
+  `/scrobble/api/me` says `crew_viewer` (GitHub accounts).
+- In remote mode the panels use the spacegho.st account's token, else the
+  shared session's relay token, else the spacegho.st session cookie.
+- The site nav at the top links the pages under `/melodica/`: home, Player,
+  Listens, Leaderboard, Map, Extension and Account. The account menu links to
+  your listens, the leaderboard and, for the crew, the map.
 - The listener name is your username ("Listener name (your username)" in the
   account menu, the username rules above).
 - Only the side whose audio plays submits (`docs/BRIDGE.md` section 3). In
