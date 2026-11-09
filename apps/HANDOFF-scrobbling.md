@@ -25,8 +25,8 @@ progress when this was written. The main branch holds only what was pushed after
 
 | App | Scrobbling commit (branch) | CI | Live submit | listen:// |
 | --- | --- | --- | --- | --- |
-| xivpiano | 19b81f6 (integration/melodica) | green | done, read back | in progress (c145454 pushed, CI running) |
-| elpis | 9ff388c (master) | green (Windows build + Linux checks) | covered by the C# family (xivpiano) | in progress (786ae13 pushed, CI running) |
+| xivpiano | 19b81f6 (integration/melodica) | green | done, read back | done: c145454, CI green (chat command + IPC) |
+| elpis | 9ff388c (master) | green (Windows build + Linux checks) | covered by the C# family (xivpiano) | done: 786ae13, CI green (HKCU registry) |
 | pandoroid | 3fcabfa (master) | green | done | in progress (wip/scrobble) |
 | epimetheus | 616ac22 (dev), CI fix 134a855 | 134a855 Release green | done | in progress (wip/scrobble) |
 | pithos | cadd46f (master) | CI green; CodeQL failing (also failing before, at 685c964) | covered by the Python family (pydora) | in progress (wip/scrobble) |
