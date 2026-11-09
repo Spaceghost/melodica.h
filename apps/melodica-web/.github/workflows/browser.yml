@@ -28,7 +28,7 @@ on:
 
 jobs:
   local-dist:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -87,7 +87,7 @@ jobs:
           if-no-files-found: ignore
 
   smoke:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -170,7 +170,7 @@ jobs:
   # https://spacegho.st/extensions/dl/… like any browser.
   extension-real:
     needs: smoke
-    runs-on: [self-hosted, linux, x64, bak]
+    runs-on: [self-hosted, linux, x64, fedora]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4

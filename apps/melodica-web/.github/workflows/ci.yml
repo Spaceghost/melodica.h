@@ -8,8 +8,22 @@ on:
   workflow_dispatch:
 
 jobs:
+  ui-pin:
+    runs-on: [self-hosted, linux, x64, bak]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Fetch the shared Scrobbles UI (pinned, sha256-checked)
+        run: scripts/fetch-scrobble-ui.sh
+      - name: The shared UI pin is at most one release behind live
+        # The live manifest challenges GitHub-hosted runners; bak can read it.
+        run: node scripts/check-ui-pin.mjs web/vendor/scrobble-ui/scrobble-ui.js
+
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '"ubuntu-latest"') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -23,14 +37,6 @@ jobs:
           node-version: 22
       - name: Fetch the shared Scrobbles UI (pinned, sha256-checked)
         run: scripts/fetch-scrobble-ui.sh
-      - name: The shared UI pin is at most one release behind live
-        # Exit 1 (more than one release behind) fails; exit 2 (latest.json unreachable) warns.
-        run: |
-          rc=0
-          curl -fsS --retry 3 -A melodica-ci https://spacegho.st/scrobble/assets/ui/latest.json -o latest.json || rc=2
-          [ "$rc" = 0 ] && { node scripts/check-ui-pin.mjs web/vendor/scrobble-ui/scrobble-ui.js latest.json || rc=$?; }
-          if [ "$rc" = 2 ]; then echo "::warning::latest.json unreachable; ui pin not checked"; exit 0; fi
-          exit $rc
       - name: Build dist/
         run: scripts/build.sh
       - name: Static checks

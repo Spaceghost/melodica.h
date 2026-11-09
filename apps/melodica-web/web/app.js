@@ -1199,6 +1199,22 @@ function updateAccountLine() {
 }
 
 // Discovery, a finished sign-in round trip, the policy and the profile.
+// A panel route without any sign-in: a silent spacegho.st sign-in (prompt=none) so a
+// visitor already signed in on spacegho.st with GitHub sees the panel with no click. At
+// most once per route visit and never in a loop: the flag is set before leaving and
+// cleared by Try again (and by a sign-in that completes). Returns true when navigating.
+const PANEL_SILENT_KEY = 'melodica.account.panel-silent';
+async function silentPanelSignIn(name, { force = false } = {}) {
+  const a = state.account;
+  if (!a || !a.config || a.signedIn || state.remote || !PANES[name]) return false;
+  await state.savedReady;
+  if (state.saved || state.remote) return false;
+  if (!force && a.session.get(PANEL_SILENT_KEY) === '1') return false;
+  a.session.set(PANEL_SILENT_KEY, '1');
+  a.session.set(RETURN_KEY, ROUTE_PATH[name] || location.pathname);
+  try { location.assign(await a.startUrl({ prompt: 'none' })); return true; } catch (_) { a.session.remove(RETURN_KEY); return false; }
+}
+
 async function setupAccount() {
   const a = state.account;
   if (!(await a.discover())) return;
@@ -1210,17 +1226,12 @@ async function setupAccount() {
   const ret = a.session.get(RETURN_KEY);
   if (ret !== null && back.done) {
     a.session.remove(RETURN_KEY);
+    if (a.signedIn) a.session.remove(PANEL_SILENT_KEY);
     if (ret.startsWith(SHELL_BASE) && ret !== location.pathname) { history.replaceState(history.state, '', ret); renderRoute(routeOf(ret)); }
   }
-  // A panel route without any sign-in: a silent spacegho.st sign-in (prompt=none), once per
-  // browser session, so a GitHub-signed-in visitor sees the map with no click. When there is
-  // no session the answer is login_required and the panel shows Sign in with GitHub.
-  if (!back.done && !a.signedIn && PANES[routeOf(location.pathname)] && a.session.get(SILENT_KEY) !== '1') await state.savedReady;
-  if (!back.done && !a.signedIn && PANES[routeOf(location.pathname)] && !state.saved && !state.remote && a.session.get(SILENT_KEY) !== '1') {
-    a.session.set(SILENT_KEY, '1');
-    a.session.set(RETURN_KEY, location.pathname);
-    try { location.assign(await a.startUrl({ prompt: 'none' })); return; } catch (_) { a.session.remove(RETURN_KEY); }
-  }
+  // A panel route without any sign-in is handled by silentPanelSignIn (also when the
+  // visitor arrives on the player and moves to a panel route later).
+  if (!back.done && PANES[routeOf(location.pathname)] && await silentPanelSignIn(routeOf(location.pathname))) return;
   await refreshPolicy();
   if (a.signedIn) await a.profile();
   updateAccountLine();
@@ -2298,6 +2309,7 @@ async function stationFromSeeds(station) {
 // in parallel behind it and swaps the real state in; the session is checked by the
 // first request that needs it, never before the paint.
 const SNAP_KEY = 'melodica.snapshot';
+let leavingPage = false;
 const timing = (window.__mwTiming = window.__mwTiming || {});
 function mark(name) {
   if (timing[name] === undefined) timing[name] = performance.now();
@@ -2309,7 +2321,6 @@ function readSnapshot() {
   } catch (_) { return null; }
 }
 let snapTimer = 0;
-let pageLeaving = false; // pagehide: requests failing now are the page going away
 function saveSnapshot() {
   if (snapTimer) return;
   snapTimer = setTimeout(() => { snapTimer = 0; writeSnapshot(); }, 400);
@@ -2318,6 +2329,7 @@ function writeSnapshot() {
   const rs = state.remoteState;
   const signedIn = state.remote ? !!(rs && rs.loggedIn === true) : !!(state.client && state.client.fn && state.client.session());
   if (!signedIn) return;
+  if (!state.song && readSnapshot()) return; // keep the last song while background restore is pending
   const song = state.song && !state.song.isInsert ? state.song : null;
   const snapshot = {
     v: 1, mode: state.remote ? 'remote' : 'standalone', at: Date.now(),
@@ -2600,12 +2612,12 @@ function installResume() {
     log: (m) => console.debug('[copies]', m),
   });
   setInterval(() => { if (!el.audio.paused && !state.resuming) { persistLast(); saveSnapshot(); } }, PERSIST_MS);
-  addEventListener('pagehide', () => { pageLeaving = true; if (el.app.dataset.ready === 'true') writeSnapshot(); });
-  addEventListener('pageshow', () => { pageLeaving = false; });
+  addEventListener('pagehide', () => { leavingPage = true; if (el.app.dataset.ready === 'true') writeSnapshot(); });
   addEventListener('pagehide', () => persistLast({ leaving: true }));
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') persistLast({ leaving: true }); });
   // Back/forward from the page cache: the song as it was, paused, with Resume.
   addEventListener('pageshow', (e) => {
+    leavingPage = false;
     if (!e.persisted || state.remote || !state.song || state.song.isInsert || !el.audio.paused || state.resume) return;
     const rec = lastRecord({ station: state.station, song: state.song, position: el.audio.currentTime, queue: state.queue });
     if (rec) { state.resume = rec; setPlayIcon(false); updateResumeUi(); }
@@ -2669,7 +2681,22 @@ async function mountRouteUi(name, host, gen) {
     return;
   }
   if (gen !== routeGen) return;
+  // Arrived on the player and moved here: sign in silently first (once), else mount.
+  if (!(await uiToken())) { await state.accountReady; if (gen !== routeGen) return; if (await silentPanelSignIn(name)) return; }
+  if (gen !== routeGen) return;
   const client = mod.createClient({ base: location.origin, token: uiToken });
+  const api = client.api;
+  client.api = async (path, ...args) => {
+    const result = await api(path, ...args);
+    if (gen === routeGen) {
+      if (path === 'me') {
+        el.siteNav.querySelector('a[data-k="map"]').hidden = !result.crew_viewer;
+        if (name === 'map' && !result.crew_viewer) routeNotice(host, name, 'crew_only');
+      }
+      if (path === 'game') host.parentNode?.querySelector(':scope > .route-notice')?.remove();
+    }
+    return result;
+  };
   const live = client.live();
   const opts = { client, live };
   if (name === 'listens') { opts.pageSize = 25; opts.scrollRoot = host; }
@@ -2687,14 +2714,6 @@ async function mountRouteUi(name, host, gen) {
   try { view = mod[PANES[name]](host, opts); } catch (err) { console.debug('[scrobble-ui]', describeError(err)); }
   routeUi = { live, view };
   if (!view) routeNotice(host, name, 'mount_failed');
-  // The map's own "for the crew" line (it reads me first, without an error event): add the way on.
-  if (name === 'map' && view && typeof MutationObserver === 'function') {
-    const mo = new MutationObserver(() => {
-      if (gen !== routeGen) { mo.disconnect(); return; }
-      if (host.querySelector('.crew-only')) { mo.disconnect(); routeNotice(host, name, 'crew_only'); }
-    });
-    mo.observe(host, { subtree: true, attributes: true, attributeFilter: ['class'], childList: true });
-  }
 }
 
 // The panels read with whatever sign-in there is when they mount; when that changes (a
@@ -2732,7 +2751,11 @@ function routeNotice(host, name, code) {
   retry.type = 'button';
   retry.className = 'link';
   retry.textContent = 'Try again';
-  retry.addEventListener('click', remountRoute);
+  retry.addEventListener('click', async () => {
+    const tok = await uiToken();
+    if (!tok && await silentPanelSignIn(name, { force: true })) return;
+    remountRoute();
+  });
   n.replaceChildren(p, a, retry);
 }
 
@@ -2828,7 +2851,7 @@ async function main() {
   installResume();
   installScrobbleEvents();
   installMediaSession();
-  showIdle();
+  if (!snap || !snap.song) showIdle();
   updateRatingButtons();
   setPlayIcon(false);
   renderUpNext();
@@ -2904,7 +2927,7 @@ async function main() {
   await state.savedReady;
   if (state.remote) return;
   const saved = state.saved && (state.saved.session || state.saved.credential) ? state.saved : null;
-  if (saved && saved.session && snap && snap.mode === 'standalone' && quickResume(saved)) return;
+  if (saved && saved.session && snap && snap.mode === 'standalone' && await quickResume(saved)) return;
   if (!saved) {
     forgetSnapshot();
     markReady();
@@ -2936,7 +2959,7 @@ async function main() {
 // Pandora request checks the session, and PianoClient logs in again with the remembered
 // credential when Pandora or the relay no longer honour it. Only if that fails does the
 // login card show.
-function quickResume(saved) {
+async function quickResume(saved) {
   const s = saved.session;
   if (!state.client.restore(s)) return false;
   state.sessionMeta = { sid: s.sid, email: s.email, createdAt: s.createdAt };
@@ -2945,6 +2968,8 @@ function quickResume(saved) {
   state.client.restoreAccess(fresh ? saved.relay.token : '', fresh ? saved.relay.at : 0);
   if (s.email) store.set(STORAGE.email, s.email);
   updateStatus();
+  await offerResume();
+  if (state.remote) return true;
   markReady();
   (async () => {
     if (fresh) refreshPolicy();
@@ -2956,10 +2981,7 @@ function quickResume(saved) {
       await enterPlayer({ quiet: true });
       persistSession(); // a re-login meanwhile, or a new relay token
     } catch (err) {
-      if (state.remote) return;
-      // Leaving the page aborts the refresh; that is not a session ending (it used to
-      // drop the snapshot here, so every other reload restored the slow way).
-      if (pageLeaving || err.name === 'AbortError' || err.status === 0) return;
+      if (state.remote || leavingPage || err.name === 'AbortError' || err.status === 0) return;
       state.client.logout();
       state.sessionMeta = null;
       forgetSnapshot();

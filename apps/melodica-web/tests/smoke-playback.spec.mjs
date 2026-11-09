@@ -170,7 +170,7 @@ test.beforeAll(async () => {
   });
   await new Promise((ok) => server.listen(0, 'localhost', ok));
   origin = `http://localhost:${server.address().port}`;
-  account = makeBackend(origin);
+  account = makeBackend(origin, { github: { crew_map: {} } });
   // Scrobbles on the same origin; off unless a scrobbling test turns it on (no notice elsewhere).
   scrobbles = makeScrobbles({ who: (t) => account.who(t) });
   scrobbles.defaultOn = false;
@@ -822,6 +822,9 @@ test.describe.serial('the app shell', () => {
 
   test('deep links and reloads: each route is served the shell; signed out, the bar says Sign in to play', async ({ page }) => {
     test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    // This test is about serving the shell. The silent spacegho.st sign-in a panel route
+    // tries (a redirect through /oauth/authorize that lands back later) has its own tests.
+    await page.addInitScript(() => { try { sessionStorage.setItem('melodica.account.panel-silent', '1'); } catch (_) { /* unavailable */ } });
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: width > 760 ? 800 : 844 });
       for (const k of SHELL_ROUTES) {
@@ -841,30 +844,38 @@ test.describe.serial('the app shell', () => {
 
 // ---------------------------------------------------------------- the map on a phone (0.11.1)
 // knewter's report: Android Chrome, crew, signed in on spacegho.st with GitHub, no map at all.
-test.describe('the map on a phone', () => {
-  const { defaultBrowserType: _d, ...pixel } = devices['Pixel 7'];
-  test.use({ ...pixel, viewport: { width: 412, height: 839 } });
-  test('412 wide: signed out it offers Sign in with GitHub back to the map; with only the spacegho.st cookie a crew member sees the map', async ({ page, context }) => {
+for (const width of [412, 1280]) test.describe(`the crew map at ${width}`, () => {
+  const { defaultBrowserType, ...phone } = devices['Pixel 7'];
+  test.use(width === 412 ? { ...phone, viewport: { width, height: 839 } } : { viewport: { width, height: 800 } });
+  test('signed out it offers Sign in with GitHub back to the map; with only the spacegho.st cookie a crew member sees the map', async ({ page, context }) => {
     test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
     const errors = [];
     page.on('pageerror', (e) => errors.push(String(e)));
-    page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource|WebSocket connection to '[^']*\/scrobble\/api\/live' failed/.test(m.text())) errors.push(m.text()); });
+    page.on('console', (m) => {
+      const expected = /Failed to load resource/.test(m.text()) || /WebSocket connection to 'ws:\/\/localhost:\d+\/scrobble\/api\/live' failed: HTTP Authentication failed/.test(m.text());
+      if (m.type() === 'error' && !expected) errors.push(m.text());
+    });
     await page.goto(`${origin}/melodica/map/`);
     await expect(page.locator('#app')).toHaveAttribute('data-route', 'map');
     await expect(page.locator('#site-nav a[data-k="map"]')).toBeVisible();
     const signin = page.locator('#route-view .route-notice a', { hasText: 'Sign in with GitHub to see the crew map' });
     await expect(signin).toBeVisible({ timeout: 15_000 });
     expect(await signin.getAttribute('href')).toBe('/scrobble/auth/start?next=%2Fmelodica%2Fmap%2F');
-    await page.screenshot({ path: resolve(ARTIFACTS, 'map-phone-signedout-412.png') });
+    await page.screenshot({ path: resolve(ARTIFACTS, `map-signedout-${width}.png`) });
     // Signed in on spacegho.st (the cookie), never in the player: the map itself.
     const k = 'u:knewter-test';
     scrobbles.crewViewers.add(k);
     scrobbles.cookies.set('crew-cookie', k);
     await context.addCookies([{ name: 'scrobble_session', value: 'crew-cookie', url: origin }]);
     await page.reload();
-    await expect(page.locator('#route-body svg').first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('#route-body svg .fm-prov').first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('#site-nav a[data-k="map"]')).toBeVisible();
     await expect(page.locator('#route-view .route-notice')).toHaveCount(0);
-    await page.screenshot({ path: resolve(ARTIFACTS, 'map-phone-crew-412.png') });
+    await expect(page.locator('#route-body')).not.toContainText(/undefined|NaN/);
+    await expect(page.locator('#bar')).toBeVisible();
+    await page.getByRole('button', { name: 'Got it', exact: true }).click();
+    await page.locator('#route-body svg').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: resolve(ARTIFACTS, `map-crew-${width}.png`) });
     // Signed in but not crew: told so, with the button, never blank.
     scrobbles.crewViewers.delete(k);
     await page.reload();
@@ -873,6 +884,61 @@ test.describe('the map on a phone', () => {
     expect(errors, 'console errors').toEqual([]);
     await context.clearCookies();
   });
+  test('an OAuth session alone silently signs in and returns to the crew map', async ({ page }) => {
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    // Complete the provider callback locally; keep every request in this test on its fixture server.
+    const start = await page.request.get(`${origin}/oauth/github/start`, { maxRedirects: 0 });
+    const state = new URL(start.headers().location).searchParams.get('state');
+    await page.goto(`${origin}/oauth/github/callback?code=code-crew_map&state=${encodeURIComponent(state)}`);
+    await expect(page).toHaveURL(`${origin}/oauth/`);
+    await page.route(`${origin}/oauth/token`, async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      scrobbles.crewViewers.add(account.who(body.access_token));
+      await route.fulfill({ response });
+    });
+    const authorize = [];
+    page.on('request', (req) => {
+      const url = new URL(req.url());
+      if (url.pathname === '/oauth/authorize') authorize.push(url.searchParams.get('prompt'));
+    });
+    await page.goto(`${origin}/melodica/map/`);
+    await expect(page.locator('#route-body svg .fm-prov').first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('#site-nav a[data-k="map"]')).toBeVisible();
+    await expect(page).toHaveURL(`${origin}/melodica/map/`);
+    await expect(page.locator('#route-view .route-notice')).toHaveCount(0);
+    await expect(page.locator('#route-body')).not.toContainText(/undefined|NaN/);
+    expect(authorize).toEqual(['none']);
+    await page.getByRole('button', { name: 'Got it', exact: true }).click();
+    await page.locator('#route-body svg').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: resolve(ARTIFACTS, `map-oauth-${width}.png`) });
+  });
+});
+
+// The player first, then a panel route: the silent spacegho.st sign-in (prompt=none) runs
+// on arriving at the panel, not only when the page was opened on it. A spacegho.st account
+// that is crew gets the map, one that is not gets the invite-only text, none gets the button.
+test.describe('the map after the player (silent sign-in on the route change)', () => {
+  for (const crew of [true, false]) {
+    test(`${crew ? 'crew' : 'not crew'}: app, then the Map link`, async ({ page, context }) => {
+      test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+      scrobbles.crewAccounts = crew;
+      await signInAccount(page, `crewmap-${crew ? 'a' : 'b'}@example.com`, true);
+      await context.clearCookies({ name: 'scrobble_session' });
+      await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
+      await page.goto(`${origin}${APP_PATH}`);
+      await page.click('#site-nav a[data-k="map"]');
+      await expect(page).toHaveURL(`${origin}/melodica/map/`, { timeout: 20_000 });
+      if (crew) {
+        await expect(page.locator('#route-body svg').first()).toBeVisible({ timeout: 20_000 });
+        await expect(page.locator('#route-view .route-notice')).toHaveCount(0);
+      } else {
+        await expect(page.locator('#route-view .route-notice')).toContainText('invite-only', { timeout: 20_000 });
+        await expect(page.locator('#route-view .route-notice a', { hasText: 'Sign in with GitHub' })).toBeVisible();
+      }
+      scrobbles.crewAccounts = false;
+    });
+  }
 });
 
 // ---------------------------------------------------------------- Resume (0.11.0)
@@ -1053,9 +1119,15 @@ const PAINT_PROBE = () => {
     const app = document.getElementById('app');
     const vp = document.getElementById('view-player');
     const p = window.__paint;
-    if (app && vp && !vp.hidden && !app.dataset.restoring && p.visible === undefined) p.visible = performance.now();
+    if (app && vp && !vp.hidden && !app.dataset.restoring && p.visible === undefined) {
+      p.visible = performance.now();
+      p.title = document.getElementById('np-title').textContent;
+    }
     if (p.visible !== undefined && p.interactive === undefined && document.querySelector('#station-list button.station')
-      && (app.dataset.ready === 'true' || (app.dataset.view === 'player' && !app.dataset.restoring && !('snapshot' in app.dataset) && !('ready' in app.dataset) && !window.__mwTiming))) p.interactive = performance.now();
+      && (app.dataset.ready === 'true' || (app.dataset.view === 'player' && !app.dataset.restoring && !('snapshot' in app.dataset) && !('ready' in app.dataset) && !window.__mwTiming))) {
+      p.interactive = performance.now();
+      p.resume = !document.getElementById('bar-resume').hidden;
+    }
     if (p.interactive === undefined) requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
@@ -1067,7 +1139,7 @@ async function paintTimes(page) {
   return page.evaluate(() => {
     const dcl = performance.getEntriesByType('navigation')[0].domContentLoadedEventStart;
     const t = window.__mwTiming || {};
-    return { visible: Math.round(window.__paint.visible - dcl), interactive: Math.round(window.__paint.interactive - dcl), snap: window.__paint.snap, marks: Object.fromEntries(Object.entries(t).map(([k, v]) => [k, Math.round(v - dcl)])) };
+    return { visible: Math.round(window.__paint.visible - dcl), interactive: Math.round(window.__paint.interactive - dcl), title: window.__paint.title, resume: window.__paint.resume, snap: window.__paint.snap, marks: Object.fromEntries(Object.entries(t).map(([k, v]) => [k, Math.round(v - dcl)])) };
   });
 }
 const median = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
@@ -1078,6 +1150,7 @@ test('first paint after a reload: the player in under 100 ms of DOMContentLoaded
   await page.addInitScript(PAINT_PROBE);
   await begin(page, { every: 0 });
   await page.waitForTimeout(2500); // the snapshot and the session are written
+  const lastTitle = await page.locator('#np-title').textContent();
   await page.route(/\/(melodica\/api\/|oauth\/)/, async (route) => { await new Promise((ok) => setTimeout(ok, 250)); await route.fallback(); });
   const out = {};
   for (const width of [1280, 390]) {
@@ -1097,9 +1170,18 @@ test('first paint after a reload: the player in under 100 ms of DOMContentLoaded
   await info.attach('first-paint', { body: JSON.stringify(out, null, 2), contentType: 'application/json' });
   await page.screenshot({ path: resolve(ARTIFACTS, 'first-paint-390.png') });
   for (const width of [1280, 390]) {
-    expect(out[width].visible, `${width}: player visible (ms after DOMContentLoaded, median of 5)`).toBeLessThan(VISIBLE_MS);
-    expect(out[width].interactive, `${width}: controls live (ms after DOMContentLoaded, median of 5)`).toBeLessThan(INTERACTIVE_MS);
+    for (const run of out[width].runs) {
+      expect(run.title, `${width}: last-known song at first paint`).toBe(lastTitle);
+      expect(run.resume, `${width}: Resume is ready with the controls`).toBe(true);
+      expect(run.visible, `${width}: player visible (ms after DOMContentLoaded)`).toBeLessThan(VISIBLE_MS);
+      expect(run.interactive, `${width}: controls live (ms after DOMContentLoaded)`).toBeLessThan(INTERACTIVE_MS);
+    }
   }
+  const playlists = () => relay.seen.filter((r) => r.method === 'station.getPlaylist').length;
+  const before = playlists();
+  await page.click('#btn-play');
+  await expect.poll(() => page.locator('#audio').evaluate((a) => !a.paused)).toBe(true);
+  expect(playlists(), 'immediate Play resumes the remembered song').toBe(before);
 });
 
 // ---------------------------------------------------------------- Play in melodica (0.11.1)

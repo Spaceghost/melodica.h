@@ -28,7 +28,7 @@ export function makeScrobbles({ who }) {
   const auth = [];     // the Authorization header of each request
   const events = [];
   const sockets = new Set(); // live WebSockets: {key, sock}
-  const self = { handle, posts, requests, auth, events, emit(key, ev) { const e = { at: Date.now(), ...ev }; events.push({ key, ev: e }); for (const c of sockets) if (c.key === key) wsSend(c.sock, e); }, accounts, seedCount: 0, defaultOn: true, crewViewers: new Set(), cookies: new Map(), reset() { self.cookies.clear(); accounts.clear(); posts.length = 0; requests.length = 0; auth.length = 0; events.length = 0; self.crewViewers.clear(); self.seedCount = 0; } };
+  const self = { handle, posts, requests, auth, events, emit(key, ev) { const e = { at: Date.now(), ...ev }; events.push({ key, ev: e }); for (const c of sockets) if (c.key === key) wsSend(c.sock, e); }, accounts, seedCount: 0, defaultOn: true, crewViewers: new Set(), crewAccounts: false, cookies: new Map(), reset() { self.cookies.clear(); accounts.clear(); posts.length = 0; requests.length = 0; auth.length = 0; events.length = 0; self.crewViewers.clear(); self.crewAccounts = false; self.seedCount = 0; } };
   const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
   const id = (l) => createHash('sha256').update(`${l.listened_at}|${l.artist}|${l.title}`).digest('hex');
 
@@ -74,7 +74,7 @@ export function makeScrobbles({ who }) {
       const first = page(a, '', 15);
       return json({ account: { kind: key.startsWith('u:') ? 'user' : 'melodica', github: null, created_at: 0 }, settings: a.settings,
         counts: { total: a.listens.length }, now_playing: a.now, recent: first.listens, next_cursor: first.next_cursor,
-        crew_viewer: self.crewViewers.has(key) });
+        crew_viewer: (self.crewViewers.has(key) || (self.crewAccounts && key.startsWith('u:'))) });
     }
     if (p === '/scrobble/api/me/listens' && m === 'GET') {
       const limit = Math.max(1, Math.min(100, Number(url.searchParams.get('limit')) || 15));
@@ -103,14 +103,24 @@ export function makeScrobbles({ who }) {
         artists: [{ artist: 'Aurora Fields', listens: 12 }], listeners: [{ name: 'tuner_listener', listens: 40 }, { name: 'moonlit', listens: 7 }] });
     }
     if (p.startsWith('/scrobble/api/game')) {
-      if (!self.crewViewers.has(key)) return json({ error: 'crew_only', message: 'The map is for the crew.' }, 403);
+      if (!(self.crewViewers.has(key) || (self.crewAccounts && key.startsWith('u:')))) return json({ error: 'crew_only', message: 'The map is for the crew.' }, 403);
       if (p === '/scrobble/api/game/moves') return json({ season: '2026-11', moves: [], next_cursor: null });
       if (p === '/scrobble/api/game' && m === 'GET') {
         const who = { github: 'tunerfan', name: 'tuner_listener', avatar: null, you: true };
         const prov = (k, n, g) => ({ key: k, name: n, holder: who, garrison: g, dethroner: null, armies: [{ ...who, armies: g }],
           towns: [{ key: 'aurora fields', name: 'Aurora Fields', armies: g, leader: who, live: [] }], town_count: 1, live: [] });
-        return json({ generated_at: Date.now(), season: '2026-11', season_ends_at: Date.now() + 7 * 864e5, rules: {},
-          me: { playing: true, left: 3, granted: 5, attacks_left: 2, dethrone_bonus: 0, handicapped: false },
+        // Current automatic-game response (melodica-scrobble src/game.js).
+        return json({ generated_at: Date.now(), season: '2026-11', season_ends_at: Date.now() + 7 * 864e5,
+          resolves_at: Date.now() + 864e5,
+          rules: { MAX_ARMY_LISTENS_PER_HOUR: 30, REPEAT_CAP: 3, TERRAIN_MATCH: 1.5,
+            HOLD_MARGIN: 0.15, HOLD_MIN: 1, STRONGHOLD_DEFENCE: 10, SIEGE_SHARE_CAP: 0.6,
+            RESERVE_BASE: 3, REGION_BONUS: 2, THUMBS_PER_DAY: 10, FORT_CAP_PROVINCE: 5,
+            SKIPS_PER_DAY: 20, SKIP_RETREAT: 1, RALLIES_PER_DAY: 5 },
+          mode: { current: 'crusade', next: 'overlord', source: 'rotation' },
+          me: { playing: true, handicapped: false, thumbs_left: 10, skips_left: 20, rallies_left: 5,
+            can_set_mode: false, line: { held: ['indie rock', 'punk', 'drone'], reach: [] },
+            reserve: { granted: 3, pool: 0, dethrone_bonus: 0 },
+            contribution: { siege_damage: 0, sieges: 0, strongholds_helped: 0 } },
           regions: [{ name: 'Rock', holder: who, provinces: [prov('indie rock', 'indie rock', 6), prov('punk', 'punk', 2)] },
             { name: 'Ambient', holder: null, provinces: [prov('drone', 'drone', 1)] }],
           standings: [{ ...who, regions: 1, provinces: 3, armies: 9 }], log: [], trophies: [] });
@@ -144,7 +154,8 @@ export function makeScrobbles({ who }) {
     if (url.pathname !== '/scrobble/api/live') { sock.destroy(); return; }
     const protos = String(req.headers['sec-websocket-protocol'] || '').split(',').map((x) => x.trim());
     const bearer = (protos.find((x) => x.startsWith('bearer.')) || '').slice(7);
-    const key = bearer ? who(bearer) : '';
+    const ck = (/(?:^|;\s*)scrobble_session=([^;]+)/.exec(req.headers.cookie || '') || [])[1] || '';
+    const key = bearer ? who(bearer) : (self.cookies.get(ck) || '');
     requests.push(`WS /scrobble/api/live${key ? '' : ' (refused)'}`);
     if (!protos.includes('melodica-live.v1') || !key) { sock.end('HTTP/1.1 401 Unauthorized\r\nconnection: close\r\ncontent-length: 0\r\n\r\n'); return; }
     const accept = createHash('sha1').update(`${req.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64');
@@ -154,7 +165,7 @@ export function makeScrobbles({ who }) {
     sock.on('data', () => {});
     sock.on('error', () => {});
     sock.on('close', () => sockets.delete(c));
-    wsSend(sock, { type: 'hello', at: Date.now(), account: { name: 'tuner_listener', github: self.crewViewers.has(key) ? 'tunerfan' : null }, crew_viewer: self.crewViewers.has(key) });
+    wsSend(sock, { type: 'hello', at: Date.now(), account: { name: 'tuner_listener', github: (self.crewViewers.has(key) || (self.crewAccounts && key.startsWith('u:'))) ? 'tunerfan' : null }, crew_viewer: (self.crewViewers.has(key) || (self.crewAccounts && key.startsWith('u:'))) });
   });
   self.closeSockets = () => { for (const c of sockets) c.sock.destroy(); sockets.clear(); };
   return self;
