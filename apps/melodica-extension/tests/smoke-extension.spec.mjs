@@ -1188,8 +1188,9 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     // Refresh: a stale access token is refreshed (the refresh token rotates); a 401 from
     // the policy refreshes and retries.
     const rt1 = await ctl.evaluate(() => chrome.storage.local.get('account').then((x) => x.account.refresh));
-    await ctl.evaluate(() => chrome.storage.local.get('account').then((x) => chrome.storage.local.set({ account: { ...x.account, accessExp: 0 } })));
+    // Expiring storage can immediately wake an account request from another view.
     const refreshedBefore = acct.tokens.refreshed;
+    await ctl.evaluate(() => chrome.storage.local.get('account').then((x) => chrome.storage.local.set({ account: { ...x.account, accessExp: 0 } })));
     const chk = await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'account-check' }));
     const rt2 = await ctl.evaluate(() => chrome.storage.local.get('account').then((x) => x.account && x.account.refresh));
     expect(chk.account.signedIn, 'still signed in after a refresh').toBe(true);
@@ -1996,6 +1997,23 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
     const bridgedSearch = await bridgeAsk(bridgePage, { type: 'command', action: 'room-api', path: 'rooms?q=native' });
     expect(bridgedSearch.ok, bridgedSearch.error).toBe(true);
     expect(bridgedSearch.result.rooms.map((entry) => entry.id)).toEqual([roomId]);
+
+    const discoveryPopup = await context.newPage();
+    await discoveryPopup.goto(`chrome-extension://${id}/popup.html`);
+    await expect(discoveryPopup.locator('#room-discovery')).toBeVisible();
+    await discoveryPopup.locator('#room-search').fill('native');
+    await discoveryPopup.locator('#room-discovery button[type="submit"]').click();
+    await expect(discoveryPopup.locator('.room-search-join')).toHaveCount(1);
+    await discoveryPopup.locator('.room-search-join').click();
+    await expect.poll(async () => (await send({ type: 'room-get' })).room?.id).toBe(roomId);
+    await expect(discoveryPopup.locator('#current-room')).toBeVisible();
+    await expect(discoveryPopup.locator('#current-room-leave')).toBeVisible();
+    const remoteRoom = await bridgeAsk(bridgePage, { type: 'command', action: 'room-get' });
+    expect(remoteRoom.room?.id, 'the open web page controls the same extension room').toBe(roomId);
+    const remoteVolume = await bridgeAsk(bridgePage, { type: 'command', action: 'room-volume', roomId, value: 43 });
+    expect(remoteVolume.ok, remoteVolume.error).toBe(true);
+    await discoveryPopup.screenshot({ path: resolve(ARTIFACTS, 'rooms-popup.png') });
+    await discoveryPopup.close();
 
     const tunerBefore = await getJson(`${tuner.http}/__tuner/log`);
     const jsonBefore = tunerBefore.filter((row) => row.protocol === 'json').length;

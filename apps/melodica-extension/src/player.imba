@@ -451,7 +451,7 @@ tag Player
 			<main#app.app data-view=(loggedIn ? 'player' : 'login') data-status=(player and player.status or '')>
 				<div.view>
 					<UpdateBanner update=update @reload=reloadExtension>
-					if !loggedIn
+					if !loggedIn and !currentRoom()
 						<div.view.login>
 							<div.card.login-card>
 								<p.eyebrow> "melodica"

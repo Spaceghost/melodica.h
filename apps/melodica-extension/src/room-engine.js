@@ -105,7 +105,17 @@ export class RoomEngine extends EventTarget {
   }
   state() { return { id: this.id || null, state: this.session?.getState?.() || null, audio: this.session?.getAudioState?.() || { state: 'idle' } }; }
 
-  async join(id, { base, paused = false, sequence = 0, scrobbling = true, sfuConfigured = true, clientId } = {}) {
+  join(id, options = {}) {
+    if (this.joining?.id === id) return this.joining.promise;
+    const previous = this.joining?.promise || Promise.resolve();
+    const promise = previous.catch(() => {}).then(() => this.joinSession(id, options));
+    this.joining = { id, promise };
+    const clear = () => { if (this.joining?.promise === promise) this.joining = null; };
+    promise.then(clear, clear);
+    return promise;
+  }
+
+  async joinSession(id, { base, paused = false, sequence = 0, scrobbling = true, sfuConfigured = true, clientId } = {}) {
     if (!ROOM_ID.test(String(id || ''))) throw new Error('Choose a valid room.');
     if (Number.isSafeInteger(sequence) && sequence > this.sequence) this.sequence = sequence;
     if (this.session && this.id === id) {
@@ -135,6 +145,7 @@ export class RoomEngine extends EventTarget {
       resume: () => this.engine.resume(),
       setVolume: (value) => this.engine.setVolume(value),
       scrobbling: () => this.scrobbling,
+      monitor: (enabled) => this.monitor(enabled),
     };
     const session = media.createRoomSession({ connection, audio, player });
     this.connection = connection;
@@ -237,6 +248,17 @@ export class RoomEngine extends EventTarget {
     return this.state();
   }
 
+  monitor(enabled) {
+    const audio = this.engine.audio;
+    if (enabled && this.sourceMuted === undefined) {
+      this.sourceMuted = !!audio.muted;
+      audio.muted = true;
+    } else if (!enabled && this.sourceMuted !== undefined) {
+      audio.muted = this.sourceMuted;
+      this.sourceMuted = undefined;
+    }
+  }
+
   setScrobbling(value) { this.scrobbling = value !== false; }
 
   isDj() {
@@ -255,6 +277,7 @@ export class RoomEngine extends EventTarget {
 
   async leave({ leave = true } = {}) {
     const session = this.session;
+    this.monitor(false);
     if (!session) { this.id = ''; return this.state(); }
     this.turnGeneration++;
     this.session = null;

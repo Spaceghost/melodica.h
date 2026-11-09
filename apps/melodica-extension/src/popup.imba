@@ -21,6 +21,11 @@ tag Popup
 	prop update = null
 	prop recent = null
 	prop recentRooms = []
+	prop foundRooms = []
+	prop roomQuery = ''
+	prop roomSearchBusy = no
+	prop roomSearchError = ''
+	prop roomSearchGeneration = 0
 
 	def mount
 		self.notice = do(msg, sender, sendResponse) onNotice(msg, sender, sendResponse)
@@ -36,7 +41,7 @@ tag Popup
 			const priorRoom = player and player.room and player.room.id or null
 			player = msg.state
 			stations = msg.state.stations if Array.isArray(msg.state.stations) and msg.state.stations.length
-			loadRooms() if loggedIn and player.room and player.room.id and priorRoom !== player.room.id
+			loadRooms() if account and account.signedIn and player.room and player.room.id and priorRoom !== player.room.id
 			if msg.state.loggedIn === no and loggedIn
 				loggedIn = no
 				pickView()
@@ -54,7 +59,7 @@ tag Popup
 			const room = player and player.room
 			const clock = msg.state and msg.state.room and msg.state.room.state and msg.state.room.state.play or msg.state
 			const playId = clock and (clock.play_id or clock.playId or clock.id)
-			if room and room.id === msg.room and room.state and room.state.play and playId and room.state.play.id === playId
+			if room and room.id === (msg.room and msg.room.id) and room.state and room.state.play and playId and room.state.play.id === playId
 				room.state.play.position_ms = clock.position_ms
 				room.state.play.server_time = clock.server_time
 				imba.commit()
@@ -63,6 +68,11 @@ tag Popup
 			imba.commit()
 		if msg.type === 'account'
 			account = msg.account
+			if account and account.signedIn
+				loadRooms()
+			else
+				recentRooms = []
+				foundRooms = []
 			imba.commit()
 		if msg.type === 'update'
 			update = msg.update
@@ -89,14 +99,23 @@ tag Popup
 			null
 
 	def loadRooms
+		const generation = ++roomSearchGeneration
+		roomSearchBusy = yes
+		roomSearchError = ''
 		try
 			const ids = (await send({type: 'room-recent'})).recentRoomIds or []
-			const result = await send({type: 'room-search', query: '', cursor: null, recentIds: ids})
+			const result = await send({type: 'room-search', query: roomQuery.trim(), cursor: null, recentIds: ids})
+			return unless generation === roomSearchGeneration
 			recentRooms = result.recent or []
+			foundRooms = result.rooms or []
 			imba.commit()
 		catch e
-			recentRooms = []
-			imba.commit()
+			return unless generation === roomSearchGeneration
+			roomSearchError = String(e.message or e)
+		finally
+			if generation === roomSearchGeneration
+				roomSearchBusy = no
+				imba.commit()
 
 	def pickView
 		view = loggedIn ? 'player' : 'login'
@@ -113,7 +132,7 @@ tag Popup
 			loggedIn = s.loggedIn
 			pickView()
 			loadRecent() if loggedIn
-			loadRooms() if loggedIn
+			loadRooms() if account and account.signedIn
 			accessMessage(s.access) unless s.loggedIn
 			if s.loggedIn and stations.length === 0
 				stations = (await send({type: 'stations'})).stations
@@ -209,6 +228,25 @@ tag Popup
 	def openRoom id
 		await send({type: 'open-rooms', roomId: id})
 
+	def searchRooms e
+		e.preventDefault()
+		loadRooms()
+
+	def joinRoom id
+		try
+			await send({type: 'room-join', roomId: id})
+			player = (await send({type: 'player-get'})).state
+			loadRooms()
+		catch e
+			toast(String(e.message or e), 'error')
+
+	def leaveRoom
+		try
+			await send({type: 'room-leave', roomId: player.room.id})
+			player = (await send({type: 'player-get'})).state
+		catch e
+			toast(String(e.message or e), 'error')
+
 	def openOptions
 		browser.runtime.openOptionsPage()
 
@@ -258,6 +296,34 @@ tag Popup
 			<main#app.app data-view=view data-status=(player and player.status or '')>
 				<div.view>
 					<UpdateBanner update=update @reload=reloadExtension>
+					if account and account.signedIn
+						if player and player.room and player.room.id
+							<section#current-room.card.now.ext-compact>
+								<p.eyebrow> "CURRENT ROOM"
+								if !loggedIn
+									<NowPlaying now=now compact=yes>
+									<Transport now=now @control=control>
+								<h3> (player.room.state and player.room.state.name or 'Shared room')
+								<p.fine> "{player.room.role === 'dj' ? (player.room.locked ? 'DJ broadcast active' : 'DJ turn ready') : 'Listening'} · {player.room.audio and player.room.audio.state or 'connecting'}"
+								<button#current-room-open.quiet type="button" @click=openRoom(player.room.id)> "View room"
+								<button#current-room-leave.quiet type="button" @click=leaveRoom> "Leave room"
+						<section#room-discovery.card>
+							<h3> "Rooms"
+							<form @submit=searchRooms>
+								<label for="room-search"> "Find a room"
+								<input#room-search type="search" bind=roomQuery maxlength=80 placeholder="Search rooms">
+								<button.quiet type="submit" disabled=roomSearchBusy> (roomSearchBusy ? 'Searching…' : 'Search')
+							if recentRooms.length
+								<h4> "Recently joined"
+								for r in recentRooms
+									if !player or !player.room or r.id !== player.room.id
+										<button.room-recent-open.quiet type="button" @click=joinRoom(r.id)> "{r.name} · {r.listeners} listeners · Join"
+							for r in foundRooms
+								if !player or !player.room or r.id !== player.room.id
+									<button.room-search-join.quiet type="button" @click=joinRoom(r.id)> "{r.name} · {r.listeners} listeners · Join"
+							if !roomSearchBusy and !recentRooms.length and !foundRooms.length and !roomSearchError
+								<p.fine> "No rooms found. Open Rooms to create one."
+							<p.message.error role="status"> roomSearchError
 					if view === 'loading'
 						<p.message#status> "Loading…"
 					elif view === 'error'
@@ -265,7 +331,10 @@ tag Popup
 							<h2> "melodica could not start"
 							<p.message.error#status role="alert"> message
 					elif view === 'login'
-						<Login busy=busy message=message kind=kind @login=login @github=accountAction('account-signin')>
+						if !player or !player.room or !player.room.id
+							<Login busy=busy message=message kind=kind @login=login @github=accountAction('account-signin')>
+						else
+							<p.message.error role="status"> message
 					else
 						<div.ext-account>
 							<span#signed-in> (user.username or "Signed in")
@@ -283,18 +352,6 @@ tag Popup
 							<Transport now=now @control=control>
 							<CopyListen song=(now and now.song)>
 							<p#player-status.ext-state> statusText
-						if player and player.room and player.room.id
-							<section#current-room.card>
-								<p.eyebrow> "CURRENT ROOM"
-								<h3> (player.room.state and player.room.state.name or 'Shared room')
-								<p.fine> "{player.room.role === 'dj' ? (player.room.locked ? 'DJ broadcast active' : 'DJ turn ready') : 'Listening'} · {player.room.audio and player.room.audio.state or 'connecting'}"
-								<button#current-room-open.quiet type="button" @click=openRoom(player.room.id)> "View room"
-						if recentRooms.length
-							<section#recent-rooms.card>
-								<h3> "Recently joined"
-								for r in recentRooms
-									if !player or !player.room or r.id !== player.room.id
-										<button.room-recent-open.quiet type="button" @click=openRoom(r.id)> "{r.name} · {r.listeners} listeners"
 						<StationList stations=stations active=(player and player.station and player.station.token) compact=yes @select=select @refresh=reload @delete=remove>
 						if recent
 							<RecentListens recent=recent max=5>

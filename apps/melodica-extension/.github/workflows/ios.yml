@@ -144,7 +144,8 @@ jobs:
   attach:
     needs: [web, ios]
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '"ubuntu-latest"') }}
+    # Waiting for browser CI must not occupy its sole build/test runner.
+    runs-on: [self-hosted, Linux, X64, fedora-release]
     timeout-minutes: 60
     env:
       V: ${{ needs.web.outputs.version }}

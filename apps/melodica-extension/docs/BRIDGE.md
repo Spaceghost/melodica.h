@@ -29,7 +29,8 @@ Pages that need extension-owned Rooms support must wait for `ready.rooms === 1` 
 sending `room-join`, `room-leave`, `room-command` or `room-audio-command`. Older extension
 versions omit `rooms`; the page can then keep using its own room engine. This capability
 flag keeps room handoff compatible with already-installed extensions during rollout.
-Engines without the native RoomEngine host omit it.
+Engines without the native RoomEngine host omit it. Room commands carry `roomId`
+separately: the envelope `id` identifies the request and is never a room identifier.
 
 ## 2. Remote control (since 0.3.0)
 

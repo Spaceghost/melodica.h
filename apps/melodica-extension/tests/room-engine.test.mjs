@@ -81,7 +81,10 @@ test('room engine uses the current player audio and waits for a fresh song to ac
     createRoomSession: (options) => { playerOptions = options.player; return session; },
     capturePlayerAudio: (element) => ({ element }),
   }) });
-  await roomEngine.join('r'.repeat(20), { base: 'https://spacegho.st', scrobbling: false, clientId: 'native-device-12345678' });
+  const joining = roomEngine.join('r'.repeat(20), { base: 'https://spacegho.st', scrobbling: false, clientId: 'native-device-12345678' });
+  assert.equal(roomEngine.join('r'.repeat(20)), joining, 'concurrent UI and recovery joins share one session');
+  await joining;
+  assert.equal(session.calls.filter((call) => call === 'open').length, 1);
   assert.equal(connectionOptions.clientId, 'native-device-12345678');
   const next = await playerOptions.startTurn();
   assert.deepEqual(next.track_metadata, { track_name: 'Fresh', artist_name: 'Band', release_name: '', additional_info: { duration_ms: 20000 } });
@@ -133,4 +136,19 @@ test('room engine supplies DJ position clocks, rejects stale clocks, and ends on
   session.room.play = null;
   assert.equal(roomEngine.isDj(), false, 'a secondary device cannot claim the next DJ turn while idle');
   await roomEngine.leave({ leave: false });
+});
+
+
+test('DJ monitor mutes only local source output and restores the previous mute state', () => {
+  const audio = { muted: false };
+  const room = new RoomEngine({ engine: { audio }, send: async () => ({}), loadMedia: async () => ({}) });
+  room.monitor(true);
+  room.monitor(true);
+  assert.equal(audio.muted, true);
+  room.monitor(false);
+  assert.equal(audio.muted, false);
+  audio.muted = true;
+  room.monitor(true);
+  room.monitor(false);
+  assert.equal(audio.muted, true);
 });

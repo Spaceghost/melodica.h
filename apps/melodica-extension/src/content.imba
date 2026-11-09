@@ -117,15 +117,15 @@ def handleCommand data
 			return reply({ok: no, error: r and r.error or 'the extension did not answer'}) unless r and r.ok
 			return reply({ok: yes, playback: r.playback, copy: r.copy, state: publicState(r.state)})
 		elif ['room-get', 'room-join', 'room-leave'].includes(action)
-			r = await browser.runtime.sendMessage({type: action, roomId: data.roomId or data.id or activeRoomId, paused: data.paused === yes})
+			r = await browser.runtime.sendMessage({type: action, roomId: data.roomId or activeRoomId, paused: data.paused === yes})
 			return reply({ok: no, error: r and r.error or 'the extension did not answer'}) unless r and r.ok
 			return reply({ok: yes, room: r.room, state: publicState(r.state)})
 		elif action === 'room-command'
-			r = await browser.runtime.sendMessage({type: action, roomId: data.roomId or data.id or activeRoomId, command: data.command or data.body})
+			r = await browser.runtime.sendMessage({type: action, roomId: data.roomId or activeRoomId, command: data.command or data.body})
 			return reply({ok: no, error: r and r.error or 'the extension did not answer'}) unless r and r.ok
 			return reply({ok: yes, room: r.room, state: publicState(r.state)})
 		elif action === 'room-audio-command'
-			r = await browser.runtime.sendMessage({type: action, roomId: data.roomId or data.id or activeRoomId, action: data.roomAction, value: data.value})
+			r = await browser.runtime.sendMessage({type: action, roomId: data.roomId or activeRoomId, action: data.roomAction, value: data.value})
 			return reply({ok: no, error: r and r.error or 'the extension did not answer'}) unless r and r.ok
 			return reply({ok: yes, room: r.room, state: publicState(r.state)})
 		elif action === 'room-api'
@@ -142,7 +142,7 @@ def handleCommand data
 			return reply({ok: yes, recentRoomIds: r.recentRoomIds})
 		elif ['room-pause', 'room-resume', 'room-skip', 'room-volume'].includes(action)
 			const roomAction = {'room-pause': 'pause', 'room-resume': 'resume', 'room-skip': 'skip', 'room-volume': 'volume'}[action]
-			r = await browser.runtime.sendMessage({type: 'room-audio-command', roomId: data.id or data.roomId or activeRoomId, action: roomAction, value: data.value})
+			r = await browser.runtime.sendMessage({type: 'room-audio-command', roomId: data.roomId or activeRoomId, action: roomAction, value: data.value})
 			return reply({ok: no, error: r and r.error or 'the extension did not answer'}) unless r and r.ok
 			return reply({ok: yes, room: r.room, state: publicState(r.state)})
 		elif action === 'openLogin' or action === 'open-login'

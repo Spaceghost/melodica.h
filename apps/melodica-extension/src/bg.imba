@@ -1415,7 +1415,7 @@ def publicRoomAudio value
 	const out = {}
 	for key of ['state', 'message', 'play_id', 'transport'] when typeof value[key] === 'string'
 		out[key] = value[key].slice(0, 256)
-	for key of ['listened_ms', 'paused', 'volume'] when typeof value[key] === 'number' or typeof value[key] === 'boolean'
+	for key of ['listened_ms', 'paused', 'volume', 'monitoring'] when typeof value[key] === 'number' or typeof value[key] === 'boolean'
 		out[key] = value[key]
 	out
 

@@ -17,6 +17,17 @@ below); it is self-hosted and not on any store (`docs/STORES.md`). Two jobs:
   public. With the extension installed the page can hand its requests to a
   content script instead, and they go to Pandora straight from the browser.
 
+Rooms use that same background player. Sign in to spacegho.st to search rooms or
+join a recently joined room directly from the popup; listeners do not need a Pandora
+login. The full player, room page and open web app control the same session. Closing
+any of those views keeps room playback running. An active DJ broadcast owns the
+player: private stations, stop and quality changes require leaving the room first.
+
+Room audio defaults to the shared Opus/WebM relay. The DJ monitors the same delayed
+relay as listeners, with a common 1.25-second playout target and periodic source
+position broadcasts. Devices correct drift against the server clock. This aims for
+rough synchronization; network buffering and device output latency still vary.
+
 Everything the user runs is written in [Imba](https://imba.io) (the UI, the
 background script, the content script), bundled to plain ES modules. The
 protocol core (Blowfish with the public partner keys, hex, the `syncTime`

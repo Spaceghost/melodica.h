@@ -1,0 +1,78 @@
+name: Validate existing signed release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing build version
+        required: true
+        default: '0.9.8'
+      build_run_id:
+        description: Run containing the official dist artifact
+        required: true
+        default: '42669511004'
+permissions:
+  contents: read
+  actions: read
+env:
+  CRX_ID: obbahflgghfemmpmjppeibnemibgblbd
+jobs:
+  smoke-brave:
+    runs-on: [self-hosted, Linux, X64, fedora]
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-${{ inputs.version }}
+          path: dist
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Brave (brave-browser-apt-release.s3.brave.com) and Playwright
+        timeout-minutes: 15
+        run: |
+          sudo curl -fsSLo /usr/share/keyrings/brave-browser-archive-keyring.gpg https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg] https://brave-browser-apt-release.s3.brave.com/ stable main" | sudo tee /etc/apt/sources.list.d/brave-browser-release.list
+          for i in 1 2 3 4 5; do sudo apt-get update -qq && sudo apt-get install -y -qq brave-browser xvfb && break; sleep 20; done
+          brave-browser --version
+          npm install --no-audit --no-fund
+      - uses: Spaceghost/melodica-tuner@v1
+        id: tuner
+        with:
+          user: ci@example.com
+          password: ci-secret
+          hosts-override: false
+          ads: 1
+          install-ca: false
+      - name: Browser smoke test (built extension in Brave, melodica-tuner)
+        run: xvfb-run -a --server-args="-screen 0 1280x800x24" npx playwright test
+        env:
+          TUNER_HTTPS_URL: ${{ steps.tuner.outputs.https-url }}
+          TUNER_HTTP_URL: ${{ steps.tuner.outputs.http-url }}
+          TUNER_USER: ${{ steps.tuner.outputs.user }}
+          TUNER_PASSWORD: ${{ steps.tuner.outputs.password }}
+          MELODICA_EXT_DIST: dist/chrome
+          MELODICA_BROWSER: brave
+          MELODICA_BROWSER_PATH: /usr/bin/brave-browser
+      - name: Show the report
+        if: always()
+        run: |
+          cat tests/artifacts/smoke-brave.json || true
+          node -e 'const r=require("./tests/artifacts/smoke-brave.json"); if (r.ok!==true) { console.error("smoke-brave.json is not ok"); process.exit(1); }'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-brave-existing-${{ inputs.version }}
+          path: |
+            tests/artifacts/smoke-brave.json
+            tests/artifacts/smoke-brave-*.png
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: smoke-brave-existing-playwright-${{ inputs.version }}
+          path: tests/artifacts/playwright/
+          if-no-files-found: ignore
+
