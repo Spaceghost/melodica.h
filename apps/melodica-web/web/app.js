@@ -17,6 +17,7 @@ const STORAGE = {
   quality: 'melodica.quality',
   station: 'melodica.station',
   shortcuts: 'melodica.shortcuts',
+  rememberOff: 'melodica.rememberOff', // '1' once "Remember me" was turned off here; on by default
 };
 // localStorage may throw (blocked cookies, sandboxed frame): degrade to session-only settings.
 const store = {
@@ -103,8 +104,7 @@ function readQuality() {
 }
 const lowerQuality = (q) => QUALITIES[Math.min(QUALITIES.indexOf(q) + 1, QUALITIES.length - 1)];
 
-// Playback compatibility state is read before loading a playlist.
-// Defaults apply until a valid account response is available.
+// The server's playback flags; the defaults until the policy endpoint answers
 // (refreshPolicy). Nothing is cached between page loads.
 function readPolicy() { return { inserts: true }; }
 
@@ -396,7 +396,7 @@ function updateQualityChip() {
   if (!song) { el.qualityChip.hidden = true; return; }
   const q = song.quality || state.quality;
   const fmt = song.audioFormat ? String(song.audioFormat).replace(/_/g, ' ') : '';
-  el.qualityChip.textContent = song.isAd ? 'ad' : fmt ? `${q} · ${fmt}` : q;
+  el.qualityChip.textContent = song.isInsert ? '' : fmt ? `${q} · ${fmt}` : q;
   el.qualityChip.hidden = false;
 }
 
@@ -407,11 +407,11 @@ let renderUpNext = function renderUpNext() {
     const li = document.createElement('li');
     const t = document.createElement('span');
     t.className = 't';
-    t.textContent = s.isAd ? 'Advertisement' : s.title || '';
+    t.textContent = s.title || '';
     t.title = t.textContent;
     const a = document.createElement('span');
     a.className = 'a';
-    a.textContent = s.isAd ? '' : s.artist || '';
+    a.textContent = s.isInsert ? '' : s.artist || '';
     li.append(t, a);
     el.upNext.append(li);
   }
@@ -562,7 +562,7 @@ async function fetchPlaylist() {
       throw err;
     }
     if (state.playGen !== gen) return null;
-    return (songs || []).filter((s) => s && (s.isAd ? state.policy.inserts : s.audioUrl)).map((s) => (s.quality = quality, s));
+    return (songs || []).filter((s) => s && (s.isInsert ? state.policy.inserts : s.audioUrl)).map((s) => (s.quality = quality, s));
   } finally {
     if (state.fetching === gen) state.fetching = null;
   }
@@ -584,11 +584,11 @@ async function nextSong() {
     }
     if (state.playGen !== gen) return;
     const song = state.queue.shift();
-    if (song.isAd) {
-      const ad = await loadAd(song);
+    if (song.isInsert) {
+      const ins = await loadInsert(song);
       if (state.playGen !== gen) return;
-      if (!ad) { renderUpNext(); nextSong(); return; }
-      playSong(ad);
+      if (!ins) { renderUpNext(); nextSong(); return; }
+      playSong(ins);
       renderUpNext();
       return;
     }
@@ -607,33 +607,33 @@ async function nextSong() {
   }
 }
 
-// An ad item of the playlist becomes a playable "song" from ad.getAdMetadata,
-// or null when it has no audio (then it is passed over).
-async function loadAd(item) {
+// A playlist insert becomes a playable "song", or null when it has no audio
+// (then it is passed over).
+async function loadInsert(item) {
   try {
-    const meta = await state.client.adMetadata(item.adToken, item.quality || state.quality);
+    const meta = await state.client.insertInfo(item.insertToken, item.quality || state.quality);
     if (!meta || !meta.audioUrl) return null;
     return {
-      isAd: true, adToken: item.adToken, stationId: item.stationId || (state.station && state.station.id) || '',
-      title: meta.title || 'Advertisement', artist: meta.companyName || '', album: '',
+      isInsert: true, insertToken: item.insertToken, stationId: item.stationId || (state.station && state.station.id) || '',
+      title: meta.title || '', artist: meta.artist || '', album: '',
       coverArt: meta.imageUrl || '', audioUrl: meta.audioUrl, audioFormat: meta.audioFormat || '',
-      adTrackingTokens: Array.isArray(meta.adTrackingTokens) ? meta.adTrackingTokens : [],
-      clickThroughUrl: meta.clickThroughUrl || '', trackToken: '', duration: 0, rating: 0, quality: item.quality,
+      trackingTokens: Array.isArray(meta.trackingTokens) ? meta.trackingTokens : [],
+      link: meta.link || '', trackToken: '', duration: 0, rating: 0, quality: item.quality,
       registered: false,
     };
   } catch (err) {
-    console.debug('[slot]', `ad metadata failed: ${describeError(err)}`);
+    console.debug('[insert]', `info failed: ${describeError(err)}`);
     return null;
   }
 }
 
-// Registered once, when the ad's audio actually started.
-function registerAdOnce(song) {
-  if (!song || !song.isAd || song.registered) return;
+// Sent once, when the insert's audio actually started.
+function insertPlayedOnce(song) {
+  if (!song || !song.isInsert || song.registered) return;
   song.registered = true;
-  state.client.registerAd(song.stationId, song.adTrackingTokens)
-    .then(() => console.debug('[slot]', 'ad registered'))
-    .catch((err) => console.debug('[slot]', `ad.registerAd failed: ${describeError(err)}`));
+  state.client.insertPlayed(song.stationId, song.trackingTokens)
+    .then(() => console.debug('[insert]', 'played'))
+    .catch((err) => console.debug('[insert]', `played failed: ${describeError(err)}`));
 }
 
 function applyVolume() {
@@ -662,8 +662,8 @@ function playSong(song) {
 // Everything about a new song except playing it (shared with remote mode).
 function displaySong(song) {
   state.song = song;
-  if (song.isAd) el.app.dataset.ad = 'true';
-  else delete el.app.dataset.ad;
+  if (song.isInsert) el.app.dataset.insert = 'true';
+  else delete el.app.dataset.insert;
   el.stage.classList.remove('idle');
   el.title.textContent = song.title || '';
   el.artist.textContent = song.artist || '';
@@ -679,7 +679,7 @@ function displaySong(song) {
   updateHint();
   updateQualityChip();
   updateRatingButtons();
-  if (!song.isAd) rememberSong(song);
+  if (!song.isInsert) rememberSong(song);
   if (!state.remote) scrobbleStart(song);
   else scheduleListensRefresh();
   if (state.keepMessage) state.keepMessage = false;
@@ -696,13 +696,13 @@ function updateRatingButtons() {
   el.love.setAttribute('aria-pressed', String(r === 1));
   el.ban.setAttribute('aria-pressed', String(r === 2));
   const has = !!state.song;
-  const ad = has && !!state.song.isAd; // an ad plays through: no skip, rating or explain
-  for (const b of [el.next, el.love, el.ban, el.tired, el.explain]) b.disabled = !has || ad;
+  const ins = has && !!state.song.isInsert; // plays through: no skip, rating or explain
+  for (const b of [el.next, el.love, el.ban, el.tired, el.explain]) b.disabled = !has || ins;
 }
 
 function skip(reason) {
   if (state.remote) { remoteCommand('next'); return; }
-  if (state.song && state.song.isAd) return; // inserts play through
+  if (state.song && state.song.isInsert) return; // plays through
   if (reason) { playerMessage(reason); state.keepMessage = true; }
   el.audio.pause();
   nextSong();
@@ -710,7 +710,7 @@ function skip(reason) {
 
 // Rate the current song (ban skips) or any song from the play log via its trackToken.
 async function rateSong(song, kind) {
-  if (!song || song.isAd) return;
+  if (!song || song.isInsert) return;
   if (state.remote) {
     if (song !== state.song) { playerMessage('Only the playing song can be rated while the extension plays.'); return; }
     const r = await remoteCommand(kind);
@@ -737,7 +737,7 @@ function rate(kind) { return rateSong(state.song, kind); }
 
 async function tired() {
   const song = state.song;
-  if (!song || song.isAd) return;
+  if (!song || song.isInsert) return;
   if (state.remote) {
     const r = await remoteCommand('tired');
     if (r && r.ok) playerMessage('Pandora will rest this song for a month.');
@@ -755,7 +755,7 @@ async function tired() {
 
 async function explain() {
   const song = state.song;
-  if (!song || song.isAd || state.explaining) return; // the e key bypasses the disabled button
+  if (!song || song.isInsert || state.explaining) return; // the e key bypasses the disabled button
   if (state.remote) { playerMessage('“Why this song?” is not available while the extension plays.'); return; }
   state.explaining = true;
   el.explain.disabled = true;
@@ -959,6 +959,17 @@ function remoteSong(t) {
   };
 }
 
+// A cold-started extension can restore its Pandora session without loading the
+// station list (seen with 0.8.1 after a browser restart: loggedIn, no stations, for
+// as long as nothing asks). Ask for the list then, at most every 3 s.
+let remoteStationsAsked = 0;
+function askRemoteStations() {
+  const now = Date.now();
+  if (now - remoteStationsAsked < 3000) return;
+  remoteStationsAsked = now;
+  state.bridge.command('stations').then((r) => { if (r && r.state) renderRemote(r.state); }, (err) => console.debug('[bridge]', `stations: ${describeError(err)}`));
+}
+
 let remoteStationsKey = '';
 let remoteChangedAt = 0;
 function renderRemote(rs) {
@@ -1022,6 +1033,7 @@ function renderRemote(rs) {
 
   // No Pandora session in the extension: say where to sign in (the page has no login).
   const needsLogin = rs.loggedIn === false;
+  if (rs.loggedIn === true && !stations.length && rs.status !== 'loading') askRemoteStations();
   if (el.remoteSignin.hidden === needsLogin) {
     el.remoteSignin.hidden = !needsLogin;
     if (!needsLogin) el.remoteSigninHelp.hidden = true;
@@ -1277,7 +1289,7 @@ async function loadSaved() {
     if (plain && email) await state.vault.write({ session: null, credential: { email, password: plain }, relay: null });
   }
   state.saved = await state.vault.read();
-  state.remember = !!state.saved;
+  state.remember = !!state.saved || store.get(STORAGE.rememberOff) !== '1';
 }
 
 async function forgetSaved() {
@@ -1316,8 +1328,12 @@ function persistSession() {
 }
 
 // The checkbox on the login card or in the account menu.
-function setRemember(on) {
+function rememberChoice(on) {
   state.remember = !!on;
+  if (state.remember) store.remove(STORAGE.rememberOff); else store.set(STORAGE.rememberOff, '1');
+}
+function setRemember(on) {
+  rememberChoice(on);
   syncRemember();
   if (!state.remember) { forgetSaved(); return; }
   if (state.remote) {
@@ -1464,7 +1480,7 @@ async function login(email, password) {
   loginMessage('Signing in…', 'info');
   try {
     await state.accountReady; // the playback policy is known before anything plays
-    state.remember = el.remember.checked;
+    rememberChoice(el.remember.checked);
     if (!state.remember) await forgetSaved();
     await state.client.login(email, password); // onSession stores the session when remembered
     await state.policyReady; // asked with the relay's new access token (onAccess)
@@ -1476,8 +1492,10 @@ async function login(email, password) {
     store.set(STORAGE.email, email);
     loginMessage('');
     await enterPlayer();
+    return true;
   } catch (err) {
     loginMessage(describeError(err), 'error');
+    return false;
   } finally {
     el.loginButton.disabled = false;
   }
@@ -1691,12 +1709,12 @@ function scrobbleRefused(err) {
   return true;
 }
 
-// A new song plays here: "playing now", and a tracker for the listen. Never an ad.
+// A new song plays here: "playing now", and a tracker for the listen. Never an insert.
 function scrobbleStart(song) {
   const sc = state.scrobble;
   if (!sc) return;
   sc.tracker = null;
-  if (!song || song.isAd || state.remote || !scrobbleOn()) return;
+  if (!song || song.isInsert || state.remote || !scrobbleOn()) return;
   sc.tracker = new ListenTracker(song, Date.now() / 1000, Number(song.duration) || 0);
   const len = el.audio.duration;
   sc.tracker.setDuration(Number.isFinite(len) ? len : 0);
@@ -1774,7 +1792,7 @@ function clearScrobbles() {
 }
 
 // ---------------------------------------------------------------- scrobbles panels
-// The shared Scrobbles UI (spaceghost-scrobble ui/, contract v1 in its docs/CLIENTS.md),
+// The shared Scrobbles UI (melodica-scrobble ui/, contract v1 in its docs/CLIENTS.md),
 // fetched pinned into vendor/scrobble-ui/ at build time: Your listens (live), Leaderboard
 // and, for the GitHub crew, the Map. It loads after the first /scrobble/api/me answer;
 // without it the listens list above (v0.9.0) is the fallback.
@@ -2008,7 +2026,7 @@ function installEvents() {
   });
 
   const a = el.audio;
-  a.addEventListener('playing', () => registerAdOnce(state.song));
+  a.addEventListener('playing', () => insertPlayedOnce(state.song));
   a.addEventListener('play', () => { setPlayIcon(true); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'; });
   a.addEventListener('pause', () => { setPlayIcon(false); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'; });
   a.addEventListener('timeupdate', () => {
@@ -2129,17 +2147,53 @@ async function main() {
     return;
   }
   updateStatus();
-  showLogin();
-  await state.accountReady;
-  // A remembered login waits until the extension had its full window to answer.
-  if (state.bridge) await state.bridge.waitReady();
-  if (state.remote) return;
-  updateAccountLine();
+  // An extension that said present but not yet ready is waking its background: the
+  // page waits for it as a remote (up to the hello window) instead of showing a login.
+  if (state.bridge && state.bridge.present) {
+    show(el.viewPlayer);
+    playerMessage(CONNECTING, 'info', 0);
+    if (await state.bridge.waitReady()) return;
+    playerMessage('');
+  }
+  // A reload never lands on the login card while a session may exist: the vault is
+  // read first, and with something remembered the player shows "Restoring…" while,
+  // in order, an extension (3 s, the full hello window when it said present), the
+  // remembered session and then the remembered password are tried.
   await state.savedReady;
   if (state.remote) return;
+  const saved = state.saved && (state.saved.session || state.saved.credential) ? state.saved : null;
+  if (!saved) {
+    showLogin();
+    await state.accountReady;
+    if (state.remote) return;
+    updateAccountLine();
+    syncRemember();
+    return;
+  }
+  showRestoring(true);
+  await state.accountReady;
+  if (state.bridge) await state.bridge.waitReady(state.bridge.present ? undefined : 3000);
+  if (state.remote) { showRestoring(false); return; }
+  updateAccountLine();
   syncRemember();
-  if (state.saved && state.saved.session) resumeSaved();
-  else if (state.saved && state.saved.credential) login(state.saved.credential.email, state.saved.credential.password);
+  let ok = false;
+  if (saved.session) ok = await resumeSaved();
+  if (!ok && !state.remote && saved.credential) ok = await login(saved.credential.email, saved.credential.password);
+  showRestoring(false);
+  if (ok || state.remote) return;
+  showLogin(); // keeps the reason in the login message
+}
+
+const RESTORING = 'Restoring your session…';
+function showRestoring(on) {
+  if (on) {
+    show(el.viewPlayer);
+    el.app.dataset.restoring = 'true';
+    playerMessage(RESTORING, 'info', 0);
+  } else {
+    delete el.app.dataset.restoring;
+    if (el.playerMessage.textContent === RESTORING) playerMessage('');
+  }
 }
 
 // The view is unhidden before the alert text is set so it is announced; focus

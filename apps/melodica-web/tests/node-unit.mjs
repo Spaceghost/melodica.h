@@ -93,7 +93,7 @@ const song = (n) => ({
     lowQuality: { encoding: 'aacplus', audioUrl: `https://audio.example/low/${n}.mp4`, bitrate: '32' },
   },
 });
-const playlistBody = { stat: 'ok', result: { items: [song(1), { adToken: 'ad' }, song(2), song(3)] } };
+const playlistBody = { stat: 'ok', result: { items: [song(1), { adToken: 'x' }, song(2), song(3)] } };
 req = client.begin({ action: 'playlist', stationId: 'S1', quality: 'high' });
 assert.equal(req.ok, true, req.error);
 assert.match(req.urlPath, /method=station\.getPlaylist&auth_token=/);
@@ -101,7 +101,7 @@ assert.match(req.postData, /^[0-9a-f]+$/);
 reply = client.finish(JSON.stringify(playlistBody));
 assert.equal(reply.ok, true, reply.error);
 const songs = reply.result.songs;
-assert.equal(songs.length, 3, 'playlist contains playable songs');
+assert.equal(songs.length, 3, 'non-song items are skipped');
 assert.equal(songs[0].title, 'Song\t1\n"quoted"\\');
 assert.equal(songs[0].audioUrl, 'https://audio.example/high/1.mp4?x=1&y=2');
 assert.equal(songs[0].audioFormat, 'aacplus');

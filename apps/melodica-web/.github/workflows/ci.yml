@@ -35,7 +35,7 @@ jobs:
         run: node tests/bridge-unit.mjs
       - name: Account unit test (PKCE, tokens, policy; no network)
         run: node tests/account-unit.mjs
-      - name: Playlist item unit test (canned answers, no network)
+      - name: Inserts unit test (canned answers, no network)
         run: node tests/inserts-unit.mjs
       - name: Scrobble unit test (threshold, tracker, API calls; no network)
         run: node tests/scrobble-unit.mjs

@@ -47,7 +47,8 @@ out other origins, other frames and other extensions' messages to the background
 
 | Direction | Message |
 | --- | --- |
-| page → ext | `{type: 'hello'}`, every 250 ms for 3 s, again on demand |
+| page → ext | `{type: 'hello'}`, every 250 ms for the first second, then backing off to 1 s, for 5 s (a cold service worker wakes); again on demand |
+| ext → page | `{type: 'present'}` (web 0.10.3+, optional): the content script is there and its background is waking; the page waits as a remote ("Connecting…") for the rest of the 5 s instead of showing its login |
 | ext → page | `{type: 'ready', name: 'melodica-extension', version, player: true, session: 1}`; also unsolicited once when the content script loads |
 
 `session: 1` says the extension speaks section 4 v1. Without it the page never sends
@@ -78,7 +79,7 @@ Only the side whose audio plays submits to Spacegho.st Scrobbles: in remote mode
 extension submits (`submission_client: "melodica-extension"`) and the page never does;
 playing on its own, the page submits (`"melodica-web"`). Both sides use the same
 endpoint (`/scrobble/api/me/listens`) and thresholds: half the track or 4 minutes,
-nothing for 30 s or less, never an ad. The extension adds `scrobbling: {on: bool}` to
+nothing for 30 s or less, songs only. The extension adds `scrobbling: {on: bool}` to
 `state`. The page reads its settings and listens from the server either way.
 
 ## 4. Session sharing (v1, new)

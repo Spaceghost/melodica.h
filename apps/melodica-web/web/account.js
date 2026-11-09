@@ -2,8 +2,8 @@
 //
 // Signing in is optional. The policy endpoint is asked with the account's access
 // token when signed in, else with the relay's access token from the Pandora login
-// (x-melodica-access); the page obeys `playback.plus` and shows no text about it.
-// Anything unexpected, or no token at all, is {inserts: true}.
+// (x-melodica-access); the client follows the server's playback flags.
+// Anything unexpected, or no token at all, is DEFAULT_POLICY.
 // The username (GET /oauth/melodica/me, POST /oauth/melodica/username) is asked with
 // the same bearer. No email is read or shown anywhere.
 // OAuth 2.1 authorization code + PKCE (S256), public client `melodica-web`.
@@ -181,7 +181,7 @@ export class Account {
     return '';
   }
 
-  // The playback policy: {inserts}. relayToken is the relay's x-melodica-access token,
+  // The playback flags. relayToken is the relay's x-melodica-access token,
   // used when no account is signed in. Any failure, or no token, is DEFAULT_POLICY.
   async policy(relayToken = '') {
     const d = await this.discover();

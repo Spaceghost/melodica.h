@@ -47,7 +47,7 @@ jobs:
         run: node tests/bridge-unit.mjs
       - name: Account unit test (PKCE, tokens, policy; no network)
         run: node tests/account-unit.mjs
-      - name: Playlist item unit test (canned answers, no network)
+      - name: Inserts unit test (canned answers, no network)
         run: node tests/inserts-unit.mjs
       - name: Scrobble unit test (threshold, tracker, API calls; no network)
         run: node tests/scrobble-unit.mjs
@@ -71,7 +71,7 @@ jobs:
             echo
             echo "## Assets"
             echo
-            echo "- \`melodica-web-$v.tar.gz\`: the built site. Unpacks to \`dist/\` (index.html, app.js, piano.js, bridge.js, account.js, app.css, melodica.js, melodica.wasm, licenses, and vendor/scrobble-ui/: the shared Scrobbles UI from Spaceghost/spaceghost-scrobble, pinned in scrobble-ui.pin)."
+            echo "- \`melodica-web-$v.tar.gz\`: the built site. Unpacks to \`dist/\` (index.html, app.js, piano.js, bridge.js, account.js, app.css, melodica.js, melodica.wasm, licenses, and vendor/scrobble-ui/: the shared Scrobbles UI from Spaceghost/melodica-scrobble, pinned in scrobble-ui.pin)."
             echo "- \`melodica-web-$v-src.tar.gz\`: source tree including the vendored melodica.h."
             echo "- \`SHA256SUMS\`"
             echo
@@ -134,18 +134,18 @@ jobs:
           TUNER_HTTP_URL: ${{ steps.tuner.outputs.http-url }}
           TUNER_USER: ${{ steps.tuner.outputs.user }}
           TUNER_PASSWORD: ${{ steps.tuner.outputs.password }}
-      - name: Playback smoke test (local build, tuner, account contract)
+      - name: Playback flags smoke test (built dist, melodica-tuner, account policy)
         run: npx playwright test tests/smoke-playback.spec.mjs
         env:
           TUNER_HTTPS_URL: ${{ steps.tuner.outputs.https-url }}
           TUNER_HTTP_URL: ${{ steps.tuner.outputs.http-url }}
           TUNER_USER: ${{ steps.tuner.outputs.user }}
           TUNER_PASSWORD: ${{ steps.tuner.outputs.password }}
-      - name: Tuner report (the ad steps must be in the tuner's log)
+      - name: Tuner report (the insert steps must be in the tuner's log)
         run: |
           # The tuner repository is private; use the copy the runner fetched for the action.
           cd "$RUNNER_WORKSPACE/../_actions/Spaceghost/melodica-tuner/v1"
-          python3 -m tuner.report --platform web --ok --summary "melodica-web playback against melodica-tuner" \
+          python3 -m tuner.report --platform web --ok --summary "melodica-web playback flags against melodica-tuner" \
             --from-log "${{ steps.tuner.outputs.log-url }}" \
             --require "ad.getAdMetadata ok" --require "ad audio fetched" --require "ad.registerAd ok" \
             --out "$GITHUB_WORKSPACE/tests/artifacts/smoke-web-playback-report.json"

@@ -21,6 +21,8 @@
 // Artifacts: tests/artifacts/account-email.png, account-github.png.
 
 import { test, expect } from '@playwright/test';
+// The playback flag as the client reads it (web/account.js).
+const flagsOf = (b) => !b.playback.plus;
 import https from 'node:https';
 import { spawnSync } from 'node:child_process';
 import { readFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
@@ -203,7 +205,7 @@ test.describe.serial('spacegho.st sign-in (optional)', () => {
     const { policy, bearer } = await signIn(page, null);
     console.log(`email account policy: ${JSON.stringify(policy)}`);
     expect(bearer).toMatch(/^Bearer \S+/);
-    expect(policy.playback.plus).toBe(false);
+    expect(flagsOf(policy)).toBe(true);
     expect(policy.display.name).toBe('pal');
     await expect(page.locator('#account-name')).toHaveText('pal');
     await expect(page.locator('#account-line')).not.toContainText('GitHub');
@@ -246,7 +248,7 @@ test.describe.serial('spacegho.st sign-in (optional)', () => {
     });
     console.log(`GitHub account policy: ${JSON.stringify(policy)}`);
     expect(policy.display.name).toBe('alice');
-    expect(typeof policy.playback.plus).toBe('boolean');
+    expect(typeof flagsOf(policy)).toBe('boolean');
     await expect(page.locator('#account-name')).toHaveText('alice');
     await page.screenshot({ path: resolve(ARTIFACTS, 'account-github.png') });
     await info.attach('account-github', { path: resolve(ARTIFACTS, 'account-github.png'), contentType: 'image/png' });
@@ -259,13 +261,13 @@ test.describe.serial('spacegho.st sign-in (optional)', () => {
     const page = await context.newPage();
     const first = page.waitForResponse((r) => r.url().endsWith('/oauth/melodica/policy') && r.request().headers().authorization);
     await page.goto(app());
-    expect((await (await first).json()).playback.plus).toBe(false);
+    expect(flagsOf(await (await first).json())).toBe(true);
     await backend.setPolicy('pal', { inserts: false });
     const again = page.waitForResponse((r) => r.url().endsWith('/oauth/melodica/policy') && r.request().headers().authorization);
     await page.reload();
     const body = await (await again).json();
     console.log(`after the per-account change: ${JSON.stringify(body)}`);
-    expect(body.playback.plus).toBe(true);
+    expect(flagsOf(body)).toBe(false);
     await backend.setPolicy('pal', { inserts: true });
     await context.close();
   });

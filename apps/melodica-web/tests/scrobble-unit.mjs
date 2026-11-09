@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // web/scrobble.js without a browser or network: the listen threshold (half the track
 // or 4 minutes; nothing for 30 s or less), the tracker (only forward play while
-// playing counts; never an ad; due once), the ListenBrainz body and the API calls
+// playing counts; never an insert; due once), the ListenBrainz body and the API calls
 // (bearer, credentials omitted, cursor, errors).
 
 import { strict as assert } from 'node:assert';
@@ -41,9 +41,9 @@ log('threshold ok');
   assert.equal(t.due(), true, '100 s of 200');
   t.sent = true;
   assert.equal(t.due(), false, 'due once');
-  const ad = new ListenTracker({ title: 'Ad', isAd: true }, 0, 200);
-  for (let s = 0; s <= 200; s++) ad.tick(s, true);
-  assert.equal(ad.due(), false, 'never an ad');
+  const ins = new ListenTracker({ title: 'Insert', isInsert: true }, 0, 200);
+  for (let s = 0; s <= 200; s++) ins.tick(s, true);
+  assert.equal(ins.due(), false, 'never an insert');
   const short = new ListenTracker(song, 0, 10);
   for (let s = 0; s <= 10; s++) short.tick(s, true);
   assert.equal(short.due(), false, '10 s tracks never count');

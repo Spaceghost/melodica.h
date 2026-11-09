@@ -29,9 +29,10 @@ Scrobbling).
    + `auth.userLogin`) to get a new one.
 2. **Extension (direct to Pandora).** Before `auth.userLogin`, `POST /oauth/melodica/access`
    with the same email string. If `allowed` is false, do not log in; show `message`.
-3. **Compatibility.** Obey `plus` from `/oauth/melodica/access` or `/oauth/melodica/login-ok`, or
-   from `/oauth/melodica/policy`. The web player gets it from the policy endpoint using
-   the `x-melodica-access` token as the bearer. Anything unexpected means `plus: false`.
+3. **Playback flag.** Follow `plus` (in `/oauth/melodica/access` and
+   `/oauth/melodica/login-ok`; `playback.plus` in `/oauth/melodica/policy`). The web player
+   gets it from the policy endpoint using the `x-melodica-access` token as the bearer.
+   Anything unexpected means the default, `false`.
 4. **Login proof and scrobbling.** Knowing an allowed email proves nothing, so nothing
    personal is handed out before Pandora has accepted the password. Web: the relay sees
    Pandora's real answer, records the login and adds `x-melodica-scrobble: <token>` next to
@@ -63,7 +64,7 @@ Authorization: Bearer <spacegho.st access token>     (optional)
 
 `client` is `"extension"`, `"ios"` or `"web"`.
 
-- 200 `{"allowed":true,"plus":false|true}`: log in to Pandora, then call login-ok.
+- 200 `{"allowed":true,"plus":bool}`: log in to Pandora, then call login-ok.
 - The Pandora password never goes to spacegho.st from the extension (it talks to Pandora
   directly). The web relay forwards the encrypted login to Pandora and reads only the
   `username` from it; it never stores or logs the password or the login body.
@@ -154,7 +155,7 @@ Content-Type: application/json
 - `track_metadata` holds only `artist_name`, `track_name`, `release_name` (album) and
   `additional_info: {"duration_ms": <int>, "art_url": "<https cover art URL>", "submission_client": "melodica-web"|"melodica-extension"}`.
   Nothing else: no station, no Pandora ids or tokens, no stream URLs.
-- **Never submit inserted audio items** (neither playing_now nor single).
+- **Submit songs only** (neither playing_now nor single for anything else).
 - A 401 means the token was revoked (opt-out, or replaced by a newer login): drop it
   and stop submitting until the next login hands out a token. A 429 or 5xx: retry later.
   Network errors: queue at most a handful and retry; never block playback.
@@ -347,7 +348,7 @@ shows an error and never redirects.
    grant_type=refresh_token&refresh_token=<token>&client_id=melodica-web
    ```
 
-   `invalid_grant` means the user must sign in again; until then, use `plus: false`.
+   `invalid_grant` means the user must sign in again; until then, use the default playback flag.
 
 ## Policy
 
@@ -360,15 +361,15 @@ Authorization: Bearer <OAuth access token, or a melodica access token>
 {"playback":{"plus":false},"display":{"name":"alice"}}
 ```
 
-- `playback.plus` (boolean): compatibility field; false is the default.
-  `false` → the client may skip them. The client does not know or show why.
+- `playback.plus` (boolean): the playback flag the client follows. The default is `false`.
+  The client does not know or show why it has either value.
 - `display.name` (string or null): the account's username.
 - No `Authorization` header: 200 `{"playback":{"plus":false},"display":{"name":null}}`.
 - Invalid or expired token: 401 `{"error":"invalid_token"}`; refresh and retry once, else
-  treat as `plus: false`.
+  use the default.
 - With a melodica access token, `display.name` is the username when the token carries
   the account (`uid`), else null.
-- Network errors, 5xx, or an unexpected body: `plus: false`.
+- Network errors, 5xx, or an unexpected body: the default.
 - Ask again at app start and after every token refresh. The answer can change.
 - Show no text about this flag. In particular, do not tell users that it exists, what it
   depends on, or that it differs between accounts.

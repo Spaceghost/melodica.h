@@ -349,7 +349,7 @@ button.round:disabled { opacity: 0.4; }
 .listens-box:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 @media (max-width: 760px) { .listens-box { max-height: min(calc(15 * 3.3rem), 60vh); } }
 
-/* the site nav shared with spacegho.st/melodica/ (spaceghost-scrobble docs/CLIENTS.md) */
+/* the site nav shared with spacegho.st/melodica/ (melodica-scrobble docs/CLIENTS.md) */
 .top { flex-wrap: wrap; }
 .site-nav { display: flex; gap: 0.15rem; flex: 1 1 auto; justify-content: center; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .site-nav::-webkit-scrollbar { display: none; }

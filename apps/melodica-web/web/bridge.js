@@ -7,7 +7,10 @@
 //
 // Protocol (every message carries melodica: 1 and is posted to location.origin;
 // melodica-extension's docs/BRIDGE.md):
-//   page -> script   {type: 'hello'}                              repeated until ready (HELLO_WINDOW_MS)
+//   page -> script   {type: 'hello'}                              repeated until ready (HELLO_WINDOW_MS,
+//                                                                 every 250 ms, backing off to 1 s)
+//   script -> page   {type: 'present'}                            optional: the content script is there and
+//                                                                 its background is waking (remote pending)
 //   script -> page   {type: 'ready', name, version, player}       answer, or unsolicited at any time
 //   page -> script   {type: 'subscribe'}                          repeated until the first state
 //   script -> page   {type: 'state', state}                       on every change
@@ -28,7 +31,9 @@
 // event.source === window and that exact event.origin are accepted. `ready` without `player: true` (extension before 0.3.0) is not a
 // remote; the page then ignores the extension and uses the relay.
 
-export const HELLO_WINDOW_MS = 3_000;
+// Long enough for a cold extension service worker to wake (docs/BRIDGE.md 1).
+export const HELLO_WINDOW_MS = 5_000;
+export const HELLO_MAX_EVERY_MS = 1_000;
 export const HELLO_EVERY_MS = 250;
 export const SUBSCRIBE_EVERY_MS = 1_000;
 export const COMMAND_TIMEOUT_MS = 10_000;
@@ -64,6 +69,7 @@ export class BridgeTransport {
     this.helloEvery = options.helloEvery || HELLO_EVERY_MS;
     this.subscribeEvery = options.subscribeEvery || SUBSCRIBE_EVERY_MS;
     this.active = false;      // a content script said ready
+    this.present = false;     // a content script said present or ready (remote pending until ready)
     this.name = '';
     this.version = '';
     this.player = false;      // ready said player: true (the extension is a remote-controllable player)
@@ -91,12 +97,15 @@ export class BridgeTransport {
     this.win.addEventListener('message', this.onMessage);
     this.post({ type: 'hello' });
     const t0 = Date.now();
+    // Every helloEvery ms for the first second, then backing off to HELLO_MAX_EVERY_MS.
+    let every = this.helloEvery;
     const again = () => {
       if (this.active || Date.now() - t0 >= this.helloWindow) return;
       this.post({ type: 'hello' });
-      this.timers.push(setTimeout(again, this.helloEvery));
+      if (Date.now() - t0 >= 1000) every = Math.min(every * 2, Math.max(this.helloEvery, HELLO_MAX_EVERY_MS));
+      this.timers.push(setTimeout(again, every));
     };
-    this.timers.push(setTimeout(again, this.helloEvery));
+    this.timers.push(setTimeout(again, every));
     return this;
   }
 
@@ -131,7 +140,16 @@ export class BridgeTransport {
     if (event.source !== this.win || event.origin !== this.origin) return;
     const d = event.data;
     if (!d || d.melodica !== 1 || typeof d.type !== 'string') return;
+    if (d.type === 'present') {
+      if (!this.present) {
+        this.present = true;
+        this.log('bridge: extension present, waiting for ready');
+        this.onChange(this);
+      }
+      return;
+    }
     if (d.type === 'ready') {
+      this.present = true;
       const name = typeof d.name === 'string' && d.name.trim() ? d.name.trim() : 'melodica extension';
       const version = typeof d.version === 'string' ? d.version.trim() : '';
       const player = d.player === true;

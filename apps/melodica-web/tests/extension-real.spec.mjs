@@ -375,7 +375,7 @@ async function webLogin(page, remember = true) {
   await expect(page.locator('#app')).toHaveAttribute('data-view', 'login', { timeout: 30_000 });
   await page.fill('#login-email', tuner.user);
   await page.fill('#login-password', tuner.password);
-  if (remember) await page.check('#login-remember');
+  if (remember) await page.check('#login-remember'); else await page.uncheck('#login-remember');
   await page.click('#login-button');
   await expect(page.locator('#app')).toHaveAttribute('data-view', 'player', { timeout: 30_000 });
 }
@@ -489,4 +489,185 @@ test.describe('cross sign-in with the real extension', () => {
       await ctx.close();
     }
   });
+});
+
+// Reloads with the extension signed in (Jack: "if I reload it, doesn't appear to get
+// that it's logged in via the extension"). 20 reloads idle, 20 while playing, then a cold
+// browser start on the same profile: each time the page must be the extension's remote,
+// show its signed-in state (stations, no sign-in prompt, the extension's track when it
+// plays) within RELOAD_MS of the navigation.
+const RELOAD_MS = 1000;
+// GitHub's shared runners have put a single reload at 1093 ms (run 42558205130, the
+// other 39 at 54-462 ms): each reload must be within RELOAD_MAX_MS, and at most 2 of
+// the 40 over RELOAD_MS.
+const RELOAD_MAX_MS = 1250;
+// A cold start's first navigation also loads the page in a browser that has just
+// started (CI: the page's first hello came 727-1014 ms after navigation start), so it
+// must be signed in within RELOAD_MS of the page's first hello and COLD_MS of the
+// navigation; the timings are in the report either way.
+const COLD_MS = 2500;
+// A service worker that MV3 has stopped is woken by the content script: up to the
+// page's hello window (web/bridge.js HELLO_WINDOW_MS).
+const WAKE_MS = 5000;
+const RELOADS = Number(process.env.RELOADS || 20);
+
+// Milliseconds from navigation start until the page shows the extension signed in
+// (and, `playing`, showing a track); null when it never does within 10 s. The tuner's
+// tracks are 10 s long, so which track it is is checked afterwards, against the
+// extension's tracks before and after.
+async function signedInAfter(page, playing = false) {
+  return page.evaluate(async (want) => {
+    const t0 = performance.timeOrigin;
+    const ok = () => {
+      const app = document.getElementById('app');
+      const prompt = document.getElementById('remote-signin');
+      const station = document.querySelector('#station-list button.station');
+      if (!app || app.dataset.mode !== 'remote' || app.dataset.view !== 'player') return false;
+      if (!prompt || !prompt.hidden || !station) return false;
+      if (want && /^(Pick a station)?$/.test((document.getElementById('np-title') || {}).textContent || '')) return false;
+      return true;
+    };
+    for (let i = 0; i < 400; i++) {
+      if (ok()) return Date.now() - t0;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    return null;
+  }, !!playing);
+}
+
+// Every bridge message the page sees, from navigation start (window.__trace).
+function traceBridge(page) {
+  return page.addInitScript(() => {
+    window.__trace = [];
+    addEventListener('message', (e) => {
+      const d = e.data;
+      if (!d || typeof d !== 'object' || typeof d.type !== 'string') return;
+      window.__trace.push({ t: Math.round(performance.now()), type: d.type, loggedIn: d.state && d.state.loggedIn,
+        stations: d.state && Array.isArray(d.state.stations) ? d.state.stations.length : undefined, status: d.state && d.state.status,
+        track: d.state && d.state.track ? d.state.track.title || '' : undefined, changedAt: d.state && d.state.changedAt });
+    });
+  });
+}
+
+function pageSnapshot(page) {
+  return page.evaluate(() => {
+    const app = document.getElementById('app');
+    return {
+      mode: app && app.dataset.mode, view: app && app.dataset.view,
+      prompt: !document.getElementById('remote-signin').hidden,
+      stations: document.querySelectorAll('#station-list button.station').length,
+      title: document.getElementById('np-title').textContent,
+      status: document.getElementById('status') ? document.getElementById('status').textContent : '',
+      signedIn: (document.getElementById('signed-in') || {}).textContent,
+      loginVisible: !document.getElementById('view-login').hidden,
+    };
+  });
+}
+
+test.describe('reloads with the real extension signed in', () => {
+  test.describe.configure({ retries: 0 });
+
+  test(`${RELOADS} reloads idle, ${RELOADS} while playing, then cold starts: signed in within ${RELOAD_MS} ms (cold: of the first hello) every time`, async () => {
+    test.skip(!EXT, 'no extension build: set MELODICA_EXT_DIR to an unpacked Chrome build');
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    test.setTimeout(480_000);
+    const dir = join(tmp, 'profile-reload');
+    const out = { idle: [], playing: [], cold: [], misses: [] };
+    report.reloads = out;
+    let ctx = await launch(dir, true);
+    try {
+      const ext = await extensionIn(ctx);
+      const manifest = JSON.parse(await readFile(resolve(EXT, 'manifest.json'), 'utf8'));
+      if (!/^0\.[0-6]\./.test(manifest.version)) await ext.send({ type: 'scrobble-notice-seen' });
+      const r = await ext.send({ type: 'login', email: tuner.user, password: tuner.password, remember: true });
+      expect(r && r.ok, `extension login: ${JSON.stringify(r)}`).toBe(true);
+      const page = await ctx.newPage();
+      await traceBridge(page);
+      await page.goto(APP);
+      for (let i = 0; i < RELOADS; i++) {
+        await page.reload();
+        const ms = await signedInAfter(page);
+        out.idle.push(ms);
+        if (ms === null || ms > RELOAD_MAX_MS) out.misses.push({ kind: 'idle', i, ms, snap: await pageSnapshot(page), trace: (await page.evaluate(() => window.__trace)).slice(0, 30) });
+      }
+      const stations = (await ext.bg()).stations;
+      await ext.send({ type: 'player', action: 'play', station: { token: stations[0].token, name: stations[0].name } });
+      await expect.poll(async () => (await ext.bg()).status, { timeout: 30_000 }).toBe('playing');
+      for (let i = 0; i < RELOADS; i++) {
+        const before = ((await ext.bg()).track || {}).title || '';
+        await page.reload();
+        const ms = await signedInAfter(page, true);
+        const after = ((await ext.bg()).track || {}).title || '';
+        const shown = await page.locator('#np-title').textContent();
+        out.playing.push(ms);
+        if (ms === null || ms > RELOAD_MAX_MS || ![before, after].includes(shown)) out.misses.push({ kind: 'playing', i, ms, before, after, shown, snap: await pageSnapshot(page), trace: (await page.evaluate(() => window.__trace)).slice(0, 30) });
+      }
+      await page.screenshot({ path: resolve(ARTIFACTS, 'extension-real-reload.png') });
+    } finally {
+      await ctx.close();
+    }
+    // Cold start: the same profile, the browser started again; the extension restores its
+    // remembered session by itself.
+    for (let i = 0; i < 3; i++) {
+      ctx = await launch(dir, true);
+      try {
+        const id = await extensionId(ctx);
+        const page = await ctx.newPage();
+        await traceBridge(page);
+        await page.goto(APP);
+        const ms = await signedInAfter(page);
+        const hello = ((await page.evaluate(() => window.__trace)).find((t) => t.type === 'hello') || {}).t;
+        out.cold.push(ms);
+        out.coldFromHello = out.coldFromHello || [];
+        out.coldFromHello.push(ms !== null && hello !== undefined ? ms - hello : null);
+        if (ms === null || ms > COLD_MS || hello === undefined || ms - hello > RELOAD_MS) {
+          const extPage = await ctx.newPage();
+          await extPage.goto(`chrome-extension://${id}/options.html`);
+          const bgState = await extPage.evaluate(() => chrome.runtime.sendMessage({ type: 'player-get' })).catch((e) => String(e));
+          const st = bgState && bgState.state ? { loggedIn: bgState.state.loggedIn, stations: (bgState.state.stations || []).length, status: bgState.state.status } : bgState;
+          out.misses.push({ kind: 'cold', i, ms, snap: await pageSnapshot(page), ext: st, trace: (await page.evaluate(() => window.__trace)).slice(0, 40),
+            message: await page.locator('#player-message').textContent().catch(() => '') });
+        }
+      } finally {
+        await ctx.close();
+      }
+    }
+    // The service worker asleep: started cold, then left alone past MV3's 30 s idle stop,
+    // and no extension page is opened (Jack: "I shouldn't need to open the extension").
+    ctx = await launch(dir, true);
+    try {
+      await extensionId(ctx);
+      await new Promise((r) => setTimeout(r, 35_000));
+      const page = await ctx.newPage();
+      await page.goto(APP);
+      const ms = await signedInAfter(page);
+      out.asleep = ms;
+      if (ms === null || ms > WAKE_MS) out.misses.push({ kind: 'asleep', ms, snap: await pageSnapshot(page) });
+    } finally {
+      await ctx.close();
+    }
+    console.log(`reloads: ${JSON.stringify(out)}`);
+    expect(out.misses, `every reload signed in within ${RELOAD_MAX_MS} ms`).toEqual([]);
+    const slow = [...out.idle, ...out.playing].filter((ms) => ms > RELOAD_MS).length;
+    expect(slow, `reloads over ${RELOAD_MS} ms`).toBeLessThanOrEqual(2);
+  });
+});
+
+test('a fresh profile, the extension never opened: the page finds it and is its remote', async () => {
+  test.skip(!EXT, 'no extension build: set MELODICA_EXT_DIR to an unpacked Chrome build');
+  test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+  test.setTimeout(120_000);
+  const ctx = await launch(join(tmp, 'profile-fresh'), true);
+  try {
+    const page = await ctx.newPage();
+    await page.goto(APP);
+    const t0 = Date.now();
+    await expect(page.locator('#app')).toHaveAttribute('data-mode', 'remote', { timeout: WAKE_MS });
+    await expect(page.locator('#remote-signin')).toBeVisible({ timeout: WAKE_MS });
+    await expect(page.locator('#view-login')).toBeHidden();
+    report.timings['fresh profile -> remote'] = Date.now() - t0;
+    await page.screenshot({ path: resolve(ARTIFACTS, 'extension-real-fresh.png') });
+  } finally {
+    await ctx.close();
+  }
 });

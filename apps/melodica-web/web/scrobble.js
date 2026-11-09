@@ -1,11 +1,11 @@
-// melodica-web: Spaceghost Scrobbles (https://spacegho.st/scrobble/, the spaceghost-scrobble
+// melodica-web: Spaceghost Scrobbles (https://spacegho.st/scrobble/, the melodica-scrobble
 // Worker on the page's own origin). Listens go there by default; the user can turn it off
 // (the account's `scrobbling` setting, kept by the server). The bearer is the melodica
 // access token (the relay's x-melodica-access, or the extension's login-ok token kept
 // with a shared session) or the spacegho.st account's token.
 //
 // Only the side whose audio plays submits (docs/BRIDGE.md 3): in remote mode the
-// extension submits and the page only reads. Ads are never submitted. No DOM here.
+// extension submits and the page only reads. Inserts are never submitted. No DOM here.
 
 export const BASE_PATH = '/scrobble';
 export const SUBMISSION_CLIENT = 'melodica-web';
@@ -50,7 +50,7 @@ export class Scrobbles {
   }
 
   get links() {
-    // The pages under /melodica/ (spaceghost-scrobble docs/CLIENTS.md); the old /scrobble/ pages redirect there.
+    // The pages under /melodica/ (melodica-scrobble docs/CLIENTS.md); the old /scrobble/ pages redirect there.
     const site = this.base.slice(0, -BASE_PATH.length);
     return { dashboard: `${site}/melodica/listens/`, leaderboard: `${site}/melodica/leaderboard/`, crew: `${site}/melodica/map/` };
   }
@@ -118,7 +118,7 @@ export class ListenTracker {
     this.last = t;
   }
   due() {
-    if (this.sent || this.song.isAd) return false;
+    if (this.sent || this.song.isInsert) return false;
     return this.played >= listenThreshold(this.duration);
   }
 }

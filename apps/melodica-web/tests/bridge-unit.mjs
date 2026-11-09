@@ -41,7 +41,7 @@ function fakeWindow(origin = 'https://spacegho.st') {
   return win;
 }
 
-assert.equal(HELLO_WINDOW_MS, 3_000, 'hello is repeated for 3 s');
+assert.equal(HELLO_WINDOW_MS, 5_000, 'hello is repeated for 5 s (a cold service worker wakes)');
 assert.equal('bridge' in new PianoClient({ apiBase: 'https://relay.example/api/' }), false, 'the Pandora client has no bridge transport');
 
 // --- hello and ready ----------------------------------------------------------
@@ -113,6 +113,25 @@ assert.equal('bridge' in new PianoClient({ apiBase: 'https://relay.example/api/'
   assert.equal(b3.active, true);
   assert.equal(b3.player, false);
   assert.equal(await b3.waitReady(100), false, 'waitReady wants a remote-capable extension');
+  // Back-off after the first second: helloEvery, then doubling up to 1 s.
+  const win4 = fakeWindow();
+  const b4 = new BridgeTransport(win4, { helloWindow: 3200, helloEvery: 250 }).start();
+  await sleep(3400);
+  const n4 = win4.posted.filter((p) => p.data.type === 'hello').length;
+  assert.ok(n4 >= 6 && n4 <= 9, `backed-off hellos over 3.2 s (${n4}; 13 without back-off)`);
+  b4.stop();
+  // 'present' (the content script, its background still waking): remote pending.
+  const win5 = fakeWindow();
+  const seen5 = [];
+  const b5 = new BridgeTransport(win5, { helloWindow: 1000, helloEvery: 50, onChange: (b) => seen5.push([b.present, b.active]) }).start();
+  win5.inject({ melodica: 1, type: 'present' });
+  assert.equal(b5.present, true);
+  assert.equal(b5.active, false, 'present is not ready');
+  const w5 = b5.waitReady(800);
+  setTimeout(() => win5.inject({ melodica: 1, type: 'ready', player: true }), 200);
+  assert.equal(await w5, true);
+  assert.deepEqual(seen5, [[true, false], [true, true]]);
+  b5.stop();
   bridge.stop(); b3.stop();
   log('hello repeats, late extension, old extension ok');
 }

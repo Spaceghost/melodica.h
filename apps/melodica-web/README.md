@@ -23,7 +23,7 @@ The spacegho.st relay can run open (anyone may log in) or by allow-list
   gets a new token, and retry the call once.
 - After each new token the page asks `/oauth/melodica/policy` with it as the
   bearer (unless a spacegho.st account is signed in, whose own token is used)
-  and obeys `playback.plus`. A login waits for that answer.
+  and follows the server's playback flags. A login waits for that answer.
 
 The extension bridge does not go through the relay; the extension does its own
 check (`docs/ACCOUNT.md`, "Access check").
@@ -46,8 +46,8 @@ is `docs/ACCOUNT.md`, the page side is `web/account.js`:
   `melodica.account`. Access tokens are refreshed before they expire; refresh
   tokens rotate; `invalid_grant` forgets them.
 - At start, after a sign-in and after each Pandora login the page asks
-  `/oauth/melodica/policy` with the account's access token and obeys
-  `playback.plus` (see "Playlist items"); a 401 is refreshed and retried once. With
+  `/oauth/melodica/policy` with the account's access token and follows the
+  server's playback flags (see "Playlist inserts"); a 401 is refreshed and retried once. With
   no account the relay's access token is the bearer (see above); no token, or
   any failure, means the default policy. A Pandora sign-in waits for this
   answer, so the policy is known before anything plays.
@@ -56,8 +56,6 @@ is `docs/ACCOUNT.md`, the page side is `web/account.js`:
   account's username (from `/oauth/melodica/me`, the policy or userinfo); no
   email is read or shown. Signing out forgets the tokens and revokes the
   refresh token.
-
-The page shows no text about the policy.
 
 ## Usernames
 
@@ -220,7 +218,7 @@ endpoints only), the authorize URL (PKCE S256 against RFC 7636's example,
 state), the way back (state and issuer checked, code exchanged, the address
 bar cleaned), refresh with rotation, a 401 refreshed and retried, every
 failure giving the default policy, `invalid_grant`, the account label,
-sign-out with revocation, and the policy asked with the relay's access token. `inserts-unit.mjs` is described under "Playlist items".
+sign-out with revocation, and the policy asked with the relay's access token. `inserts-unit.mjs` is described under "Playlist inserts".
 
 GitHub Actions runners are answered by a Cloudflare challenge page instead of
 the relay, so in CI the smoke test runs with
@@ -373,7 +371,11 @@ extension (0.3.0+) answers. The page side is `web/bridge.js`, same-window
 `postMessage` (no `connect-src` change, no extension permission):
 
 - The page posts `{melodica: 1, type: 'hello'}` to `location.origin` at
-  startup and again every 250 ms for 3 s, until `ready` arrives.
+  startup and again every 250 ms for the first second, then backing off to
+  once a second, for 5 s in all, until `ready` arrives (long enough for the
+  content script to wake a stopped service worker). A `present` message from
+  the content script means the extension is there but not ready yet: the page
+  then waits for it as a remote ("Connecting…") instead of showing its login.
 - It accepts only `message` events with `event.source === window`,
   `event.origin === location.origin` and `event.data.melodica === 1`.
 - `{melodica: 1, type: 'ready', name, version, player: true}` (0.3.0+) puts
@@ -383,32 +385,40 @@ extension (0.3.0+) answers. The page side is `web/bridge.js`, same-window
   reload. A `ready` without `player: true` (before 0.3.0) is ignored.
 - An explicit `?api=` means that relay and no extension: no hello is sent.
 
-### Playlist items
+### Playlist inserts
 
-Pandora playlists can contain inserted audio items: items with an `adToken` instead of a
-song. libpiano's parser skips those items, as upstream pianobar does, so
-`src/piano_wasm.c` handles them itself:
+Pandora playlists can contain items that are not songs. libpiano's parser
+skips those items, as upstream pianobar does, so `src/piano_wasm.c` handles
+them itself:
 
-- a `playlist` reply also lists `plus: [{adToken, position}]`, `position`
-  being the number of songs before the ad; `PianoClient.playlist` puts an
-  `{isAd: true, adToken}` marker at that place in the song list;
-- the action `adMetadata` (`adToken`, optional `quality`) sends
-  `ad.getAdMetadata` with `returnAdTrackingTokens` and `supportAudioAds`, and
-  answers `{title, companyName, imageUrl, clickThroughUrl, audioUrl,
-  audioFormat, adTrackingTokens}` (the asked quality, else the best one
-  offered);
-- the action `registerAd` (`stationId`, `adTrackingTokens`) sends
-  `ad.registerAd`.
+- a `playlist` reply also lists `inserts: [{token, position}]`, `position`
+  being the number of songs before it; `PianoClient.playlist` puts an
+  `{isInsert: true, insertToken}` marker at that place in the song list;
+- the action `insertInfo` (`token`, optional `quality`) answers `{title,
+  artist, imageUrl, link, audioUrl, audioFormat, trackingTokens}` (the asked
+  quality, else the best one offered);
+- the action `insertPlayed` (`stationId`, `trackingTokens`) confirms it played.
 
 Both are authenticated and Blowfish-encrypted exactly like the library's own
-requests. The page plays an ad like a song, showing its title, company and
-image in the now-playing card with the chip "ad". While an ad plays, next,
-love, ban, tired and "why this song?" are disabled, the `n` key does nothing
-and the ad is left out of the play log. `ad.registerAd` is sent once the ad's
-audio has started. An ad without audio, or whose metadata request fails, is
-passed over.
+requests. The page plays an insert like a song, showing its title, artist and
+image in the now-playing card. While it plays, next, love, ban, tired and "why
+this song?" are disabled, the `n` key does nothing and it is left out of the
+play log. `insertPlayed` is sent once its audio has started. An insert without
+audio, or whose info request fails, is passed over.
 
-The browser checks exercise playback, account policy, authentication and the requests recorded by the tuner. The attached reports provide the exact observations.
+The client follows the server's playback flags (see "Access through the
+spacegho.st relay"); nothing is cached between page loads.
+`tests/inserts-unit.mjs` checks the C side against canned answers.
+`tests/smoke-playback.spec.mjs` runs the built page against melodica-tuner 0.2+
+with an insert after every song, logging in through a fake relay
+(`tests/tools/fake-relay.mjs`, the allow-list contract) in front of the tuner,
+and checks in the tuner's log and state that the page follows the flags: with
+an account, with an allow-list entry read with the relay's token, and with the
+defaults. Each case checks that every relay call after the login carried
+`x-melodica-access`. A fourth case logs in with an email not on the list: the
+login card shows the relay's message, the email is recorded as a request, and
+the tuner sees no `auth.userLogin`. In CI `python3 -m tuner.report` then checks
+the tuner's log.
 
 ### Remote mode (extension 0.3.0+)
 
@@ -423,7 +433,8 @@ in `web/bridge.js` (`subscribe`, `command`) and `web/app.js` ("remote mode"):
   every second until the first `state` arrives (the extension's service worker
   may need a while to start). There is no timeout to local playback.
 - Before anything is shown the page waits up to 1.5 s for an extension; a
-  remembered relay login waits the full 3 s window.
+  remembered relay login waits 3 s (the full 5 s when the extension said
+  `present`).
 - Remote mode shows the player view (`#app[data-mode="remote"]`) drawn from
   the pushed `state` (station list, now playing, position, play/pause, rating,
   volume, quality, queue length) and sends `{type: 'command', id, action, …}`
@@ -439,6 +450,10 @@ in `web/bridge.js` (`subscribe`, `command`) and `web/app.js` ("remote mode"):
 - While the page is visible it also asks for the current state every second
   (`subscribe` again), because released extensions (0.5.x) do not push every
   change (not their login; a resume has been seen to arrive seconds late).
+- A state that says the extension is signed in but has no stations makes the
+  page send the `stations` command (at most every 3 s). Extension 0.8.1 after a
+  browser restart restores its Pandora session without loading the list until
+  something asks; before 0.10.3 the page then showed no stations at all.
 - Not available remotely (the protocol has no command for them): "why this
   song?", station search/creation, station deletion, and rating earlier songs
   in the play log. The play log lists the songs seen while the page was open.
@@ -450,7 +465,15 @@ in `web/bridge.js` (`subscribe`, `command`) and `web/app.js` ("remote mode"):
   page shows the extension's track, play/pause, next, station and volume from
   either side show on the other (timings in `tests/artifacts/extension-real.json`),
   and the page has no `<audio>` source, fetches no audio and makes no relay
-  request.
+  request. Its "reloads" case signs the extension in, reloads the page 20 times
+  idle and 20 times while playing, then starts the browser cold 3 times on the
+  same profile; each time the page must show the extension signed in (its
+  stations, no sign-in prompt, its track when playing) within 1 s of the
+  navigation (at most 2 of the 40 reloads over 1 s, none over 1.25 s: shared
+  CI runners have put one at 1.09 s), for the first page of a
+  cold-started browser 1 s from the page's first hello (the page itself took
+  up to 1 s to load there) and 5 s when the service worker was stopped (timings
+  under `reloads` in the report).
 
 ### Content Security Policy
 
@@ -490,7 +513,7 @@ on this device"); nothing secret is in `localStorage`. An optional
 spacegho.st sign-in (see "spacegho.st account") adds its tokens to
 `localStorage` until you sign out of it on the page. Unless you turn
 scrobbling off, the artist, title, album, length and cover URL of each song you
-listen to go to Spacegho.st Scrobbles (see "Scrobbling"). Inserted items are excluded, along with
+listen to go to Spacegho.st Scrobbles (see "Scrobbling"). Playlist inserts never do; nor do
 station names, Pandora ids or stream URLs. Nothing else leaves the browser.
 
 ## Remember me on this device
@@ -504,6 +527,16 @@ station names, Pandora ids or stream URLs. Nothing else leaves the browser.
 - A start resumes the stored Pandora session (and the relay token while it is
   younger than 11 h) without a login; the stored password is used only when
   Pandora answers 1001 or the relay 401.
+- The box is ticked by default (0.10.3+); unticking it is remembered
+  (`melodica.rememberOff` in `localStorage`, no secret).
+- A reload never shows the login card while something is remembered: the
+  vault is read before anything is drawn, the player shows "Restoring your
+  session…" (`#app[data-restoring]`), and the page tries, in order, the
+  extension (3 s; the full 5 s hello window when it said `present`), the
+  stored session, then the stored password. Only when all of them fail does
+  the login card show, with the reason. Before 0.10.3 the login card was
+  drawn first and the box was off by default, so a login without the box
+  ticked always came back to the login card on reload.
 - Signing out, unchecking the box, or a session signed out in the extension
   deletes the whole database (key and record).
 - A plaintext `melodica.password` from versions before 0.8.0 is moved into
@@ -514,7 +547,9 @@ This keeps the password out of anything that reads the profile's files or
 `tests/smoke-playback.spec.mjs` ("remember me on this device") dumps
 `localStorage`, `sessionStorage` and every IndexedDB store after a remembered
 login and checks the password string is absent, then checks resume, sign-out,
-the migration and the unchecked box; `tests/node-unit.mjs` checks the session
+the migration and the unchecked box, and that five reloads, a rejected relay
+token and a relay token older than 11 h each go straight to the player without
+the login card ever showing; `tests/node-unit.mjs` checks the session
 export and restore in the wasm module.
 
 ## Signed in on the page or the extension: signed in on both
@@ -549,7 +584,7 @@ plays on its own without a new `auth.userLogin` (observed in
 ## Scrobbling
 
 The Listens, Leaderboard and Map panels are the shared Scrobbles UI from
-Spaceghost/spaceghost-scrobble (`ui/dist`), pinned by commit and sha256 in
+Spaceghost/melodica-scrobble (`ui/dist`), pinned by commit and sha256 in
 `scrobble-ui.pin`. `scripts/fetch-scrobble-ui.sh` fetches it at build time, and it
 is bundled in `dist/vendor/scrobble-ui/` and the release tarball but not kept in
 this repository.
@@ -563,7 +598,7 @@ this repository.
   is in the same place.
 - A song counts once it has played for half its length or 4 minutes, whichever
   comes first. Tracks of 30 s or less never count. Paused or stalled time does
-  not count. "Playing now" goes out when a song starts. Inserted items are excluded from submissions.
+  not count. "Playing now" goes out when a song starts. Playlist inserts are never sent.
 - The bearer is the relay's access token (or the extension's, kept with a
   shared session), else the spacegho.st account's token.
 - The Scrobbles panel has three tabs. "Your listens" updates live over
@@ -585,7 +620,18 @@ this repository.
   on the page. A network failure or 5xx is retried, up to 20 listens, while
   the page stays open. Signing out clears the listens from the page.
 
-The browser checks exercise playback, account policy, authentication and the requests recorded by the tuner. The attached reports provide the exact observations.
+Tests: `tests/scrobble-unit.mjs` covers the threshold, the tracker and the
+calls. `tests/smoke-playback.spec.mjs` ("scrobbling to spacegho.st") runs against
+melodica-tuner and the contract fake `tests/tools/fake-scrobble.mjs`. It
+checks the notice, "playing now" with the relay token, that no insert and no 10 s
+tuner track is submitted, 15 listens then more on scroll, the settings, the
+crew link, the server's 403 and sign-out. `tests/remote.spec.mjs` checks that
+the page submits nothing in remote mode. A full listen submitted from a
+browser is not covered there, because the tuner's tracks are under the 30 s
+minimum; the unit test covers that path. One listen was submitted live with a
+throwaway Scrobbles client token and read back, and the account was then
+erased. This proves the service's ingest. It does not prove the page's
+melodica bearer against the live service.
 
 ## License
 

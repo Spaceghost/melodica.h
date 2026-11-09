@@ -126,18 +126,18 @@ jobs:
           TUNER_HTTP_URL: ${{ steps.tuner.outputs.http-url }}
           TUNER_USER: ${{ steps.tuner.outputs.user }}
           TUNER_PASSWORD: ${{ steps.tuner.outputs.password }}
-      - name: Playback smoke test (local build, tuner, account contract)
+      - name: Playback flags smoke test (local dist, melodica-tuner, account policy)
         run: npx playwright test tests/smoke-playback.spec.mjs
         env:
           TUNER_HTTPS_URL: ${{ steps.tuner.outputs.https-url }}
           TUNER_HTTP_URL: ${{ steps.tuner.outputs.http-url }}
           TUNER_USER: ${{ steps.tuner.outputs.user }}
           TUNER_PASSWORD: ${{ steps.tuner.outputs.password }}
-      - name: Tuner report (the ad steps must be in the tuner's log)
+      - name: Tuner report (the insert steps must be in the tuner's log)
         run: |
           # The tuner repository is private; use the copy the runner fetched for the action.
           cd "$RUNNER_WORKSPACE/../_actions/Spaceghost/melodica-tuner/v1"
-          python3 -m tuner.report --platform web --ok --summary "melodica-web playback against melodica-tuner" \
+          python3 -m tuner.report --platform web --ok --summary "melodica-web playback flags against melodica-tuner" \
             --from-log "${{ steps.tuner.outputs.log-url }}" \
             --require "ad.getAdMetadata ok" --require "ad audio fetched" --require "ad.registerAd ok" \
             --out "$GITHUB_WORKSPACE/tests/artifacts/smoke-web-playback-report.json"

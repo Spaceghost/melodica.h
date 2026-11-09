@@ -1,18 +1,18 @@
-// Playback and relay access end to end against melodica-tuner (0.2.0+).
-// serves ad items per its `ads` setting): the built client in a headless browser,
-// logging in through a fake relay (tests/tools/fake-relay.mjs, the allow-list of
-// docs/ACCOUNT.md) in front of the tuner, with the contract fake account server
-// (tests/tools/fake-account.mjs) on the page's origin.
+// Playback and relay access end to end against melodica-tuner (0.2.0+): the
+// built client in a headless browser, logging in through a fake relay
+// (tests/tools/fake-relay.mjs, the allow-list of docs/ACCOUNT.md) in front of the
+// tuner, with the contract fake account server (tests/tools/fake-account.mjs) on
+// the page's origin.
 //
-//   1. Verify the signed-in account compatibility response.
-// The fixture checks the selected playback policy.
-//      ad.registerAd in the tuner's log).
-//   2. Verify compatibility with only the relay access token.
-// The fixture checks the selected playback policy.
-//   3. Verify default compatibility and ordinary inserted-item playback.
-//      the ad's metadata is fetched, its audio plays in the now-playing card with
-//      skip and rating disabled, and ad.registerAd is sent with the tracking tokens
-//      the tuner handed out for this station.
+//   1. signed in to a spacegho.st account whose playback flags say no inserts: the
+//      tuner serves them, the page plays none (no insert request, audio or
+//      confirmation in the tuner's log).
+//   2. no account; the allow-list entry's flags say the same, read from the policy
+//      endpoint with the relay's x-melodica-access token: again none played.
+//   3. no account; default flags, the tuner sends an insert after every song: its
+//      info is fetched, its audio plays in the now-playing card with skip and
+//      rating disabled, and it is confirmed with the tracking tokens the tuner
+//      handed out for this station.
 //   4. an email not on the allow-list: the relay answers 403, the login card shows
 //      its message, the email is recorded as a request, Pandora sees no login.
 // 1-3 also check that every relay call after the login carried x-melodica-access.
@@ -35,14 +35,16 @@
 //
 // The tuner comes from TUNER_HTTPS_URL / TUNER_HTTP_URL / TUNER_USER /
 // TUNER_PASSWORD (the Spaceghost/melodica-tuner action) or MELODICA_TUNER_DIR
-// (a checkout; the test starts it). Its `ads` setting is changed at runtime
+// (a checkout; the test starts it). Its insert setting is changed at runtime
 // through POST /__tuner/config. Without a tuner the tests are skipped.
 //
 // Artifacts: tests/artifacts/smoke-playback.json (what the tuner saw),
-// smoke-web-ad.png (an ad in the now-playing card), smoke-web-not-listed.png,
+// smoke-web-insert.png (an insert in the now-playing card), smoke-web-not-listed.png,
 // username-pick.png, username-change.png.
 
 import { test, expect } from '@playwright/test';
+// The playback flag as the client reads it (web/account.js).
+const flagsOf = (b) => !b.playback.plus;
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { readFile, mkdir, writeFile, rm, mkdtemp } from 'node:fs/promises';
@@ -173,7 +175,7 @@ test.afterAll(async () => {
 });
 
 // Sign in to a spacegho.st account (invite accepted, then "Sign in with spacegho.st")
-// Sign in with the requested compatibility state.
+// whose flags allow inserts or not.
 async function signInAccount(page, email, inserts) {
   const t = account.invite(email);
   await page.goto(`${origin}/oauth/invite?t=${t}`);
@@ -193,16 +195,16 @@ function expectRelayTokens() {
   expect(relay.seen.filter((e) => e.status === 401 || e.status === 403).map((e) => e.method), 'refused relay calls').toEqual([]);
 }
 
-// A fresh tuner run with `ads` set; the page opened (signed in to an account whose
-// policy is `accountInserts`, when given) and logged in through the relay, whose
+// A fresh tuner run sending `every` inserts; the page opened (signed in to an account
+// whose flags are `accountInserts`, when given) and logged in through the relay, whose
 // allow-list has the tuner user with `listedInserts`.
-async function begin(page, { ads, accountInserts, listedInserts = true, scrobble = false }) {
+async function begin(page, { every, accountInserts, listedInserts = true, scrobble = false }) {
   relay.seen.length = 0;
   account.allow(tuner.user, { inserts: listedInserts });
   account.setPerson(tuner.user, { username: 'tuner_listener', chosen: true, notice: '' }); // no "Pick a username" over the stations
   await postJson(`${tuner.http}/__tuner/reset`, {});
-  const cfg = await postJson(`${tuner.http}/__tuner/config`, { ads });
-  expect(cfg.ok, `POST /__tuner/config {ads: ${ads}}`).toBe(true);
+  const cfg = await postJson(`${tuner.http}/__tuner/config`, { ads: every });
+  expect(cfg.ok, `POST /__tuner/config ${every}`).toBe(true);
   const evidence = { errors: [], console: [] };
   page.on('pageerror', (e) => evidence.errors.push(String(e)));
   page.on('console', (m) => evidence.console.push(`[${m.type()}] ${m.text()}`));
@@ -216,11 +218,11 @@ async function begin(page, { ads, accountInserts, listedInserts = true, scrobble
     document.addEventListener('DOMContentLoaded', () => {
       const a = document.getElementById('audio');
       // Kind by the audio URL: the app's own 'ended' handler may already have moved on.
-      window.__adSrc = new Set();
+      window.__insSrc = new Set();
       for (const n of ['playing', 'ended', 'error']) {
         a.addEventListener(n, () => {
-          if (n === 'playing' && document.getElementById('app').dataset.ad === 'true') window.__adSrc.add(a.currentSrc);
-          window.__audioEvents.push(`${n} ${window.__adSrc.has(a.currentSrc) ? 'ad' : 'song'}`);
+          if (n === 'playing' && document.getElementById('app').dataset.insert === 'true') window.__insSrc.add(a.currentSrc);
+          window.__audioEvents.push(`${n} ${window.__insSrc.has(a.currentSrc) ? 'insert' : 'song'}`);
         });
       }
     });
@@ -230,7 +232,7 @@ async function begin(page, { ads, accountInserts, listedInserts = true, scrobble
   await page.fill('#login-email', tuner.user);
   await page.fill('#login-password', tuner.password);
   await page.click('#login-button');
-  expect((await (await policy).json()).playback.plus, 'the policy the page fetched').toBe(!(accountInserts ?? listedInserts));
+  expect(flagsOf(await (await policy).json()), 'the policy the page fetched').toBe(accountInserts ?? listedInserts);
   await expect(page.locator('#app')).toHaveAttribute('data-view', 'player', { timeout: 30_000 });
   if (scrobble) {
     // Scrobbling on by default: the notice once, before anything plays.
@@ -253,90 +255,90 @@ async function tunerSeen() {
     inserts: me.ads || [],
     metadata: log.filter((e) => e.protocol === 'json' && e.method === 'ad.getAdMetadata'),
     register: log.filter((e) => e.protocol === 'json' && e.method === 'ad.registerAd'),
-    adAudio: log.filter((e) => e.protocol === 'audio' && e.ad === true),
+    insertAudio: log.filter((e) => e.protocol === 'audio' && e.ad === true),
     songAudio: log.filter((e) => e.protocol === 'audio' && !e.ad),
   };
 }
 
-test.describe.serial('playback against melodica-tuner', () => {
-  test('the signed-in compatibility response is applied', async ({ page }, info) => {
+test.describe.serial('playback flags against melodica-tuner', () => {
+  test('an account whose flags say no inserts: the tuner serves them, none are played or requested', async ({ page }, info) => {
     test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
-    const evidence = await begin(page, { ads: 1, accountInserts: false });
-    // Play through several songs; with ads: 1 every other playlist item is an ad.
+    const evidence = await begin(page, { every: 1, accountInserts: false });
+    // Play through several songs; every other playlist item is an insert.
     const titles = [];
     for (let i = 0; i < 4; i++) {
       titles.push((await page.locator('#np-title').textContent()).trim());
-      await expect(page.locator('#app')).not.toHaveAttribute('data-ad', 'true');
+      await expect(page.locator('#app')).not.toHaveAttribute('data-insert', 'true');
       await expect(page.locator('#btn-next')).toBeEnabled();
       await page.click('#btn-next');
       await expect(page.locator('#np-title')).not.toHaveText(titles.at(-1), { timeout: 20_000 });
     }
     const seen = await tunerSeen();
     const served = seen.log.filter((e) => e.method === 'station.getPlaylist').length;
-    report.policyOff = { titles, playlists: served, adItemsServed: seen.inserts.length, metadata: seen.metadata.length, register: seen.register.length, adAudio: seen.adAudio.length };
-    console.log(`account compatibility: ${JSON.stringify(report.policyOff)}`);
+    report.policyOff = { titles, playlists: served, insertsServed: seen.inserts.length, metadata: seen.metadata.length, register: seen.register.length, insertAudio: seen.insertAudio.length };
+    console.log(`flags off: ${JSON.stringify(report.policyOff)}`);
     await info.attach('policy-off', { body: JSON.stringify(report.policyOff, null, 2), contentType: 'application/json' });
-    expect(seen.inserts.length, 'the tuner did serve ad items').toBeGreaterThan(0);
-    expect(seen.metadata, 'metadata count unchanged').toEqual([]);
-    expect(seen.adAudio, 'slot audio count unchanged').toEqual([]);
-    expect(seen.register, 'confirmation count unchanged').toEqual([]);
+    expect(seen.inserts.length, 'the tuner did serve inserts').toBeGreaterThan(0);
+    expect(seen.metadata, 'no insert info request').toEqual([]);
+    expect(seen.insertAudio, 'no insert audio fetched').toEqual([]);
+    expect(seen.register, 'no insert confirmation').toEqual([]);
     expectRelayTokens();
     expect(evidence.errors).toEqual([]);
   });
 
-  test('the relay-token compatibility response is applied', async ({ page }, info) => {
+  test('no account, allow-list entry with inserts off: the flags read with the relay token hold', async ({ page }, info) => {
     test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
-    const evidence = await begin(page, { ads: 1, listedInserts: false });
+    const evidence = await begin(page, { every: 1, listedInserts: false });
     const titles = [];
     for (let i = 0; i < 3; i++) {
       titles.push((await page.locator('#np-title').textContent()).trim());
-      await expect(page.locator('#app')).not.toHaveAttribute('data-ad', 'true');
+      await expect(page.locator('#app')).not.toHaveAttribute('data-insert', 'true');
       await page.click('#btn-next');
       await expect(page.locator('#np-title')).not.toHaveText(titles.at(-1), { timeout: 20_000 });
     }
     const seen = await tunerSeen();
-    report.relayPolicyOff = { titles, adItemsServed: seen.inserts.length, metadata: seen.metadata.length, register: seen.register.length, adAudio: seen.adAudio.length, relay: relay.seen.length };
-    console.log(`relay-token compatibility: ${JSON.stringify(report.relayPolicyOff)}`);
+    report.relayPolicyOff = { titles, insertsServed: seen.inserts.length, metadata: seen.metadata.length, register: seen.register.length, insertAudio: seen.insertAudio.length, relay: relay.seen.length };
+    console.log(`relay-token flags off: ${JSON.stringify(report.relayPolicyOff)}`);
     await info.attach('relay-policy-off', { body: JSON.stringify(report.relayPolicyOff, null, 2), contentType: 'application/json' });
-    expect(seen.inserts.length, 'the tuner did serve ad items').toBeGreaterThan(0);
-    expect(seen.metadata, 'metadata count unchanged').toEqual([]);
-    expect(seen.adAudio, 'slot audio count unchanged').toEqual([]);
-    expect(seen.register, 'confirmation count unchanged').toEqual([]);
+    expect(seen.inserts.length, 'the tuner did serve inserts').toBeGreaterThan(0);
+    expect(seen.metadata, 'no insert info request').toEqual([]);
+    expect(seen.insertAudio, 'no insert audio fetched').toEqual([]);
+    expect(seen.register, 'no insert confirmation').toEqual([]);
     expectRelayTokens();
     expect(evidence.errors).toEqual([]);
   });
 
-  test('default playback fetches and registers a playlist slot', async ({ page }, info) => {
+  test('no account, default flags: an insert is fetched, played without skip, and confirmed', async ({ page }, info) => {
     test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
-    const evidence = await begin(page, { ads: 1 });
-    // With ads: 1 the item after the first song is an ad.
-    await expect(page.locator('#app')).not.toHaveAttribute('data-ad', 'true');
+    const evidence = await begin(page, { every: 1 });
+    // The item after the first song is an insert.
+    await expect(page.locator('#app')).not.toHaveAttribute('data-insert', 'true');
     await page.click('#btn-next');
-    await expect(page.locator('#app')).toHaveAttribute('data-ad', 'true', { timeout: 20_000 });
-    const ad = {
+    await expect(page.locator('#app')).toHaveAttribute('data-insert', 'true', { timeout: 20_000 });
+    const ins = {
       title: (await page.locator('#np-title').textContent()).trim(),
       company: (await page.locator('#np-artist').textContent()).trim(),
       chip: (await page.locator('#np-quality').textContent()).trim(),
       cover: await page.locator('#cover').getAttribute('src'),
     };
-    console.log(`ad in the card: ${JSON.stringify(ad)}`);
-    expect(ad.title).not.toBe('');
-    expect(ad.company).not.toBe('');
-    expect(ad.chip).toBe('ad');
-    expect(ad.cover).toMatch(/^https?:/);
-    for (const id of ['#btn-next', '#btn-love', '#btn-ban', '#btn-tired', '#btn-explain']) await expect(page.locator(id), `${id} during the ad`).toBeDisabled();
-    // The n key does nothing during an ad.
+    console.log(`insert in the card: ${JSON.stringify(ins)}`);
+    expect(ins.title).not.toBe('');
+    expect(ins.company).not.toBe('');
+    expect(ins.chip).toBe('');
+    expect(ins.cover).toMatch(/^https?:/);
+    for (const id of ['#btn-next', '#btn-love', '#btn-ban', '#btn-tired', '#btn-explain']) await expect(page.locator(id), `${id} during the insert`).toBeDisabled();
+    // The n key does nothing during an insert.
     await page.locator('body').press('n');
-    await expect(page.locator('#app')).toHaveAttribute('data-ad', 'true');
-    await page.waitForFunction(() => window.__audioEvents.includes('playing ad'), null, { timeout: 20_000 });
-    await page.screenshot({ path: resolve(ARTIFACTS, 'smoke-web-ad.png') });
-    await expect.poll(async () => (await tunerSeen()).register.length, { timeout: 20_000, message: 'ad.registerAd reached the tuner' }).toBeGreaterThan(0);
+    await expect(page.locator('#app')).toHaveAttribute('data-insert', 'true');
+    await page.waitForFunction(() => window.__audioEvents.includes('playing insert'), null, { timeout: 20_000 });
+    await page.screenshot({ path: resolve(ARTIFACTS, 'smoke-web-insert.png') });
+    await expect.poll(async () => (await tunerSeen()).register.length, { timeout: 20_000, message: 'the confirmation reached the tuner' }).toBeGreaterThan(0);
     // The 5 s clip ends and the next song follows by itself.
-    await page.waitForFunction(() => window.__audioEvents.includes('ended ad'), null, { timeout: 30_000 });
-    await expect(page.locator('#app')).not.toHaveAttribute('data-ad', 'true', { timeout: 20_000 });
+    await page.waitForFunction(() => window.__audioEvents.includes('ended insert'), null, { timeout: 30_000 });
+    await expect(page.locator('#app')).not.toHaveAttribute('data-insert', 'true', { timeout: 20_000 });
     await expect(page.locator('#btn-next')).toBeEnabled();
     const logged = await page.locator('#history li .hist-title').allTextContents();
-    expect(logged, 'the ad is not in the play log').not.toContain(ad.title);
+    expect(logged, 'the insert is not in the play log').not.toContain(ins.title);
 
     const seen = await tunerSeen();
     // The tuner logs the decrypted request body as a JSON string.
@@ -345,17 +347,17 @@ test.describe.serial('playback against melodica-tuner', () => {
     const reg = parsed(seen.register[0]);
     const item = seen.inserts.find((a) => a.registered >= 1) || seen.inserts[0] || {};
     report.policyOn = {
-      ad, metadata: seen.metadata.length, register: seen.register.length, adAudio: seen.adAudio.length,
+      ins, metadata: seen.metadata.length, register: seen.register.length, insertAudio: seen.insertAudio.length,
       metadataBody: meta && meta.body, registerBody: reg && reg.body, registerResponse: reg && reg.response,
       state: item, audioEvents: await page.evaluate(() => window.__audioEvents),
     };
-    console.log(`policy default: ${JSON.stringify(report.policyOn)}`);
+    console.log(`flags default: ${JSON.stringify(report.policyOn)}`);
     await info.attach('policy-on', { body: JSON.stringify(report.policyOn, null, 2), contentType: 'application/json' });
-    expect(meta && meta.code, 'ad.getAdMetadata succeeded').toBeNull();
+    expect(meta && meta.code, 'insert info succeeded').toBeNull();
     expect(meta.body.returnAdTrackingTokens).toBe(true);
     expect(meta.body.supportAudioAds).toBe(true);
-    expect(seen.adAudio.length, 'ad audio fetched').toBeGreaterThan(0);
-    expect(reg && reg.code, 'ad.registerAd succeeded').toBeNull();
+    expect(seen.insertAudio.length, 'insert audio fetched').toBeGreaterThan(0);
+    expect(reg && reg.code, 'insert confirmation succeeded').toBeNull();
     expect(reg.response && reg.response.stat).toBe('ok');
     expect(item.metadataFetched).toBeGreaterThanOrEqual(1);
     expect(item.audioFetched).toBeGreaterThanOrEqual(1);
@@ -369,7 +371,7 @@ test.describe.serial('playback against melodica-tuner', () => {
   test('an email not on the allow-list: the login card says so and Pandora is not contacted', async ({ page }, info) => {
     test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
     relay.seen.length = 0;
-    // No reset: CI's tuner.report reads the ad steps of the case before from this log.
+    // No reset: CI's tuner.report reads the insert steps of the case before from this log.
     const logins = async () => (await getJson(`${tuner.http}/__tuner/log`)).filter((e) => e.method === 'auth.userLogin').length;
     const loginsBefore = await logins();
     const email = `stranger${Date.now()}@example.com`;
@@ -565,6 +567,63 @@ test.describe.serial('remember me on this device', () => {
     expect(errors).toEqual([]);
   });
 
+  // Jack: "When I refresh it goes to login page instead of just refreshing with the
+  // player." Remember me is on by default; a reload never shows the login card while
+  // something is remembered, also when the stored relay token is rejected (revoked, or a
+  // relay secret changed) or too old to use.
+  test('remember on by default: reloads go straight to the player, never the login card, also with a rejected or expired relay token', async ({ page }, info) => {
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    account.allow(tuner.user, { inserts: true });
+    account.setPerson(tuner.user, { username: 'tuner_listener', chosen: true, notice: '' });
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e)));
+    // Every data-view the page goes through, from the first script on.
+    await page.addInitScript(() => {
+      window.__views = [];
+      new MutationObserver(() => {
+        const v = document.getElementById('app') && document.getElementById('app').dataset.view;
+        if (v && window.__views.at(-1) !== v) window.__views.push(v);
+      }).observe(document, { subtree: true, attributes: true, attributeFilter: ['data-view'] });
+    });
+    await page.goto(appUrl);
+    await expect(page.locator('#app')).toHaveAttribute('data-view', 'login', { timeout: 30_000 });
+    await expect(page.locator('#login-remember'), 'Remember me is on by default').toBeChecked();
+    await page.fill('#login-email', tuner.user);
+    await page.fill('#login-password', tuner.password);
+    await page.click('#login-button');
+    await expect(page.locator('#app')).toHaveAttribute('data-view', 'player', { timeout: 30_000 });
+    await expect.poll(async () => (await storageDump(page)).databases, { timeout: 5_000 }).toContain('melodica-vault');
+    const reloadOnce = async (label) => {
+      await page.reload();
+      await expect(page.locator('#station-list button.station').first(), `${label}: stations`).toBeVisible({ timeout: 30_000 });
+      await expect(page.locator('#app')).not.toHaveAttribute('data-restoring', 'true', { timeout: 30_000 });
+      const views = await page.evaluate(() => window.__views);
+      report.reloadViews = report.reloadViews || {};
+      report.reloadViews[label] = views;
+      expect(views, `${label}: the views the page went through`).not.toContain('login');
+      await expect(page.locator('#app')).toHaveAttribute('data-view', 'player');
+    };
+    for (let i = 0; i < 5; i++) await reloadOnce(`reload ${i + 1}`);
+    // The stored relay token rejected: the remembered password gets a new one silently.
+    const loginsBefore = relay.seen.filter((e) => e.method === 'auth.userLogin').length;
+    account.revokeAccess();
+    await reloadOnce('rejected relay token');
+    await page.locator('#station-list button.station', { hasNotText: 'QuickMix' }).first().click();
+    await expect(page.locator('#np-title')).not.toHaveText(/^(Pick a station)?$/, { timeout: 30_000 });
+    expect(relay.seen.filter((e) => e.method === 'auth.userLogin').length, 'a silent new login').toBeGreaterThan(loginsBefore);
+    // The stored relay token too old to use (more than 11 h).
+    await page.evaluate(async () => {
+      const { Vault } = await import('./vault.js');
+      const v = new Vault();
+      const rec = await v.read();
+      if (rec && rec.relay) rec.relay.at = Date.now() - 13 * 3600_000;
+      await v.write(rec);
+    });
+    await reloadOnce('expired relay token');
+    await page.screenshot({ path: resolve(ARTIFACTS, 'remember-reloads.png') });
+    expect(errors).toEqual([]);
+  });
+
   test('a plaintext password from an older version moves into the vault; unchecking the box deletes it', async ({ page }) => {
     test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
     account.allow(tuner.user, { inserts: true });
@@ -577,6 +636,7 @@ test.describe.serial('remember me on this device', () => {
     await page.reload();
     // Logged in with the moved credential, and no plain text left.
     await expect(page.locator('#app')).toHaveAttribute('data-view', 'player', { timeout: 30_000 });
+    await expect(page.locator('#app')).not.toHaveAttribute('data-restoring', 'true', { timeout: 30_000 });
     const dump = await storageDump(page);
     expect(dump.text.includes(tuner.password)).toBe(false);
     expect(dump.databases).toContain('melodica-vault');
@@ -596,9 +656,9 @@ test.describe.serial('remember me on this device', () => {
 // (tests/tools/fake-scrobble.mjs): on by default, with a notice once; "playing now" at
 // each song start, with the relay token; the tuner's tracks are 10 s, under the 30 s
 // minimum, so no listen is submitted (the threshold itself is in node-unit); never an
-// ad; the last 15 listens, then more on scroll; the settings; crew only when the server
-// says so; logout clears the listens. The ad test runs last: the workflow's tuner
-// report reads the ad steps from the tuner's log, which each begin() resets.
+// insert; the last 15 listens, then more on scroll; the settings; crew only when the
+// server says so; logout clears the listens. The insert test runs last: the workflow's
+// tuner report reads the insert steps from the tuner's log, which each begin() resets.
 // The listens scroll inside their own box (about 15 rows; at most 60vh on phones): the
 // page's own scrolling never loads more, scrolling the box does, and the page footer
 // stays reachable below it.
@@ -633,7 +693,7 @@ test.describe.serial('scrobbling to spacegho.st', () => {
   test('at 390 wide: the listens scroll in their own box and the footer stays reachable', async ({ page }) => {
     test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
     await page.setViewportSize({ width: 390, height: 844 });
-    await begin(page, { ads: 0, scrobble: true });
+    await begin(page, { every: 0, scrobble: true });
     await expect(page.locator('#listens-panel')).toBeVisible();
     await scrollListensBox(page, 390);
     await page.screenshot({ path: resolve(ARTIFACTS, 'scrobble-listens-390.png'), fullPage: true });
@@ -646,7 +706,7 @@ test.describe.serial('scrobbling to spacegho.st', () => {
   test('settings: off stops submitting, the leaderboard toggle, crew only for GitHub, the server turning it off, logout clears', async ({ page }) => {
     test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
     scrobbles.crewViewers.add(key());
-    await begin(page, { ads: 0, scrobble: true });
+    await begin(page, { every: 0, scrobble: true });
     await page.click('#account summary');
     await expect(page.locator('#scrobble-settings')).toBeVisible();
     await expect(page.locator('#scrobble-on')).toBeChecked();
@@ -695,7 +755,7 @@ test.describe.serial('scrobbling to spacegho.st', () => {
     page.on('pageerror', (e) => errors.push(String(e)));
     const csp = [];
     await page.addInitScript(() => document.addEventListener('securitypolicyviolation', (e) => (window.__csp = window.__csp || []).push(`${e.violatedDirective} ${e.blockedURI}`)));
-    await begin(page, { ads: 0, scrobble: true });
+    await begin(page, { every: 0, scrobble: true });
     await expect(page.locator('#site-nav a[aria-current="page"]')).toHaveAttribute('data-k', 'app');
     for (const k of ['home', 'listens', 'leaderboard', 'map', 'extension', 'account']) {
       const path = k === 'home' ? '/melodica/' : `/melodica/${k}/`;
@@ -737,7 +797,7 @@ test.describe.serial('scrobbling to spacegho.st', () => {
 
   test('no map for a listener outside the crew', async ({ page }) => {
     test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
-    await begin(page, { ads: 0, scrobble: true });
+    await begin(page, { every: 0, scrobble: true });
     await expect(page.locator('#listens-panel')).toBeVisible();
     await expect(page.locator(LISTEN_ROWS).first()).toBeVisible();
     await expect(page.locator('#tab-map')).toBeHidden();
@@ -746,14 +806,14 @@ test.describe.serial('scrobbling to spacegho.st', () => {
 
   test('no crew link for a listener the server does not mark as crew', async ({ page }) => {
     test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
-    await begin(page, { ads: 0, scrobble: true });
+    await begin(page, { every: 0, scrobble: true });
     await page.click('#account summary');
     await expect(page.locator('#scrobble-settings')).toBeVisible();
     await expect(page.locator('#scrobble-crew-wrap')).toBeHidden();
   });
-  test('on by default: the notice, playing now at each song start, never an ad, 15 listens then more on scroll', async ({ page }, info) => {
+  test('on by default: the notice, playing now at each song start, never an insert, 15 listens then more on scroll', async ({ page }, info) => {
     test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
-    const evidence = await begin(page, { ads: 1, scrobble: true });
+    const evidence = await begin(page, { every: 1, scrobble: true });
     await expect(page.locator('#listens-panel')).toBeVisible();
     expect(scrobbles.requests[0], 'the first request').toBe('GET /scrobble/api/me');
     await expect(page.locator(`${LISTEN_ROWS} .hist-title`).first()).toHaveText('Seed Song 1');
@@ -761,22 +821,22 @@ test.describe.serial('scrobbling to spacegho.st', () => {
     expect(scrobbles.requests.filter((r) => r.startsWith('GET /scrobble/api/me/listens?') && /cursor=/.test(r)).length, 'pages after the first, by cursor').toBeGreaterThanOrEqual(1);
     await page.screenshot({ path: resolve(ARTIFACTS, 'scrobble-listens.png'), fullPage: true });
 
-    // A song, an ad, and the song after it play through.
+    // A song, an insert, and the song after it play through.
     await page.click('#btn-next');
-    await expect(page.locator('#app')).toHaveAttribute('data-ad', 'true', { timeout: 20_000 });
-    const adTitle = (await page.locator('#np-title').textContent()).trim();
-    await page.waitForFunction(() => window.__audioEvents.includes('ended ad'), null, { timeout: 30_000 });
-    await expect(page.locator('#app')).not.toHaveAttribute('data-ad', 'true', { timeout: 20_000 });
+    await expect(page.locator('#app')).toHaveAttribute('data-insert', 'true', { timeout: 20_000 });
+    const insTitle = (await page.locator('#np-title').textContent()).trim();
+    await page.waitForFunction(() => window.__audioEvents.includes('ended insert'), null, { timeout: 30_000 });
+    await expect(page.locator('#app')).not.toHaveAttribute('data-insert', 'true', { timeout: 20_000 });
     await page.waitForTimeout(1500);
     const logged = await page.locator('#history li .hist-title').allTextContents();
     const posts = scrobbles.posts.map((p) => ({ key: p.key, type: p.body.listen_type, title: p.body.payload[0].track_metadata.track_name, client: p.body.payload[0].track_metadata.additional_info.submission_client }));
-    report.scrobble = { posts, logged, adTitle, requests: scrobbles.requests.slice(0, 20) };
+    report.scrobble = { posts, logged, insTitle, requests: scrobbles.requests.slice(0, 20) };
     console.log(`scrobble posts: ${JSON.stringify(posts)}`);
     expect(posts.length, 'playing now sent').toBeGreaterThanOrEqual(2);
     expect(posts.every((p) => p.key === key()), 'every submit named the listener by the relay token').toBe(true);
     expect(posts.every((p) => p.type === 'playing_now'), 'no listen for 10 s tracks').toBe(true);
     expect(posts.every((p) => p.client === 'melodica-web')).toBe(true);
-    expect(posts.map((p) => p.title), 'never the ad').not.toContain(adTitle);
+    expect(posts.map((p) => p.title), 'never the insert').not.toContain(insTitle);
     for (const p of posts) expect(logged, `${p.title} is a song from the play log`).toContain(p.title);
     await expect(page.locator('#site-nav a[data-k="leaderboard"]')).toHaveAttribute('href', `${origin}/melodica/leaderboard/`);
     expect(evidence.errors).toEqual([]);

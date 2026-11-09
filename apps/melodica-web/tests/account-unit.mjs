@@ -2,7 +2,7 @@
 // web/account.js without a browser or network: discovery (same origin only), the
 // authorize URL (PKCE S256, state), the way back (state and iss checked, code
 // exchanged, address bar cleaned), refresh with rotation, invalid_grant, the policy
-// (401 -> refresh -> retry once; every failure is {inserts: true}), the label, sign-out.
+// (401 -> refresh -> retry once; every failure is the default), the label, sign-out.
 
 import { strict as assert } from 'node:assert';
 import { pathToFileURL } from 'node:url';

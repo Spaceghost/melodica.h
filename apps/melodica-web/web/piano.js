@@ -267,21 +267,21 @@ export class PianoClient {
     this.credentials = c && c.user && c.password ? { user: String(c.user), password: String(c.password) } : null;
   }
   stations() { return this.call({ action: 'stations' }).then((r) => r.stations); }
-  // Songs in order, with each ad item as {isAd: true, adToken} at its place.
+  // Songs in order, with each insert as {isInsert: true, insertToken} at its place.
   playlist(stationId, quality = 'high') {
     return this.call({ action: 'playlist', stationId, quality }).then((r) => {
       const songs = Array.isArray(r.songs) ? r.songs.slice() : [];
-      const ads = Array.isArray(r.ads) ? r.ads : [];
-      for (const ad of [...ads].sort((a, b) => b.position - a.position)) {
-        if (ad && ad.adToken) songs.splice(Math.min(Math.max(0, Number(ad.position) || 0), songs.length), 0, { isAd: true, adToken: ad.adToken, stationId });
+      const inserts = Array.isArray(r.inserts) ? r.inserts : [];
+      for (const ins of [...inserts].sort((a, b) => b.position - a.position)) {
+        if (ins && ins.token) songs.splice(Math.min(Math.max(0, Number(ins.position) || 0), songs.length), 0, { isInsert: true, insertToken: ins.token, stationId });
       }
       return songs;
     });
   }
-  // ad.getAdMetadata: {title, companyName, imageUrl, clickThroughUrl, audioUrl, audioFormat, adTrackingTokens}
-  adMetadata(adToken, quality = 'high') { return this.call({ action: 'adMetadata', adToken, quality }); }
-  // ad.registerAd after the ad started playing.
-  registerAd(stationId, adTrackingTokens) { return this.call({ action: 'registerAd', stationId, adTrackingTokens }); }
+  // {title, artist, imageUrl, link, audioUrl, audioFormat, trackingTokens}
+  insertInfo(token, quality = 'high') { return this.call({ action: 'insertInfo', token, quality }); }
+  // Sent once its audio started playing.
+  insertPlayed(stationId, trackingTokens) { return this.call({ action: 'insertPlayed', stationId, trackingTokens }); }
   rate(song, rating) {
     return this.call({ action: 'rate', trackToken: song.trackToken, stationId: song.stationId, rating });
   }
