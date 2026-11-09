@@ -218,8 +218,32 @@ public sealed class Plugin : IDalamudPlugin
             && Secrets.Unprotect(Config.ProtectedLastFmSession) is { } session)
             list.Add(new LastFm(http, Config.LastFmApiKey, secret, session));
         if (Config.ScrobbleToListenBrainz && Secrets.Unprotect(Config.ProtectedListenBrainzToken) is { } token)
-            list.Add(new ListenBrainz(http, token));
+            list.Add(NewListenBrainz(token));
         return list;
+    }
+
+    /// <summary>Listens waiting for the ListenBrainz server (offline, a timeout, or the server said try later).</summary>
+    public ListenQueue ListenQueue => listenQueue ??= new ListenQueue(Path.Combine(pi.GetPluginConfigDirectory(), "listenbrainz-queue.json"));
+
+    private ListenQueue? listenQueue;
+    private long lastQueueRetry = Stopwatch.GetTimestamp();
+
+    public ListenBrainz NewListenBrainz(string token, string? server = null) =>
+        new(http, token, server ?? Config.ListenBrainzServer ?? ListenBrainzServers.SpaceGhost, ListenQueue, StationName,
+            typeof(Plugin).Assembly.GetName().Version?.ToString() ?? "");
+
+    private string? StationName(Track t) =>
+        Radio is { } r ? (r.Stations.FirstOrDefault(s => s.Id == t.StationId) ?? r.Station)?.Name : null;
+
+    private void RetryQueuedListens()
+    {
+        if (Stopwatch.GetElapsedTime(lastQueueRetry).TotalMinutes < 5)
+            return;
+        lastQueueRetry = Stopwatch.GetTimestamp();
+        if (!Config.ScrobbleToListenBrainz || Secrets.Unprotect(Config.ProtectedListenBrainzToken) is not { } token || ListenQueue.Count == 0)
+            return;
+        var lb = NewListenBrainz(token);
+        Run(ct => lb.TryFlushAsync(ct));
     }
 
     private void Report(Func<IScrobbler, Task> call)
@@ -346,6 +370,7 @@ public sealed class Plugin : IDalamudPlugin
                 radio.Stop();
         }
 
+        RetryQueuedListens();
         UpdateDtr(track, playing);
     }
 

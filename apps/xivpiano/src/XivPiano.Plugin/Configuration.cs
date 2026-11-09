@@ -1,3 +1,4 @@
+using XivPiano.Core;
 using Dalamud.Configuration;
 
 namespace XivPiano.Plugin;
@@ -71,8 +72,17 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Your ListenBrainz user token, encrypted.</summary>
     public string ProtectedListenBrainzToken { get; set; } = "";
 
+    /// <summary>
+    /// The ListenBrainz-compatible server: spacegho.st's scrobble service (<see cref="ListenBrainzServers.SpaceGhost"/>)
+    /// unless set. Null in configurations from before it existed; <see cref="Clamp"/> keeps those on listenbrainz.org,
+    /// where their token came from.
+    /// </summary>
+    public string? ListenBrainzServer { get; set; }
+
     public void Clamp()
     {
+        ListenBrainzServer ??= ProtectedListenBrainzToken.Length > 0 ? ListenBrainzServers.ListenBrainzOrg : ListenBrainzServers.SpaceGhost;
+        ListenBrainzServer = ListenBrainzServers.Normalize(ListenBrainzServer) ?? ListenBrainzServers.SpaceGhost;
         GameMusicDutyTypes ??= [];
         Volume = float.IsFinite(Volume) ? Math.Clamp(Volume, 0f, 1f) : 0.6f;
         DuckTo = float.IsFinite(DuckTo) ? Math.Clamp(DuckTo, 0f, 1f) : 0.25f;

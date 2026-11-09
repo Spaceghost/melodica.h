@@ -44,6 +44,9 @@ public sealed class MainWindow : Window, IDisposable
 
     private string lastFmSecret = "";
     private string listenBrainzToken = "";
+    private string listenBrainzServer = "";
+    private string? listenBrainzMessage;
+    private bool listenBrainzCustom;
     private string? lastFmToken;
     private string? lastFmMessage;
 
@@ -671,20 +674,81 @@ public sealed class MainWindow : Window, IDisposable
         changed |= Check("Last.fm", c.ScrobbleToLastFm, v => c.ScrobbleToLastFm = v);
         if (c.ScrobbleToLastFm)
             changed |= DrawLastFm(c);
-        changed |= Check("ListenBrainz", c.ScrobbleToListenBrainz, v => c.ScrobbleToListenBrainz = v);
+        changed |= Check("ListenBrainz-compatible server (spacegho.st scrobbles, ListenBrainz)", c.ScrobbleToListenBrainz, v => c.ScrobbleToListenBrainz = v);
         if (c.ScrobbleToListenBrainz)
+            changed |= DrawListenBrainz(c);
+
+        if (changed)
+            plugin.SaveConfig();
+    }
+
+    private bool DrawListenBrainz(Configuration c)
+    {
+        var changed = false;
+        var server = c.ListenBrainzServer ?? ListenBrainzServers.SpaceGhost;
+        var preset = listenBrainzCustom ? 2 : server == ListenBrainzServers.SpaceGhost ? 0 : server == ListenBrainzServers.ListenBrainzOrg ? 1 : 2;
+        ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
+        if (ImGui.Combo("Server##lbpreset", ref preset, ["spacegho.st", "listenbrainz.org", "Custom"]))
         {
+            listenBrainzCustom = preset == 2;
+            if (preset < 2)
+                c.ListenBrainzServer = preset == 0 ? ListenBrainzServers.SpaceGhost : ListenBrainzServers.ListenBrainzOrg;
+            listenBrainzServer = c.ListenBrainzServer ?? "";
+            listenBrainzMessage = null;
+            changed = true;
+        }
+
+        if (preset == 2)
+        {
+            if (listenBrainzServer.Length == 0)
+                listenBrainzServer = server;
             ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
-            if (ImGui.InputTextWithHint("##lbtoken", Secrets.Unprotect(c.ProtectedListenBrainzToken) != null ? "token saved" : "your user token (listenbrainz.org/settings)", ref listenBrainzToken, 64, ImGuiInputTextFlags.Password)
-                && listenBrainzToken.Trim().Length > 0)
+            if (ImGui.InputTextWithHint("Server URL##lburl", "https://example.org (the API is under /1/)", ref listenBrainzServer, 256)
+                && ListenBrainzServers.Normalize(listenBrainzServer) is { } url && listenBrainzServer.Trim().Length > 0)
             {
-                c.ProtectedListenBrainzToken = Secrets.Protect(listenBrainzToken.Trim());
+                c.ListenBrainzServer = url;
                 changed = true;
             }
         }
 
-        if (changed)
-            plugin.SaveConfig();
+        ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
+        var saved = Secrets.Unprotect(c.ProtectedListenBrainzToken) != null;
+        var hint = saved ? "token saved" : c.ListenBrainzServer == ListenBrainzServers.SpaceGhost ? "token from spacegho.st/melodica/account" : "your user token";
+        if (ImGui.InputTextWithHint("Token##lbtoken", hint, ref listenBrainzToken, 128, ImGuiInputTextFlags.Password)
+            && listenBrainzToken.Trim().Length > 0)
+        {
+            c.ProtectedListenBrainzToken = Secrets.Protect(listenBrainzToken.Trim());
+            listenBrainzMessage = null;
+            changed = true;
+        }
+
+        if (c.ListenBrainzServer == ListenBrainzServers.SpaceGhost && ImGui.SmallButton("Get a token"))
+            Util.OpenLink(ListenBrainzServers.SpaceGhostTokens);
+        if (c.ListenBrainzServer == ListenBrainzServers.SpaceGhost)
+            ImGui.SameLine();
+        ImGui.BeginDisabled(!saved);
+        if (ImGui.SmallButton("Check token") && Secrets.Unprotect(c.ProtectedListenBrainzToken) is { } token)
+        {
+            var lb = plugin.NewListenBrainz(token);
+            plugin.Run(async ct =>
+            {
+                try
+                {
+                    var (valid, user) = await lb.ValidateAsync(ct).ConfigureAwait(false);
+                    listenBrainzMessage = valid ? $"Token valid{(user is { Length: > 0 } ? " for " + user : "")}." : "The server does not know this token.";
+                }
+                catch (Exception e) when (e is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException or InvalidOperationException)
+                {
+                    listenBrainzMessage = e is HttpRequestException ? e.Message : "The server could not be checked.";
+                }
+            });
+        }
+
+        ImGui.EndDisabled();
+        var queued = plugin.ListenQueue.Count;
+        ImGui.SameLine();
+        ImGui.TextDisabled(listenBrainzMessage ?? (queued > 0 ? $"{queued} listen(s) waiting to be sent." : saved ? "Token saved." : "No token."));
+        return changed;
     }
 
     private bool DrawLastFm(Configuration c)
