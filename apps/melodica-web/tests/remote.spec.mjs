@@ -22,6 +22,11 @@ import { readFile, mkdir } from 'node:fs/promises';
 import { resolve, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
+import { makeScrobbles, serveNode } from './tools/fake-scrobble.mjs';
+
+// Any bearer names the one listener here; seeded so the page has listens to show.
+const scrobbles = makeScrobbles({ who: (t) => (t ? 'e:listener@example.com' : '') });
+scrobbles.seedCount = 3;
 
 const here = dirname(fileURLToPath(import.meta.url));
 const DIST = resolve(process.env.MELODICA_DIST || resolve(here, '..', 'dist'));
@@ -54,6 +59,7 @@ test.beforeAll(async () => {
     if (url.pathname === '/melodica/auth/me') {
       res.writeHead(503, { 'content-type': 'application/json' }); res.end('{"error":"auth not configured"}'); return;
     }
+    if (url.pathname.startsWith('/scrobble/')) { await serveNode(scrobbles.handle, req, res, 'http://localhost'); return; }
     if (url.pathname.startsWith('/melodica/api')) {
       apiHits.push(`${req.method} ${url.pathname}${url.search}`);
       res.writeHead(500); res.end('remote mode must not use the relay'); return;
@@ -439,6 +445,25 @@ test.describe.serial('sessions with the extension (docs/BRIDGE.md 4)', () => {
     await expect(page.locator('#remember-menu')).toBeChecked();
     await expect(page.locator('#logout')).toBeVisible();
     expect(await page.evaluate(() => window.__remote.offers.length), 'nothing offered back').toBe(0);
+    await finish(page, evidence, info);
+  });
+
+  test('scrobbling in remote mode: the page shows the listens and never submits (the extension does)', async ({ page }, info) => {
+    scrobbles.posts.length = 0;
+    const evidence = await open(page, { session: true, extSession: SESSION('S7'), credential: { email: 'listener@example.com', password: 'pw-S7-secret' },
+      access: 'eyJhbGciOiJFUzI1NiJ9.eyJleHAiOjQxMDI0NDQ4MDB9.sig' });
+    await expect(page.locator('#listens-panel')).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('#listens li')).toHaveCount(3);
+    await expect(page.locator('#scrobble-notice')).toBeHidden();
+    await page.locator('#station-list button.station', { hasText: 'Aurora Fields Radio' }).click();
+    await expect(page.locator('#np-title')).toHaveText('Slow Light');
+    await page.click('#btn-next');
+    await expect(page.locator('#np-title')).toHaveText('Second Song');
+    await page.click('#btn-next');
+    await page.waitForTimeout(1500);
+    await page.click('#account summary');
+    await expect(page.locator('#scrobble-on')).toBeChecked();
+    expect(scrobbles.posts.map((p) => p.body && p.body.listen_type), 'listens the page submitted').toEqual([]);
     await finish(page, evidence, info);
   });
 

@@ -52,6 +52,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { makeBackend } from './tools/fake-account.mjs';
+import { makeScrobbles, serveNode } from './tools/fake-scrobble.mjs';
 import { makeRelay, REQUEST_SENT } from './tools/fake-relay.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -103,6 +104,7 @@ let appUrl = '';
 let origin = '';
 let account = null;
 let relay = null;
+let scrobbles = null;
 const RELAY_PATH = '/melodica/api/';
 
 test.beforeAll(async () => {
@@ -120,6 +122,7 @@ test.beforeAll(async () => {
       res.end(r.body);
       return;
     }
+    if (url.pathname.startsWith('/scrobble/')) { await serveNode(scrobbles.handle, req, res, origin); return; }
     if (url.pathname.startsWith('/oauth/') || url.pathname.startsWith('/.well-known/')) {
       const chunks = [];
       for await (const c of req) chunks.push(c);
@@ -149,6 +152,9 @@ test.beforeAll(async () => {
   await new Promise((ok) => server.listen(0, 'localhost', ok));
   origin = `http://localhost:${server.address().port}`;
   account = makeBackend(origin);
+  // Scrobbles on the same origin; off unless a scrobbling test turns it on (no notice elsewhere).
+  scrobbles = makeScrobbles({ who: (t) => account.who(t) });
+  scrobbles.defaultOn = false;
   // The page talks to the fake relay (the allow-list in front of the tuner), as the
   // hosted page talks to spacegho.st/melodica/api/.
   relay = makeRelay({ upstream: `${tuner.https}/services/json/`, access: account });
@@ -188,7 +194,7 @@ function expectRelayTokens() {
 // A fresh tuner run with `ads` set; the page opened (signed in to an account whose
 // policy is `accountInserts`, when given) and logged in through the relay, whose
 // allow-list has the tuner user with `listedInserts`.
-async function begin(page, { ads, accountInserts, listedInserts = true }) {
+async function begin(page, { ads, accountInserts, listedInserts = true, scrobble = false }) {
   relay.seen.length = 0;
   account.allow(tuner.user, { inserts: listedInserts });
   account.setPerson(tuner.user, { username: 'tuner_listener', chosen: true, notice: '' }); // no "Pick a username" over the stations
@@ -224,6 +230,13 @@ async function begin(page, { ads, accountInserts, listedInserts = true }) {
   await page.click('#login-button');
   expect((await (await policy).json()).playback.plus, 'the policy the page fetched').toBe(!(accountInserts ?? listedInserts));
   await expect(page.locator('#app')).toHaveAttribute('data-view', 'player', { timeout: 30_000 });
+  if (scrobble) {
+    // Scrobbling on by default: the notice once, before anything plays.
+    await expect(page.locator('#scrobble-notice')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('#scrobble-notice-text')).toHaveText('Scrobbling to spacegho.st is on. Turn it off in settings.');
+    await page.click('#scrobble-notice-ok');
+    await expect(page.locator('#scrobble-notice')).toBeHidden();
+  }
   await page.locator('#station-list button.station', { hasNotText: 'QuickMix' }).first().click();
   await expect(page.locator('#np-title')).not.toHaveText(/^(Pick a station)?$/, { timeout: 30_000 });
   return evidence;
@@ -574,5 +587,107 @@ test.describe.serial('remember me on this device', () => {
     await page.reload();
     await expect(page.locator('#app')).toHaveAttribute('data-view', 'login', { timeout: 30_000 });
     expect(errors).toEqual([]);
+  });
+});
+
+// Scrobbling (web/scrobble.js) against the contract fake of spacegho.st/scrobble/
+// (tests/tools/fake-scrobble.mjs): on by default, with a notice once; "playing now" at
+// each song start, with the relay token; the tuner's tracks are 10 s, under the 30 s
+// minimum, so no listen is submitted (the threshold itself is in node-unit); never an
+// ad; the last 15 listens, then more on scroll; the settings; crew only when the server
+// says so; logout clears the listens. The ad test runs last: the workflow's tuner
+// report reads the ad steps from the tuner's log, which each begin() resets.
+test.describe.serial('scrobbling to spacegho.st', () => {
+  const key = () => `e:${tuner.user.trim().toLowerCase()}`;
+  test.beforeEach(() => { scrobbles.reset(); scrobbles.defaultOn = true; scrobbles.seedCount = 40; });
+  test.afterAll(() => { if (scrobbles) { scrobbles.reset(); scrobbles.defaultOn = false; } });
+
+  test('settings: off stops submitting, the leaderboard toggle, crew only for GitHub, the server turning it off, logout clears', async ({ page }) => {
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    scrobbles.crewViewers.add(key());
+    await begin(page, { ads: 0, scrobble: true });
+    await page.click('#account summary');
+    await expect(page.locator('#scrobble-settings')).toBeVisible();
+    await expect(page.locator('#scrobble-on')).toBeChecked();
+    await expect(page.locator('#scrobble-board')).toBeChecked();
+    await expect(page.locator('#scrobble-crew-wrap')).toBeVisible();
+    await expect(page.locator('#scrobble-crew')).toHaveAttribute('href', `${origin}/scrobble/crew`);
+    await expect(page.locator('#scrobble-leaderboard')).toHaveAttribute('href', `${origin}/scrobble/leaderboard`);
+    await expect(page.locator('#scrobble-dashboard')).toHaveAttribute('href', `${origin}/scrobble/`);
+    await expect(page.locator('#username-change label')).toHaveText('Listener name (your username)');
+    await page.screenshot({ path: resolve(ARTIFACTS, 'scrobble-settings.png') });
+
+    await page.uncheck('#scrobble-board');
+    await expect.poll(() => scrobbles.accounts.get(key()).settings.leaderboard).toBe(false);
+    await page.uncheck('#scrobble-on');
+    await expect.poll(() => scrobbles.accounts.get(key()).settings.scrobbling).toBe(false);
+    await expect(page.locator('#scrobble-board')).toBeDisabled();
+    const n = scrobbles.posts.length;
+    const t = (await page.locator('#np-title').textContent()).trim();
+    await page.click('#btn-next');
+    await expect(page.locator('#np-title')).not.toHaveText(t, { timeout: 20_000 });
+    await page.waitForTimeout(1500);
+    expect(scrobbles.posts.length, 'nothing sent while off').toBe(n);
+
+    // On again; then the server turns it off (elsewhere): the next submit's 403 shows it here.
+    if ((await page.locator('#account').getAttribute('open')) === null) await page.click('#account summary'); // closed by the click on next
+    await page.check('#scrobble-on');
+    await expect.poll(() => scrobbles.accounts.get(key()).settings.scrobbling).toBe(true);
+    scrobbles.accounts.get(key()).settings.scrobbling = false;
+    const t2 = (await page.locator('#np-title').textContent()).trim();
+    await page.click('#btn-next');
+    await expect(page.locator('#np-title')).not.toHaveText(t2, { timeout: 20_000 });
+    await expect(page.locator('#scrobble-on')).not.toBeChecked({ timeout: 10_000 });
+
+    if ((await page.locator('#account').getAttribute('open')) === null) await page.click('#account summary');
+    await page.click('#logout');
+    await expect(page.locator('#app')).toHaveAttribute('data-view', 'login');
+    await expect(page.locator('#listens li')).toHaveCount(0);
+    await expect(page.locator('#listens-panel')).toBeHidden();
+    await expect(page.locator('#scrobble-settings')).toBeHidden();
+  });
+
+  test('no crew link for a listener the server does not mark as crew', async ({ page }) => {
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    await begin(page, { ads: 0, scrobble: true });
+    await page.click('#account summary');
+    await expect(page.locator('#scrobble-settings')).toBeVisible();
+    await expect(page.locator('#scrobble-crew-wrap')).toBeHidden();
+  });
+  test('on by default: the notice, playing now at each song start, never an ad, 15 listens then more on scroll', async ({ page }, info) => {
+    test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
+    const evidence = await begin(page, { ads: 1, scrobble: true });
+    await expect(page.locator('#listens-panel')).toBeVisible();
+    expect(scrobbles.requests[0], 'the first request').toBe('GET /scrobble/api/me');
+    await expect.poll(async () => page.locator('#listens li').count()).toBeGreaterThanOrEqual(15);
+    await expect(page.locator('#listens li .hist-title').first()).toHaveText('Seed Song 1');
+    for (let i = 0; i < 4 && await page.locator('#listens-more').isVisible(); i++) {
+      await page.locator('#listens-more').scrollIntoViewIfNeeded();
+      await page.waitForTimeout(500);
+    }
+    await expect(page.locator('#listens li')).toHaveCount(40);
+    await expect(page.locator('#listens-more')).toBeHidden();
+    expect(scrobbles.requests.filter((r) => r.startsWith('GET /scrobble/api/me/listens?') && /before=/.test(r)).length, 'pages after the first').toBe(2);
+    await page.screenshot({ path: resolve(ARTIFACTS, 'scrobble-listens.png'), fullPage: true });
+
+    // A song, an ad, and the song after it play through.
+    await page.click('#btn-next');
+    await expect(page.locator('#app')).toHaveAttribute('data-ad', 'true', { timeout: 20_000 });
+    const adTitle = (await page.locator('#np-title').textContent()).trim();
+    await page.waitForFunction(() => window.__audioEvents.includes('ended ad'), null, { timeout: 30_000 });
+    await expect(page.locator('#app')).not.toHaveAttribute('data-ad', 'true', { timeout: 20_000 });
+    await page.waitForTimeout(1500);
+    const logged = await page.locator('#history li .hist-title').allTextContents();
+    const posts = scrobbles.posts.map((p) => ({ key: p.key, type: p.body.listen_type, title: p.body.payload[0].track_metadata.track_name, client: p.body.payload[0].track_metadata.additional_info.submission_client }));
+    report.scrobble = { posts, logged, adTitle, requests: scrobbles.requests.slice(0, 20) };
+    console.log(`scrobble posts: ${JSON.stringify(posts)}`);
+    expect(posts.length, 'playing now sent').toBeGreaterThanOrEqual(2);
+    expect(posts.every((p) => p.key === key()), 'every submit named the listener by the relay token').toBe(true);
+    expect(posts.every((p) => p.type === 'playing_now'), 'no listen for 10 s tracks').toBe(true);
+    expect(posts.every((p) => p.client === 'melodica-web')).toBe(true);
+    expect(posts.map((p) => p.title), 'never the ad').not.toContain(adTitle);
+    for (const p of posts) expect(logged, `${p.title} is a song from the play log`).toContain(p.title);
+    await expect(page.locator('#listens-board')).toHaveAttribute('href', `${origin}/scrobble/leaderboard`);
+    expect(evidence.errors).toEqual([]);
   });
 });

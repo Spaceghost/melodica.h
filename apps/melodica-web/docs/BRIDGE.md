@@ -64,11 +64,22 @@ session messages.
 | ext → page | `{type: 'result', id, ok, error, state}`, then the same `state` pushed at once |
 
 `state` as in the extension's docs/BRIDGE.md, plus (0.5.4+) `user: {username, chosen,
-suggested, notice, prompt}`. While the extension is present (ready with `player: true`)
+suggested, notice, prompt}`. Replies and pushes are not ordered against each other, so
+the page never draws a `state` whose `changedAt` is older than the last one it drew.
+While the extension is present (ready with `player: true`)
 the page is only its remote: no local audio, no page login.
 
 The page no longer uses the extension's relay layer (`request`/`response`); the
 extension may keep it for older pages.
+
+### 3.1 Scrobbling (agreed for web 0.9.0)
+
+Only the side whose audio plays submits to Spacegho.st Scrobbles: in remote mode the
+extension submits (`submission_client: "melodica-extension"`) and the page never does;
+playing on its own, the page submits (`"melodica-web"`). Both sides use the same
+endpoint (`/scrobble/api/me/listens`) and thresholds: half the track or 4 minutes,
+nothing for 30 s or less, never an ad. The extension adds `scrobbling: {on: bool}` to
+`state`. The page reads its settings and listens from the server either way.
 
 ## 4. Session sharing (v1, new)
 

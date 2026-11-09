@@ -290,6 +290,13 @@ ${emailSending ? `<p class="or">or</p><form method="post" action="/oauth/email">
     claimName(name) { Object.assign(person(`x:${name}`), { username: name, chosen: true }); },
     lockName(name) { locked.add(name); },
     revokeAccess() { accessTokens.clear(); },
+    // Who a melodica bearer names ('e:<email>' for a relay or login-ok token, 'u:<id>' for
+    // an account token), or '' (tests/tools/fake-scrobble.mjs).
+    who(token) {
+      if (accessTokens.has(token)) return `e:${accessTokens.get(token)}`;
+      const a = access.get(token);
+      return a ? `u:${a.user}` : '';
+    },
     invite(email) { const t = rand(); invites.set(sha(t), { email: email.toLowerCase(), used: false }); return t; },
     async setPolicy(name, { inserts }) { const u = [...users.values()].find((x) => x.name === name); if (!u) throw new Error(`no account ${name}`); u.inserts = inserts; },
   };

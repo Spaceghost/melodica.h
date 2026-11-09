@@ -195,6 +195,7 @@ node tests/node-unit.mjs
 node tests/bridge-unit.mjs
 node tests/account-unit.mjs
 node tests/inserts-unit.mjs
+node tests/scrobble-unit.mjs
 ```
 
 Runs the compiled module in Node against the live relay. Without an account
@@ -487,8 +488,10 @@ session (and your password, for when the session has expired) encrypted with
 AES-GCM under a non-extractable WebCrypto key in IndexedDB (see "Remember me
 on this device"); nothing secret is in `localStorage`. An optional
 spacegho.st sign-in (see "spacegho.st account") adds its tokens to
-`localStorage` until you sign out of it on the page. Nothing else leaves the
-browser.
+`localStorage` until you sign out of it on the page. Unless you turn
+scrobbling off, the artist, title, album, length and cover URL of each song you
+listen to go to Spacegho.st Scrobbles (see "Scrobbling"). Inserted items are excluded, along with
+station names, Pandora ids or stream URLs. Nothing else leaves the browser.
 
 ## Remember me on this device
 
@@ -538,10 +541,38 @@ Tests: `tests/bridge-unit.mjs` (origin and path checks, the session messages),
 against melodica-tuner: web first, extension first, sign-out both ways; skipped
 until the released extension has the session layer).
 
-Not done: the relay accepts only its own access tokens (aud `melodica`), so a
-page holding only the extension's session logs in through the relay again
-with the remembered password when it plays on its own; without one it shows
-the login card with the email filled in.
+The extension hands the page its current relay token (`access`) with the
+session, and the relay accepts it, so a page holding only the extension's copy
+plays on its own without a new `auth.userLogin` (observed in
+`extension-real.spec.mjs` (b) against extension 0.6.0).
+
+## Scrobbling
+
+`web/scrobble.js`, against Spacegho.st Scrobbles
+(`https://spacegho.st/scrobble/`, on the page's own origin):
+
+- On by default for everyone signed in; turn it off with "Scrobble to
+  spacegho.st" in the account menu (the server keeps the setting). A notice
+  says so once (`melodica.scrobble.noticeSeen`). "Show me on the leaderboard"
+  is in the same place.
+- A song counts once it has played for half its length or 4 minutes, whichever
+  comes first. Tracks of 30 s or less never count. Paused or stalled time does
+  not count. "Playing now" goes out when a song starts. Inserted items are excluded from submissions.
+- The bearer is the relay's access token (or the extension's, kept with a
+  shared session), else the spacegho.st account's token.
+- "Your listens" shows the last 15 from the server and loads more as you
+  scroll. It links to the leaderboard. The menu links to your listens and the
+  leaderboard, and to Crew when the server says the account may see it
+  (GitHub accounts).
+- The listener name is your username ("Listener name (your username)" in the
+  account menu, the username rules above).
+- Only the side whose audio plays submits (`docs/BRIDGE.md` section 3). In
+  remote mode the extension submits and the page only shows the listens.
+- A refused submit (403 `scrobbling_off`, set elsewhere) turns the setting off
+  on the page. A network failure or 5xx is retried, up to 20 listens, while
+  the page stays open. Signing out clears the listens from the page.
+
+The browser checks exercise playback, account policy, authentication and the requests recorded by the tuner. The attached reports provide the exact observations.
 
 ## License
 

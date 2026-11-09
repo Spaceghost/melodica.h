@@ -43,7 +43,7 @@ emcc -O2 -std=c99 -Wall -Wextra \
     -sEXPORTED_RUNTIME_METHODS="[$RUNTIME]" \
     -o dist/melodica.js
 
-cp web/index.html web/app.js web/app.css web/piano.js web/bridge.js web/account.js web/vault.js dist/
+cp web/index.html web/app.js web/app.css web/piano.js web/bridge.js web/account.js web/vault.js web/scrobble.js dist/
 cp LICENSE dist/LICENSE
 cp "$VENDOR/LICENSE.libpiano" dist/LICENSE.libpiano
 cp "$VENDOR/THIRD_PARTY_NOTICES.md" dist/THIRD_PARTY_NOTICES.md

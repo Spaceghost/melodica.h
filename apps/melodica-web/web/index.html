@@ -24,8 +24,16 @@
       <div class="account-menu">
         <p class="account-line"><b id="signed-in-full"></b></p>
         <p id="account-menu-line" class="account-line" hidden><span class="muted">spacegho.st</span> <b id="account-menu-name"></b></p>
+        <div id="scrobble-settings" class="scrobble-settings" hidden>
+          <label class="check menu-check"><input id="scrobble-on" type="checkbox"><span>Scrobble to spacegho.st</span></label>
+          <label class="check menu-check"><input id="scrobble-board" type="checkbox"><span>Show me on the leaderboard</span></label>
+          <p id="scrobble-message" class="message" role="status"></p>
+          <p class="scrobble-links fine"><a id="scrobble-dashboard" href="https://spacegho.st/scrobble/" rel="noopener">Your listens</a> ·
+            <a id="scrobble-leaderboard" href="https://spacegho.st/scrobble/leaderboard" rel="noopener">Leaderboard</a><span id="scrobble-crew-wrap" hidden> ·
+            <a id="scrobble-crew" href="https://spacegho.st/scrobble/crew" rel="noopener">Crew</a></span></p>
+        </div>
         <form id="username-change" class="username-change" hidden novalidate>
-          <label class="field" for="username-change-input"><span>Change username</span></label>
+          <label class="field" for="username-change-input"><span>Listener name (your username)</span></label>
           <div class="username-row">
             <input id="username-change-input" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="24" aria-describedby="username-change-message">
             <button id="username-change-save" type="submit" class="quiet">Save</button>
@@ -181,6 +189,13 @@
         <ol id="history" class="history"></ol>
         <p id="history-empty" class="fine">Songs you hear will collect here, with their ratings.</p>
       </section>
+      <section id="listens-panel" class="panel listens" aria-labelledby="listens-head" hidden>
+        <div class="panel-head"><h3 id="listens-head">Your listens</h3>
+          <a id="listens-board" class="fine nowrap" href="https://spacegho.st/scrobble/leaderboard" rel="noopener">Leaderboard</a></div>
+        <ol id="listens" class="history listens-list"></ol>
+        <p id="listens-empty" class="fine">Listens counted on spacegho.st show here.</p>
+        <button id="listens-more" type="button" class="quiet listens-more" hidden>Show more</button>
+      </section>
     </section>
   </section>
 
@@ -218,6 +233,13 @@
     <span>Single-key shortcuts are on</span></label>
   <p class="fine">Turn them off if you use speech input or press keys by accident; the buttons
     do everything the keys do, and <kbd>?</kbd> still opens this sheet.</p>
+</dialog>
+
+<dialog id="scrobble-notice" class="sheet confirm" aria-labelledby="scrobble-notice-text">
+  <form method="dialog">
+    <p id="scrobble-notice-text" class="confirm-text">Scrobbling to spacegho.st is on. Turn it off in settings.</p>
+    <div class="confirm-actions"><button id="scrobble-notice-ok" type="submit" class="primary" autofocus>OK</button></div>
+  </form>
 </dialog>
 
 <dialog id="username-pick" class="sheet username-sheet" aria-labelledby="username-pick-head">

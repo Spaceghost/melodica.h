@@ -35,6 +35,8 @@ jobs:
         run: node tests/account-unit.mjs
       - name: Playlist item unit test (canned answers, no network)
         run: node tests/inserts-unit.mjs
+      - name: Scrobble unit test (threshold, tracker, API calls; no network)
+        run: node tests/scrobble-unit.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: dist

@@ -47,6 +47,8 @@ jobs:
         run: node tests/account-unit.mjs
       - name: Playlist item unit test (canned answers, no network)
         run: node tests/inserts-unit.mjs
+      - name: Scrobble unit test (threshold, tracker, API calls; no network)
+        run: node tests/scrobble-unit.mjs
       - name: Package
         run: |
           v="${{ steps.v.outputs.version }}"

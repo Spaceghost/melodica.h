@@ -41,6 +41,7 @@ import { resolve, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { makeBackend } from './tools/fake-account.mjs';
+import { makeScrobbles, serveNode } from './tools/fake-scrobble.mjs';
 import { makeRelay } from './tools/fake-relay.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -74,6 +75,8 @@ let context = null;
 let backend = null;
 let pageRef = null;
 let relay = null;
+let scrobbles = null;
+let attempt = 0;
 const appRequests = [];
 
 async function serve(req, res) {
@@ -87,6 +90,7 @@ async function serve(req, res) {
       res.end(r.body);
       return;
     }
+    if (url.pathname.startsWith('/scrobble/') && scrobbles) { await serveNode(scrobbles.handle, req, res, ORIGIN); return; }
     if (url.pathname.startsWith('/oauth/') || url.pathname.startsWith('/.well-known/')) {
       const chunks = [];
       for await (const c of req) chunks.push(c);
@@ -140,6 +144,7 @@ test.beforeAll(async () => {
   server = https.createServer({ key: await readFile(join(tmp, 'key.pem')), cert: await readFile(join(tmp, 'cert.pem')) }, serve);
   await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
   backend = makeBackend(ORIGIN, {});
+  scrobbles = makeScrobbles({ who: (t) => backend.who(t) });
   backend.allow(tuner.user, { inserts: true });
   // A chosen username: no "Pick a username" sheet over the page when it plays on its own.
   backend.setPerson(tuner.user, { username: 'tuner_listener', chosen: true });
@@ -168,7 +173,12 @@ test.afterAll(async () => {
   if (server) await new Promise((ok) => server.close(ok));
   if (tuner.proc) tuner.proc.kill('SIGTERM');
   for (const d of [tmp, tuner.dir]) if (d) await rm(d, { recursive: true, force: true }).catch(() => {});
-  if (EXT && haveTuner) await writeFile(resolve(ARTIFACTS, 'extension-real.json'), JSON.stringify(report, null, 2) + '\n');
+  if (EXT && haveTuner) {
+    const body = JSON.stringify(report, null, 2) + '\n';
+    await writeFile(resolve(ARTIFACTS, 'extension-real.json'), body);
+    // Each attempt kept on its own, so a failed first try's trace survives the retry.
+    await writeFile(resolve(ARTIFACTS, `extension-real-attempt-${attempt}.json`), body);
+  }
 });
 
 async function extensionId(ctx = context) {
@@ -197,6 +207,7 @@ async function within(label, act, check, ms = SYNC_MS) {
 test.describe.configure({ retries: 1 });
 
 test('the page is a remote of the real extension: no local playback, both directions in sync', async ({}, info) => {
+  attempt = info.retry;
   test.skip(!EXT, 'no extension build: set MELODICA_EXT_DIR to an unpacked Chrome build');
   test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
   test.setTimeout(180_000);
@@ -213,6 +224,10 @@ test('the page is a remote of the real extension: no local playback, both direct
   await expect(ext.locator('#options-message')).toContainText('Saved');
   const send = (msg) => ext.evaluate((m) => chrome.runtime.sendMessage(m), msg);
   const bg = async () => (await send({ type: 'player-get' })).state;
+  // The extension scrobbles (0.7.0+) once its first-run notice is seen; then its posts show
+  // that only the side whose audio plays submits (docs/BRIDGE.md 3.1).
+  const scrobbler = !/^0\.[0-6]\./.test(manifest.version);
+  if (scrobbler) await send({ type: 'scrobble-notice-seen' });
 
   // 1. No Pandora session in the extension: the page is its view and says where to sign in.
   const page = await context.newPage();
@@ -271,8 +286,29 @@ test('the page is a remote of the real extension: no local playback, both direct
     async () => Number((await bg()).volume) === 37, EXT_MS);
 
   // 5. Extension-side changes show on the page.
+  // Trace every bridge message the page sees around pause/resume (asked by the extension
+  // side to tell a late push from one overwritten by an older reply).
+  await page.evaluate(() => {
+    window.__trace = [];
+    addEventListener('message', (e) => {
+      const d = e.data;
+      if (!d || typeof d !== 'object' || typeof d.type !== 'string') return;
+      window.__trace.push({ t: performance.now(), type: d.type, status: d.state && d.state.status, changedAt: d.state && d.state.changedAt, id: d.id });
+    });
+  });
   await within('extension pause -> page', () => send({ type: 'player', action: 'pause' }), async () => (await page.locator('#btn-play').getAttribute('data-state')) === 'paused');
-  await within('extension play -> page', () => send({ type: 'player', action: 'resume' }), async () => (await page.locator('#btn-play').getAttribute('data-state')) === 'playing');
+  const resumeAt = {};
+  try {
+    await within('extension play -> page', async () => {
+      resumeAt.before = await page.evaluate(() => performance.now());
+      await send({ type: 'player', action: 'resume' });
+      resumeAt.after = await page.evaluate(() => performance.now());
+    }, async () => (await page.locator('#btn-play').getAttribute('data-state')) === 'playing');
+  } finally {
+    // Kept for a failed attempt too (afterAll writes extension-real-attempt-N.json).
+    report.resumeTrace = { resumeAt, messages: await page.evaluate(() => window.__trace).catch(() => null) };
+    try { report.resumeTrace.diagnostics = ((await send({ type: 'diagnostics' })) || {}).lines || null; } catch (err) { report.resumeTrace.diagnostics = String(err); }
+  }
   before = (await page.locator('#np-title').textContent()).trim();
   await within('extension next -> page', () => send({ type: 'player', action: 'next' }), async () => {
     const t = (await page.locator('#np-title').textContent()).trim();
@@ -286,6 +322,11 @@ test('the page is a remote of the real extension: no local playback, both direct
   // 6. The page itself plays nothing and talks to no relay.
   const audio = await page.evaluate(() => { const a = document.getElementById('audio'); return { src: a.getAttribute('src'), currentSrc: a.currentSrc, paused: a.paused }; });
   report.pageAudio = audio;
+  // Only the side whose audio plays submits listens (docs/BRIDGE.md 3.1).
+  const clientOf = (p) => p.body && p.body.payload && p.body.payload[0] && p.body.payload[0].track_metadata.additional_info?.submission_client;
+  report.scrobblePosts = scrobbles.posts.map((p) => `${p.body && p.body.listen_type} ${clientOf(p)}`);
+  expect(scrobbles.posts.filter((p) => clientOf(p) === 'melodica-web').length, 'listens submitted by the page in remote mode').toBe(0);
+  if (scrobbler) expect(scrobbles.posts.filter((p) => clientOf(p) === 'melodica-extension' && p.body.listen_type === 'playing_now').length, 'playing now from the extension').toBeGreaterThan(0);
   expect(audio.src, 'no <audio> src on the page').toBeNull();
   expect(audio.currentSrc).toBe('');
   const tunerHost = new URL(tuner.https).host;
@@ -415,6 +456,8 @@ test.describe('cross sign-in with the real extension', () => {
       await page.goto(APP);
       await expect(page.locator('#app')).toHaveAttribute('data-view', 'player', { timeout: 30_000 });
       await expect(page.locator('#app')).not.toHaveAttribute('data-mode', 'remote');
+      // Playing on its own the page scrobbles (on by default): its one-time notice first.
+      await page.locator('#scrobble-notice-ok').click({ timeout: 15_000 });
       await page.locator('#station-list button.station', { hasNotText: 'QuickMix' }).first().click();
       await expect(page.locator('#np-title')).not.toHaveText(/^(Pick a station)?$/, { timeout: 30_000 });
       await page.screenshot({ path: resolve(ARTIFACTS, 'extension-real-cross-b.png') });

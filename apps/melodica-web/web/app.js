@@ -5,6 +5,7 @@ import { PianoClient, PianoError, resolveApiBase } from './piano.js';
 import { BridgeTransport, bridgeAllowed } from './bridge.js';
 import { Vault } from './vault.js';
 import { Account, USERNAME_RE, USERNAME_FORMAT, normalizeUsername } from './account.js';
+import { Scrobbles, ListenTracker, PAGE_SIZE } from './scrobble.js';
 
 const VERSION = '__MELODICA_WEB_VERSION__';
 const STORAGE = {
@@ -79,6 +80,9 @@ const el = {
   usernamePickNotice: $('username-pick-notice'), usernamePickLater: $('username-pick-later'), usernamePickSave: $('username-pick-save'),
   usernameChange: $('username-change'), usernameChangeInput: $('username-change-input'),
   usernameChangeMessage: $('username-change-message'), usernameChangeSave: $('username-change-save'),
+  listensPanel: $('listens-panel'), listens: $('listens'), listensEmpty: $('listens-empty'), listensMore: $('listens-more'),
+  scrobbleSettings: $('scrobble-settings'), scrobbleOn: $('scrobble-on'), scrobbleBoard: $('scrobble-board'),
+  scrobbleMessage: $('scrobble-message'), scrobbleCrewWrap: $('scrobble-crew-wrap'), scrobbleNotice: $('scrobble-notice'),
   audio: $('audio'),
 };
 
@@ -133,6 +137,8 @@ const state = {
   fetching: null,     // playGen of the playlist request in flight, or null
   consecutiveAudioErrors: 0,
   keepMessage: false, // a skip reason should outlive the next song change
+  scrobbles: null,    // Scrobbles: spacegho.st/scrobble/ (web/scrobble.js)
+  scrobble: null,     // what the page knows of it (newScrobbleState)
 };
 
 // ---------------------------------------------------------------- helpers
@@ -673,6 +679,8 @@ function displaySong(song) {
   updateQualityChip();
   updateRatingButtons();
   if (!song.isAd) rememberSong(song);
+  if (!state.remote) scrobbleStart(song);
+  else scheduleListensRefresh();
   if (state.keepMessage) state.keepMessage = false;
   else playerMessage('');
   const label = [song.title, song.artist].filter(Boolean).join(' – ');
@@ -951,7 +959,15 @@ function remoteSong(t) {
 }
 
 let remoteStationsKey = '';
+let remoteChangedAt = 0;
 function renderRemote(rs) {
+  // Command replies are not ordered against the extension's pushes: never draw a state
+  // older than the one on screen (docs/BRIDGE.md 2, changedAt).
+  const at = Number(rs && rs.changedAt);
+  if (Number.isFinite(at) && at > 0) {
+    if (at < remoteChangedAt) return;
+    remoteChangedAt = at;
+  }
   state.remoteState = rs;
   // Stations: rebuilt only when the list itself changed (keeps focus and scroll).
   const stations = (Array.isArray(rs.stations) ? rs.stations : []).filter((s) => s && s.token)
@@ -1389,6 +1405,7 @@ async function applyExtensionSession(m, initial, force = false) {
     if (mirrored) {
       await forgetSaved();
       syncRemember();
+      clearScrobbles();
     } else if (mine && initial) {
       let r = null;
       try { r = await state.bridge.sessionOffer({ session: mine, credential: state.saved.credential || undefined, account: accountView() }); } catch (_) { r = null; }
@@ -1397,6 +1414,7 @@ async function applyExtensionSession(m, initial, force = false) {
     }
   }
   applyExtensionAccount(m.account);
+  if (state.remote) loadScrobbles(); // the copy's token (or the account) reads the listens
 }
 
 // spacegho.st: the extension signed in and this page not -> a silent sign-in (prompt=none,
@@ -1463,6 +1481,7 @@ async function enterPlayer() {
   renderUpNext();
   visibleStationButton()?.focus();
   refreshMe({ prompt: true }); // not awaited: the username never holds up playback
+  loadScrobbles();
 }
 
 // Signing out here signs out the extension too (docs/BRIDGE.md 4.4).
@@ -1471,6 +1490,7 @@ function logout() {
   if (sid) addRevoked(sid);
   state.sessionMeta = null;
   forgetSaved();
+  clearScrobbles();
   if (state.remote) { remoteLogout(sid); return; }
   closeUsernamePick();
   showUsername('');
@@ -1486,6 +1506,270 @@ function logout() {
   el.stationFilter.value = '';
   filterStations();
   showLogin();
+}
+
+// ---------------------------------------------------------------- scrobbling
+// Spacegho.st Scrobbles (web/scrobble.js): on by default for a signed-in user, off in
+// the account menu. The page submits only while its own audio plays; in remote mode
+// the extension submits and the page only shows the listens (docs/BRIDGE.md 3).
+const SCROBBLE_NOTICE_KEY = 'melodica.scrobble.noticeSeen';
+const SCROBBLE_RETRY_MAX = 20;
+const LISTENS_REFRESH_MS = 4000;
+
+function newScrobbleState() {
+  return { gen: 0, loaded: false, settings: null, crew: false, cursor: null, loading: false, tracker: null, retry: [], ids: new Set() };
+}
+
+// The bearer: the relay's access token (here, or the extension's kept with the shared
+// session), else the spacegho.st account's token.
+async function scrobbleToken() {
+  if (!state.remote && state.client && state.client.accessToken) return state.client.accessToken;
+  const relay = state.saved && state.saved.relay;
+  if (state.remote && relay && relay.token && relayTokenUntil(relay) > Date.now()) return relay.token;
+  const a = state.account;
+  if (a && a.signedIn) { try { return await a.accessToken(); } catch (_) { return ''; } }
+  return '';
+}
+
+function scrobbleOn() {
+  const sc = state.scrobble;
+  return !!(sc && sc.loaded && sc.settings && sc.settings.scrobbling);
+}
+
+function renderScrobbleSettings() {
+  const sc = state.scrobble;
+  el.scrobbleSettings.hidden = !(sc && sc.loaded);
+  el.listensPanel.hidden = !(sc && sc.loaded);
+  if (!sc || !sc.loaded) return;
+  const links = state.scrobbles.links; // on this page's origin
+  $('scrobble-dashboard').href = links.dashboard;
+  $('scrobble-leaderboard').href = $('listens-board').href = links.leaderboard;
+  $('scrobble-crew').href = links.crew;
+  el.scrobbleOn.checked = !!(sc.settings && sc.settings.scrobbling);
+  el.scrobbleBoard.checked = !!(sc.settings && sc.settings.leaderboard);
+  el.scrobbleBoard.disabled = !el.scrobbleOn.checked;
+  el.scrobbleCrewWrap.hidden = !sc.crew;
+}
+
+function listenRow(l) {
+  const li = document.createElement('li');
+  li.className = 'hist listen';
+  li.dataset.id = String(l.id || '');
+  const img = document.createElement('img');
+  img.className = 'hist-cover';
+  img.alt = '';
+  img.loading = 'lazy';
+  img.src = typeof l.art === 'string' && /^https:\/\//.test(l.art) ? l.art : FALLBACK_COVER;
+  img.addEventListener('error', () => { img.src = FALLBACK_COVER; }, { once: true });
+  const meta = document.createElement('div');
+  meta.className = 'hist-meta';
+  const t = document.createElement('span');
+  t.className = 'hist-title';
+  t.textContent = l.title || '';
+  t.title = l.title || '';
+  const a = document.createElement('span');
+  a.className = 'hist-artist';
+  a.textContent = l.artist || '';
+  meta.append(t, a);
+  const when = document.createElement('time');
+  when.className = 'hist-when';
+  const ms = Number(l.listened_at) * 1000;
+  if (Number.isFinite(ms) && ms > 0) {
+    const d = new Date(ms);
+    when.dateTime = d.toISOString();
+    const today = new Date().toDateString() === d.toDateString();
+    when.textContent = today ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  }
+  li.append(img, meta, when);
+  return li;
+}
+
+// Adds listens (newest first) at the end, or at the top when fresh.
+function addListens(list, fresh = false) {
+  const sc = state.scrobble;
+  const rows = [];
+  for (const l of Array.isArray(list) ? list : []) {
+    if (!l || sc.ids.has(l.id)) continue;
+    sc.ids.add(l.id);
+    rows.push(listenRow(l));
+  }
+  if (fresh) el.listens.prepend(...rows);
+  else el.listens.append(...rows);
+  el.listensEmpty.hidden = el.listens.children.length > 0;
+  el.listensMore.hidden = !sc.cursor;
+}
+
+// Settings and the last PAGE_SIZE listens, after a login, a resume or a shared session.
+async function loadScrobbles() {
+  if (!state.scrobbles) state.scrobbles = new Scrobbles({ origin: location.origin, token: scrobbleToken });
+  if (!state.scrobble) state.scrobble = newScrobbleState();
+  const sc = state.scrobble;
+  if (sc.loaded || sc.loading) return;
+  const gen = sc.gen;
+  sc.loading = true;
+  try {
+    const me = await state.scrobbles.me();
+    if (state.scrobble !== sc || sc.gen !== gen) return;
+    sc.settings = me.settings || {};
+    sc.crew = !!me.crew_viewer;
+    sc.cursor = me.next_cursor || null;
+    sc.loaded = true;
+    el.listens.replaceChildren();
+    sc.ids.clear();
+    addListens((me.recent || []).slice(0, PAGE_SIZE));
+    renderScrobbleSettings();
+    if (scrobbleOn() && !state.remote) showScrobbleNotice();
+    // A song already playing (a resume) still counts from here.
+    if (!state.remote && state.song && !sc.tracker) scrobbleStart(state.song);
+    flushScrobbleRetry();
+  } catch (err) {
+    console.debug('[scrobble]', describeError(err));
+  } finally {
+    sc.loading = false;
+  }
+}
+
+async function moreListens() {
+  const sc = state.scrobble;
+  if (!sc || !sc.loaded || !sc.cursor || sc.paging) return;
+  sc.paging = true;
+  const gen = sc.gen;
+  try {
+    const r = await state.scrobbles.listens(sc.cursor);
+    if (state.scrobble !== sc || sc.gen !== gen) return;
+    sc.cursor = r.next_cursor || null;
+    addListens(r.listens);
+  } catch (err) {
+    console.debug('[scrobble]', describeError(err));
+  } finally {
+    sc.paging = false;
+  }
+}
+
+// Newest listens on top (after a submit here, or a track change in the extension).
+let listensTimer = 0;
+function scheduleListensRefresh() {
+  clearTimeout(listensTimer);
+  listensTimer = setTimeout(async () => {
+    const sc = state.scrobble;
+    if (!sc || !sc.loaded) return;
+    const gen = sc.gen;
+    try {
+      const r = await state.scrobbles.listens('', PAGE_SIZE);
+      if (state.scrobble === sc && sc.gen === gen) addListens(r.listens, true);
+    } catch (err) { console.debug('[scrobble]', describeError(err)); }
+  }, LISTENS_REFRESH_MS);
+}
+
+function showScrobbleNotice() {
+  if (store.get(SCROBBLE_NOTICE_KEY) === '1') return;
+  store.set(SCROBBLE_NOTICE_KEY, '1');
+  if (el.usernamePick.open) return; // next time, not over the username dialog
+  if (typeof el.scrobbleNotice.showModal === 'function') { if (!el.scrobbleNotice.open) el.scrobbleNotice.showModal(); }
+  else el.scrobbleNotice.setAttribute('open', '');
+}
+
+// A 403 scrobbling_off: the server's setting is off (changed elsewhere).
+function scrobbleRefused(err) {
+  if (!err || err.status !== 403 || err.code !== 'scrobbling_off') return false;
+  const sc = state.scrobble;
+  if (sc && sc.settings) sc.settings.scrobbling = false;
+  if (sc) { sc.tracker = null; sc.retry = []; }
+  renderScrobbleSettings();
+  return true;
+}
+
+// A new song plays here: "playing now", and a tracker for the listen. Never an ad.
+function scrobbleStart(song) {
+  const sc = state.scrobble;
+  if (!sc) return;
+  sc.tracker = null;
+  if (!song || song.isAd || state.remote || !scrobbleOn()) return;
+  sc.tracker = new ListenTracker(song, Date.now() / 1000, Number(song.duration) || 0);
+  const len = el.audio.duration;
+  sc.tracker.setDuration(Number.isFinite(len) ? len : 0);
+  state.scrobbles.submit('playing_now', song, sc.tracker.duration).catch((err) => {
+    if (!scrobbleRefused(err)) console.debug('[scrobble]', describeError(err));
+  });
+}
+
+function scrobbleTick() {
+  const sc = state.scrobble;
+  const tr = sc && sc.tracker;
+  if (!tr || state.remote || tr.song !== state.song) return;
+  if (Number.isFinite(el.audio.duration)) tr.setDuration(el.audio.duration);
+  tr.tick(el.audio.currentTime, !el.audio.paused && !el.audio.ended);
+  if (!tr.due() || !scrobbleOn()) return;
+  tr.sent = true;
+  sendListen({ song: tr.song, duration: tr.duration, at: tr.startedAt });
+}
+
+async function sendListen(item) {
+  const sc = state.scrobble;
+  try {
+    await state.scrobbles.submit('single', item.song, item.duration, item.at);
+    scheduleListensRefresh();
+  } catch (err) {
+    if (scrobbleRefused(err)) return;
+    console.debug('[scrobble]', describeError(err));
+    // Network trouble or a 5xx: kept for the next load or submit (a 4xx is final).
+    if (sc && state.scrobble === sc && (err.status === 0 || err.status >= 500) && sc.retry.length < SCROBBLE_RETRY_MAX) sc.retry.push(item);
+    return;
+  }
+  flushScrobbleRetry();
+}
+
+function flushScrobbleRetry() {
+  const sc = state.scrobble;
+  if (!sc || !sc.retry.length || !scrobbleOn() || state.remote) return;
+  const items = sc.retry.splice(0);
+  for (const it of items) sendListen(it);
+}
+
+async function setScrobbleSetting(patch) {
+  const sc = state.scrobble;
+  if (!sc || !sc.loaded) return;
+  el.scrobbleOn.disabled = el.scrobbleBoard.disabled = true;
+  message(el.scrobbleMessage, 'Saving…', 'info', 0);
+  try {
+    const r = await state.scrobbles.setSettings(patch);
+    if (state.scrobble !== sc) return;
+    sc.settings = Object.assign(sc.settings || {}, r && typeof r === 'object' ? r : patch);
+    message(el.scrobbleMessage, '', '', 0);
+    if ('scrobbling' in patch) {
+      if (!sc.settings.scrobbling) { sc.tracker = null; sc.retry = []; }
+      else if (!state.remote && state.song) scrobbleStart(state.song);
+    }
+  } catch (err) {
+    message(el.scrobbleMessage, err && err.message ? err.message : 'Could not save.', 'error');
+  } finally {
+    el.scrobbleOn.disabled = false;
+    renderScrobbleSettings();
+  }
+}
+
+// Logout (here or in the extension): nothing of this listener stays on the page.
+function clearScrobbles() {
+  clearTimeout(listensTimer);
+  if (state.scrobble) state.scrobble.gen += 1;
+  state.scrobble = null;
+  el.listens.replaceChildren();
+  el.listensEmpty.hidden = false;
+  el.listensMore.hidden = true;
+  message(el.scrobbleMessage, '', '', 0);
+  renderScrobbleSettings();
+}
+
+function installScrobbleEvents() {
+  el.scrobbleOn.addEventListener('change', () => setScrobbleSetting({ scrobbling: el.scrobbleOn.checked }));
+  el.scrobbleBoard.addEventListener('change', () => setScrobbleSetting({ leaderboard: el.scrobbleBoard.checked }));
+  el.listensMore.addEventListener('click', () => moreListens());
+  closeOnBackdrop(el.scrobbleNotice, () => el.scrobbleNotice.close());
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) moreListens();
+    }, { rootMargin: '200px' }).observe(el.listensMore);
+  }
 }
 
 // ---------------------------------------------------------------- shortcuts sheet
@@ -1606,6 +1890,7 @@ function installEvents() {
   a.addEventListener('play', () => { setPlayIcon(true); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'; });
   a.addEventListener('pause', () => { setPlayIcon(false); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'; });
   a.addEventListener('timeupdate', () => {
+    scrobbleTick();
     const len = Number.isFinite(a.duration) && a.duration > 0 ? a.duration : (state.song ? state.song.duration : 0);
     if (len) {
       setProgress(a.currentTime, len);
@@ -1671,6 +1956,7 @@ async function main() {
   el.volume.value = String(state.volume);
   el.quality.value = state.quality;
   installEvents();
+  installScrobbleEvents();
   installMediaSession();
   showIdle();
   updateRatingButtons();
