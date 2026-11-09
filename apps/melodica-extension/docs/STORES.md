@@ -79,6 +79,13 @@ The `.crx` is a CRX3 signed with the repository's key (`CRX_PRIVATE_KEY`; extens
 Windows and macOS block off-store `.crx` installs except by enterprise policy
 (`ExtensionInstallSources` + `ExtensionInstallForcelist` with that `update.xml`; Brave
 honours the same Chromium policies); otherwise load `-chrome.zip` unpacked. The store page
-spells out each route. After a release, run the store sync
-(`node scripts/sync.mjs melodica-extension` in extensions-site and melodica-site) so
-<https://spacegho.st/extensions/> serves the new files and feeds.
+spells out each route. After a release, complete the full cycle below.
+
+## Required release completion
+
+A GitHub release alone does not finish a release. Keep Mozilla's unlisted signing and the existing self-hosted distribution, as Jack confirmed on 2026-11-09.
+
+1. Require the build and Chromium, Brave and Firefox checks to pass. Inspect the tagged XPI for Mozilla signature files and its exact version; verify published packages against SHA256SUMS. Record any iOS simulator or device limitations separately.
+2. Check Fedora Cloudflare access with `npx -y wrangler@4.135.0 whoami`. If unauthenticated, leave publication pending and request `npx -y wrangler@4.135.0 login`. With access, run `node scripts/sync.mjs melodica-extension` from `~/Projects/extensions-site`, then the same command from `~/Projects/melodica-web/site`. The former updates browser downloads and Firefox/Chromium feeds; the latter updates the Melodica install page. The retired melodica-site repository must never be deployed.
+3. Run `node scripts/check-release-sites.mjs <version>` from melodica-extension. It fails until both public catalogs, both feeds and eight public package downloads match the GitHub release. Verify both public manifests advertise the new tag. Check the Firefox feed's version, update URL and SHA-256 against the signed XPI, and the Chromium feed's version and CRX URL. Download public installables and compare their hashes. Check `/extensions/` and `/melodica/extension/` at mobile and desktop widths: the Melodica page contains only Melodica browser extensions and links to the full browser-extension catalog. Neither catalog lists native apps. Verify the pinned player and uninterrupted navigation in the Melodica shell.
+4. Refresh `melodica.h` with `apps/pull.sh melodica-extension`, preserving exclusions for private code. Update HANDOFF.md with the exact tag, CI runs, deployed feed versions, public download checksums and remaining limits. Mark the release complete only after both catalogs and update feeds are verified.
