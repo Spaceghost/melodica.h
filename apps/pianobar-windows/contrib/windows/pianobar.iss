@@ -47,6 +47,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "addtopath"; Description: "Add pianobar to the user PATH"; GroupDescription: "Environment:"
+Name: "listenlinks"; Description: "Open listen:// links with pianobar"; GroupDescription: "Links:"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
@@ -64,6 +65,12 @@ Name: "{autodesktop}\pianobar"; Filename: "{app}\pianobar.exe"; WorkingDir: "{ap
 
 [Registry]
 Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; Tasks: addtopath; Check: NeedsAddPath(ExpandConstant('{app}'))
+
+; listen:// links (README.md): HKA is HKCU for a per-user install, HKLM for all users
+Root: HKA; Subkey: "Software\Classes\listen"; ValueType: string; ValueName: ""; ValueData: "URL:listen link"; Flags: uninsdeletekey; Tasks: listenlinks
+Root: HKA; Subkey: "Software\Classes\listen"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""; Tasks: listenlinks
+Root: HKA; Subkey: "Software\Classes\listen\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\pianobar.exe"",0"; Tasks: listenlinks
+Root: HKA; Subkey: "Software\Classes\listen\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\pianobar.exe"" ""%1"""; Tasks: listenlinks
 
 [Run]
 Filename: "{win}\explorer.exe"; Parameters: """{app}"""; Description: "Open the install folder to create pianobar.cfg"; Flags: postinstall nowait skipifsilent unchecked

@@ -25,6 +25,7 @@ THE SOFTWARE.
 
 #include <assert.h>
 #include <math.h>
+#include <string.h>
 #include <piano.h>
 
 #include "main.h"
@@ -35,6 +36,7 @@ THE SOFTWARE.
 #include "ui_dispatch.h"
 #include "ui_readline.h"
 #include "settings.h"
+#include "listen.h"
 
 /*	authenticate user
  */
@@ -166,8 +168,19 @@ static bool BarMainGetStations(BarApp_t *app)
 /*	get initial station from autostart setting or user rl
  */
 static void BarMainGetInitialStation (BarApp_t *app) {
+	/* a listen:// link: its station, once the user said yes. Declined or
+	 * not found: ask, never fall back to the autostart station. */
+	const bool fromLink = app->hasListen;
+	if (app->hasListen) {
+		app->nextStation = BarListenResolve (app, &app->listen);
+		BarListenUriFree (&app->listen);
+		app->hasListen = false;
+		if (app->nextStation != NULL) {
+			return;
+		}
+	}
 	/* try to get autostart station */
-	if (app->settings.autostartStation != NULL) {
+	if (!fromLink && app->settings.autostartStation != NULL) {
 		app->nextStation = PianoFindStationById (app->ph.stations,
 				app->settings.autostartStation);
 		if (app->nextStation == NULL) {
@@ -178,7 +191,7 @@ static void BarMainGetInitialStation (BarApp_t *app) {
 	/* no autostart? ask the user */
 	if (app->nextStation == NULL) {
 		app->nextStation = BarUiSelectStation (app, app->ph.stations,
-				"Select station: ", NULL, app->settings.autoselect);
+				"Select station: ", NULL, !fromLink && app->settings.autoselect);
 	}
 }
 
@@ -264,6 +277,36 @@ static void BarMainGetPlaylist (BarApp_t *app) {
 			pRet);
 }
 
+/*	ListenBrainz-compatible scrobbling glue (listenbrainz.c does the work)
+ */
+static long BarMainLbPost (void *ctx, const char *url,
+		const char *authorization, const char *body) {
+	BarApp_t * const app = ctx;
+	char before[sizeof (app->lbHttp.error)];
+	memcpy (before, app->lbHttp.error, sizeof (before));
+	const long status = BarLbWinHttpPost (&app->lbHttp, url, authorization,
+			body);
+	/* say why there was no answer, once per distinct cause */
+	if (status == 0 && app->lbHttp.error[0] != '\0' &&
+			strcmp (before, app->lbHttp.error) != 0) {
+		BarUiMsg (&app->settings, MSG_ERR, "Scrobbling: %s\n",
+				app->lbHttp.error);
+	}
+	return status;
+}
+
+static void BarMainLbReport (void *ctx, bool error, const char *msg) {
+	BarApp_t * const app = ctx;
+	BarUiMsg (&app->settings, error ? MSG_ERR : MSG_INFO, "%s\n", msg);
+}
+
+static void BarMainLbProgress (BarApp_t *app) {
+	const double duration = BarPlayer2GetDuration (app->player);
+	const double played = BarPlayer2GetTime (app->player);
+	BarLbProgress (&app->lb, duration > 0 ? (unsigned int) duration : 0,
+			played > 0 ? (unsigned int) played : 0);
+}
+
 /*	start new player thread
  */
 static void BarMainStartPlayback(BarApp_t *app)
@@ -286,6 +329,21 @@ static void BarMainStartPlayback(BarApp_t *app)
     }
     else
     {
+        /* now playing (before the player opens the stream); the listen
+         * follows once it counts */
+        const PianoStation_t *songStation = app->curStation;
+        if (app->curStation != NULL && app->curStation->isQuickMix)
+        {
+            const PianoStation_t * const s = PianoFindStationById(
+                app->ph.stations, curSong->stationId);
+            if (s != NULL)
+                songStation = s;
+        }
+        BarLbSongStart(&app->lb, curSong->artist, curSong->title,
+            curSong->album, curSong->coverArt,
+            songStation != NULL ? songStation->name : NULL,
+            curSong->length, (long long) time(NULL));
+
         BarPlayer2SetGain(app->player, curSong->fileGain * app->settings.gainMul);
         BarPlayer2Open(app->player, curSong->audioUrl);
 
@@ -307,6 +365,9 @@ static void BarMainPlayerCleanup(BarApp_t *app)
 {
     BarUiStartEventCmd(&app->settings, "songfinish", app->curStation,
         app->playlist, &app->player, app->ph.stations, PIANO_RET_OK);
+
+    BarMainLbProgress(app);
+    BarLbSongEnd(&app->lb);
 
     BarPlayer2Finish(app->player);
 
@@ -416,7 +477,11 @@ static void BarMainLoop(BarApp_t *app)
         if (BarPlayer2IsPlaying(app->player) || BarPlayer2IsPaused(app->player))
         {
             BarMainPrintTime(app);
+            BarMainLbProgress(app);
         }
+
+        /* retry queued listens when due */
+        BarLbTick(&app->lb, time(NULL));
     }
 }
 
@@ -427,6 +492,22 @@ int main(int argc, char **argv)
 	debugEnable();
 
     memset(&app, 0, sizeof(app));
+
+    /* pianobar [listen://link]: pages open in the browser right away, station
+     * links are resolved after login and only play after the user says yes */
+    if (argc > 1)
+    {
+        if (argc > 2 || strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)
+        {
+            fprintf(stderr, "usage: pianobar [listen://link | "
+                BAR_LISTEN_HTTPS_BASE "...]\n");
+            return argc > 2 ? 1 : 0;
+        }
+        const int ret = BarListenEarly(argv[1], &app.listen);
+        if (ret >= 0)
+            return ret;
+        app.hasListen = true;
+    }
 
     BarConsoleInit();
 
@@ -476,6 +557,17 @@ int main(int argc, char **argv)
     if (app.settings.controlProxy)
         HttpSetProxy(app.http2, app.settings.controlProxy);
 
+    app.lbHttp.proxy = app.settings.proxy;
+    app.lbHttp.timeoutMs = 10000;
+    if (BarLbInit(&app.lb, app.settings.listenbrainzUrl,
+        app.settings.listenbrainzToken, app.settings.listenbrainzQueue,
+        PACKAGE, VERSION, BarMainLbPost, BarMainLbReport, &app))
+    {
+        BarUiMsg(&app.settings, MSG_INFO, "Scrobbling to %s%s\n",
+            app.lb.base, app.lb.queued > 0 ?
+            " (listens waiting in the queue)" : "");
+    }
+
 
     BarReadlineInit(&app.rl);
 
@@ -490,6 +582,7 @@ int main(int argc, char **argv)
     PianoDestroyPlaylist(app.songHistory);
     PianoDestroyPlaylist(app.playlist);
     HttpDestroy(app.http2);
+    BarLbDestroy(&app.lb);
     BarPlayer2Destroy(app.player);
     BarSettingsDestroy(&app.settings);
     BarHotKeyDestroy();

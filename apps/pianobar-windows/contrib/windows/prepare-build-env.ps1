@@ -58,6 +58,10 @@ $newCompile = @'
     <ClCompile Include="src\vendor\melodica\compat\crypt.c" />
     <ClCompile Include="src\vendor\melodica\compat\json.c" />
     <ClCompile Include="src\vendor\melodica\compat\piano.c" />
+    <ClCompile Include="src\src\listenbrainz.c" />
+    <ClCompile Include="src\src\listenbrainz_winhttp.c" />
+    <ClCompile Include="src\src\listen_uri.c" />
+    <ClCompile Include="src\src\listen.c" />
 '@
 $xml = Replace-Exactly $xml $oldCompile $newCompile 1
 
@@ -72,6 +76,10 @@ $newInclude = @'
     <ClInclude Include="src\vendor\melodica\compat\blowfish.h" />
     <ClInclude Include="src\vendor\melodica\compat\crypt.h" />
     <ClInclude Include="src\vendor\melodica\compat\json.h" />
+    <ClInclude Include="src\src\listenbrainz.h" />
+    <ClInclude Include="src\src\listenbrainz_winhttp.h" />
+    <ClInclude Include="src\src\listen_uri.h" />
+    <ClInclude Include="src\src\listen.h" />
 '@
 $xml = Replace-Exactly $xml $oldInclude $newInclude 1
 

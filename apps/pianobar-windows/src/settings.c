@@ -154,6 +154,13 @@ void BarSettingsDestroy (BarSettings_t *settings) {
 	free (settings->timeFormat);
 	free (settings->titleFormat);
 	free (settings->player);
+	free (settings->listenbrainzUrl);
+	if (settings->listenbrainzToken != NULL) {
+		memset (settings->listenbrainzToken, 0,
+				strlen (settings->listenbrainzToken));
+	}
+	free (settings->listenbrainzToken);
+	free (settings->listenbrainzQueue);
 	free (settings->fifo);
 	free (settings->rpcHost);
 	free (settings->rpcTlsPort);
@@ -212,6 +219,9 @@ void BarSettingsRead (BarSettings_t *settings) {
 	settings->outkey = strdup ("6#26FRL$ZWD");
 	settings->fifo = BarGetXdgConfigDir (PACKAGE_PIPE);
 	assert (settings->fifo != NULL);
+	settings->listenbrainzUrl = strdup ("https://spacegho.st/scrobble");
+	settings->listenbrainzQueue = BarGetXdgConfigDir (PACKAGE
+			".listenbrainz-queue");
 
 	settings->msgFormat[MSG_NONE].prefix = NULL;
 	settings->msgFormat[MSG_NONE].postfix = NULL;
@@ -438,6 +448,12 @@ void BarSettingsRead (BarSettings_t *settings) {
 			} else if (streq ("format_title", key)) {
 				free (settings->titleFormat);
 				settings->titleFormat = strdup (val);
+			} else if (streq ("listenbrainz_url", key)) {
+				free (settings->listenbrainzUrl);
+				settings->listenbrainzUrl = strdup (val);
+			} else if (streq ("listenbrainz_token", key)) {
+				free (settings->listenbrainzToken);
+				settings->listenbrainzToken = strdup (val);
 			} else if (streq ("player", key)) {
 				free (settings->player);
 				settings->player = strdup (val);

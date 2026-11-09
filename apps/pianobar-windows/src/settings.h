@@ -106,6 +106,7 @@ typedef struct {
 	char *timeFormat;
 	char *titleFormat;
 	char *player;
+	char *listenbrainzUrl, *listenbrainzToken, *listenbrainzQueue;
 	char *fifo;
 	char *rpcHost, *rpcTlsPort, *partnerUser, *partnerPassword, *device, *inkey, *outkey, *caBundle;
 	char keys[BAR_KS_COUNT];

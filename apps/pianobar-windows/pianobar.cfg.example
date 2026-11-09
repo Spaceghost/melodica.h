@@ -7,6 +7,12 @@
 user = <pandora_user>
 password = <pandora_password>
 
+# Scrobbling to a ListenBrainz-compatible server (spacegho.st by default;
+# get a token at https://spacegho.st/melodica/account/)
+#listenbrainz_url = https://spacegho.st/scrobble
+#listenbrainz_url = listenbrainz
+#listenbrainz_token = <your_token>
+
 width = 220
 height = 60
 

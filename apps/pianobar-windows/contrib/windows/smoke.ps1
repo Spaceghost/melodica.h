@@ -24,7 +24,8 @@ param(
     [string] $TunerHealthUrl = '',
     [string] $TunerLabel = '',
     [string] $Station = '0',
-    [string[]] $ExtraConfig = @()
+    [string[]] $ExtraConfig = @(),
+    [int] $HoldSeconds = 15
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -99,7 +100,7 @@ function Render-Transcript([string] $transcript, [string] $path) {
 # Runs the driver in its own visible console; takes screenshots at the checkpoints it announces.
 function Run-Driver([string] $exe, [string] $label, [string] $stationArg, [hashtable] $shots) {
     Get-ChildItem $OutDir -Filter "$label-*" -ErrorAction SilentlyContinue | Remove-Item -Force
-    $hold = if ($withTuner) { 15 } else { 0 }
+    $hold = if ($withTuner) { $HoldSeconds } else { 0 }
     $loginTimeout = if ($withTuner) { 30 } else { 20 }
     $argList = @("`"$exe`"", "`"$OutDir`"", $label, $stationArg, $hold, $loginTimeout)
     $p = Start-Process -FilePath $driverExe -ArgumentList $argList -WorkingDirectory (Split-Path $exe) -PassThru
@@ -193,6 +194,21 @@ Step 'uninstaller registered (HKCU)' ($uninstKeys.Count -ge 1) $keyDetail
 $userPath = (Get-ItemProperty 'HKCU:\Environment' -ErrorAction SilentlyContinue).Path
 Step 'user PATH contains install dir' ((";$userPath;") -like "*;$InstallDir;*") "HKCU\Environment\Path = $userPath" $false
 
+# listen:// links: the installer registers the scheme (task listenlinks, on by default); an unsupported
+# link prints the notice and exits 1 without logging in.
+$cmd = (Get-ItemProperty 'HKCU:\Software\Classes\listen\shell\open\command' -ErrorAction SilentlyContinue).'(default)'
+$proto = Get-ItemProperty 'HKCU:\Software\Classes\listen' -ErrorAction SilentlyContinue
+Step 'listen:// scheme registered (HKCU)' (($cmd -like "*pianobar.exe*%1*") -and ($null -ne $proto.'URL Protocol')) "command = $cmd"
+if (Test-Path $exe) {
+    # stdin is a pipe, so pianobar does not wait for Enter even if it got a console of its own
+    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    $badOut = @('' | & $exe 'listen://artist/x?autoplay=1' 2>&1 | ForEach-Object { "$_" })
+    $badCode = $LASTEXITCODE
+    $global:LASTEXITCODE = 0
+    $ErrorActionPreference = $prev
+    Step 'listen:// unsupported link refused' (($badCode -eq 1) -and (($badOut -join ' ') -like "*isn't supported*")) "exit $badCode; $($badOut -join ' ')"
+}
+
 # ---- 2. installed pianobar.exe: banner, login (and stations/now-playing with the tuner) ----
 $transcriptParts = New-Object System.Collections.ArrayList
 $installedResult = $null
@@ -280,6 +296,8 @@ if (Test-Path $unins) {
     $left = @(Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
         Where-Object { ($_ | Get-ItemProperty).DisplayName -like 'pianobar*' })
     Step 'uninstall entry removed (HKCU)' ($left.Count -eq 0) "$($left.Count) pianobar entries left"
+    Step 'listen:// scheme removed (HKCU)' (-not (Test-Path 'HKCU:\Software\Classes\listen')) 'HKCU:\Software\Classes\listen'
+
     $userPath = (Get-ItemProperty 'HKCU:\Environment' -ErrorAction SilentlyContinue).Path
     Step 'install dir removed from user PATH' (-not ((";$userPath;") -like "*;$InstallDir;*")) "HKCU\Environment\Path = $userPath" $false
 }
@@ -320,3 +338,4 @@ $header = @(
 [IO.File]::WriteAllText((Join-Path $OutDir 'smoke-windows.txt'), $header + ($transcriptParts -join "`r`n`r`n"), (New-Object Text.UTF8Encoding $false))
 Write-Host "ok=$proof; failures: $($failures -join ', ')"
 if (-not $mandatoryOk) { exit 1 }
+exit 0

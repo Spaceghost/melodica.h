@@ -18,6 +18,8 @@ Older releases can be found at [GitHub Release page](https://github.com/thedmd/p
 * Show upcoming songs/song history.
 * Configure keybindings.
 * last.fm scrobbling support (external application)
+* Built-in scrobbling to [spacegho.st](https://spacegho.st/melodica/account/) or any
+  ListenBrainz-compatible server (see Scrobbling below).
 * Proxy support for listeners outside the USA.
 
 ### Source Code
@@ -36,6 +38,41 @@ This repository is linked by GitHub submodule.
 ## Configuration
 
 Please examine `pianobar.cfg.example` for more details or ask in issue if you find something missing.
+
+### Scrobbling
+
+Set a token in `pianobar.cfg` to scrobble to a ListenBrainz-compatible server:
+
+```
+listenbrainz_token = <your token>
+# optional: spacegho.st (the default), listenbrainz, or a base URL
+listenbrainz_url = https://spacegho.st/scrobble
+```
+
+Tokens for spacegho.st come from https://spacegho.st/melodica/account/. `listenbrainz` means
+https://api.listenbrainz.org. pianobar sends "now playing" when a song starts and the listen
+once the song has played for half its length or four minutes (songs of 30 seconds or less
+never count), with the album, album art URL, duration and station name. Listens that cannot
+be delivered wait in `pianobar.listenbrainz-queue` next to `pianobar.cfg` and are retried
+automatically. The token is never printed. This works next to an `event_command` scrobbler.
+
+### listen:// links
+
+The installer registers `listen://` links with pianobar (task "Open listen:// links with
+pianobar", on by default; uninstalling removes it). From a console: `pianobar.exe <link>`, with a
+`listen://`, `web+listen://` or `https://spacegho.st/listen/...` link. A link never starts playback
+by itself:
+
+* `listen://station/<id>` selects that station if it is in your station list and asks before it
+  plays.
+* `listen://artist/<name>` and `listen://genre/<name>` pick a matching station from your list, or
+  offer to create one from Pandora's search or genre stations, and ask before it plays.
+* Every other link (track, map, user, listens, leaderboard) opens its page on spacegho.st in the
+  default browser.
+
+Declining the question shows the station list instead of the autostart station. Unsupported links
+print "That link isn't supported." and exit with status 1. Artist and genre names are matched
+without Unicode normalisation.
 
 
 ### Available actions

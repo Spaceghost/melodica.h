@@ -125,6 +125,18 @@ jobs:
             exit 1
           }
           $tunerHost = ([Uri] $env:TUNER_HTTPS_URL).Host
+          # Fake ListenBrainz server for the built-in scrobbler (listenbrainz_url/_token), started in this
+          # step because the runner ends a step's processes when the step ends; checked in the next step.
+          New-Item -ItemType Directory -Force smoke | Out-Null
+          Start-Process -FilePath python -ArgumentList @('-I', 'contrib\windows\fake-listenbrainz.py', '18080',
+            "$env:GITHUB_WORKSPACE\smoke\listenbrainz-log.jsonl", '--token', 'ci-fake-token', '--prefix', '/scrobble') `
+            -RedirectStandardError "$env:GITHUB_WORKSPACE\smoke\listenbrainz-server.err" -WindowStyle Hidden
+          $up = $false
+          foreach ($i in 1..100) {
+            try { $c = New-Object Net.Sockets.TcpClient('127.0.0.1', 18080); $c.Close(); $up = $true; break } catch { Start-Sleep -Milliseconds 200 }
+          }
+          if (-not $up) { Get-Content "$env:GITHUB_WORKSPACE\smoke\listenbrainz-server.err" -ErrorAction SilentlyContinue; Write-Host "::error::fake ListenBrainz server did not start"; exit 1 }
+          (Invoke-WebRequest -UseBasicParsing -Uri http://127.0.0.1:18080/scrobble/1/validate-token -Headers @{ Authorization = 'Token ci-fake-token' }).Content
           $installer = Get-Item "dist\pianobar-windows-$env:VERSION-setup-win-x64.exe"
           $zip = Get-Item "dist\pianobar-windows-$env:VERSION-win-x64.zip"
           & contrib\windows\smoke.ps1 -Installer $installer.FullName -Zip $zip.FullName `
@@ -132,8 +144,29 @@ jobs:
             -User $env:TUNER_USER -Password $env:TUNER_PASSWORD `
             -TunerHost $tunerHost -TunerPort $env:TUNER_HTTPS_PORT `
             -TunerHealthUrl "$env:TUNER_HTTPS_URL/__tuner/health" -TunerLogUrl $env:TUNER_LOG_URL `
-            -TunerLabel "Spaceghost/melodica-tuner@v1, hosts override, CA in machine Root"
+            -TunerLabel "Spaceghost/melodica-tuner@v1, hosts override, CA in machine Root" `
+            -ExtraConfig @('listenbrainz_url = http://127.0.0.1:18080/scrobble', 'listenbrainz_token = ci-fake-token') -HoldSeconds 30
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # The tuner's songs are 10 s long, so they never count as listens: expect "now playing" only,
+      # with the station name, and the token nowhere in pianobar's output (pianobar.cfg holds it by design).
+      - name: Check scrobbles (fake ListenBrainz server)
+        shell: pwsh
+        run: |
+          $log = "smoke\listenbrainz-log.jsonl"
+          Get-ChildItem smoke -Recurse -File -Filter '*transcript*' | Select-String -SimpleMatch 'Scrobbling', 'now playing' | ForEach-Object { $_.Line }
+          Get-Content smoke\listenbrainz-server.err -ErrorAction SilentlyContinue
+          Get-Process python* -ErrorAction SilentlyContinue | Format-Table Id, ProcessName, StartTime
+          if (-not (Test-Path $log)) { Write-Host "::error::the fake ListenBrainz server saw no request"; exit 1 }
+          $reqs = @(Get-Content $log | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.path -eq '/1/submit-listens' })
+          $reqs | ForEach-Object { $m = $_.payload[0].track_metadata; "$($_.listen_type) $($_.status) $($m.artist_name) - $($m.track_name) [$($m.additional_info.station_name)] $($m.additional_info | ConvertTo-Json -Compress)" }
+          $np = @($reqs | Where-Object { $_.listen_type -eq 'playing_now' -and $_.status -eq 200 -and $_.payload[0].track_metadata.additional_info.station_name })
+          $listens = @($reqs | Where-Object { $_.listen_type -ne 'playing_now' })
+          if ($np.Count -lt 1) { Write-Host "::error::no playing_now with a station name"; exit 1 }
+          if ($listens.Count -ne 0) { Write-Host "::error::10 s songs were submitted as listens"; exit 1 }
+          $leak = Get-ChildItem smoke -Recurse -File | Where-Object { $_.Name -ne 'listenbrainz-log.jsonl' -and $_.Name -ne 'pianobar.cfg' } | Select-String -SimpleMatch 'ci-fake-token' -List
+          if ($leak) { Write-Host "::error::token printed in $($leak.Path -join ', ')"; exit 1 }
+          Write-Host "scrobbler: $($np.Count) playing_now, 0 listens, token not in any smoke output"
 
       - name: Tuner server log
         if: always()
@@ -168,6 +201,7 @@ jobs:
             smoke/install.log
             smoke/tuner-log.txt
             smoke/tuner-server.log
+            smoke/listenbrainz-log.jsonl
           if-no-files-found: ignore
 
   release:

@@ -29,6 +29,9 @@ THE SOFTWARE.
 
 #include "player/player2.h"
 #include "http/http.h"
+#include "listen_uri.h"
+#include "listenbrainz.h"
+#include "listenbrainz_winhttp.h"
 #include "settings.h"
 #include "ui_readline.h"
 
@@ -47,5 +50,11 @@ typedef struct {
 	char doQuit;
 	BarReadline_t rl;
 	unsigned int retries;
+	/* ListenBrainz-compatible scrobbling (listenbrainz_url/_token) */
+	BarLb_t lb;
+	BarLbWinHttp_t lbHttp;
+	/* listen:// link from the command line, resolved after login */
+	BarListenUri_t listen;
+	bool hasListen;
 } BarApp_t;
 
