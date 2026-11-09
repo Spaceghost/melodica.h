@@ -113,6 +113,12 @@ namespace Elpis
             txtListenBrainzToken.Password = _config.Fields.ListenBrainz_Token;
             SelectListenBrainzPreset(_config.Fields.ListenBrainz_Server);
             lblListenBrainzStatus.Text = "";
+            try
+            {
+                lblListenScheme.Text = Elpis.Links.ListenScheme.IsRegisteredTo(System.Reflection.Assembly.GetEntryAssembly().Location)
+                    ? "listen:// links open Elpis." : "listen:// links open another program, or none.";
+            }
+            catch (Exception) { lblListenScheme.Text = ""; }
 
             txtIPAddress.ItemsSource = getLocalIPAddresses();
 
@@ -330,6 +336,17 @@ namespace Elpis
             if (cmbListenBrainzPreset.SelectedIndex == 0) txtListenBrainzServer.Text = Elpis.Scrobbling.ListenBrainzServers.SpaceGhost;
             if (cmbListenBrainzPreset.SelectedIndex == 1) txtListenBrainzServer.Text = Elpis.Scrobbling.ListenBrainzServers.ListenBrainzOrg;
             txtListenBrainzServer.IsEnabled = cmbListenBrainzPreset.SelectedIndex == 2;
+        }
+
+        private void btnListenScheme_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var exe = System.Reflection.Assembly.GetEntryAssembly().Location;
+                Elpis.Links.ListenScheme.Register(exe, true);
+                lblListenScheme.Text = Elpis.Links.ListenScheme.IsRegisteredTo(exe) ? "listen:// links open Elpis." : "Windows did not take the change.";
+            }
+            catch (Exception ex) { lblListenScheme.Text = "Could not register: " + ex.Message; }
         }
 
         private void btnListenBrainzGetToken_Click(object sender, RoutedEventArgs e)

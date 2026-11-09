@@ -1,4 +1,5 @@
-# The ListenBrainz scrobbler core (Elpis/ListenBrainz.cs, plain C#) on Linux, and the
+# The ListenBrainz scrobbler core and the listen:// link parser (plain C#) on Linux and on
+# Windows (where the host checks also register a throwaway URL scheme under HKCU), and the
 # Windows build of the whole app, on every push to master.
 name: listenbrainz
 
@@ -50,6 +51,16 @@ jobs:
           dotnet run --project tests/ListenBrainz.HostTest
           cat /tmp/fake.log
           ! grep -q sgs_ci_fake_token /tmp/fake.log
+
+  host-checks-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Host checks (listen:// parser and links, scheme registration)
+        run: dotnet run --project tests/ListenBrainz.HostTest
 
   windows-build:
     runs-on: windows-latest

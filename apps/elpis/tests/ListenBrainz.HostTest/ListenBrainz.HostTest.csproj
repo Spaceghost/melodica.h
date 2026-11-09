@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!--
-    Host checks for Elpis/ListenBrainz.cs (the scrobbler core is plain C# with no WPF), run on
+    Host checks for Elpis/ListenBrainz.cs, ListenUri.cs, ListenLinks.cs and (on Windows) ListenScheme.cs, plain C# with no WPF,, run on
     Linux: dotnet run (project tests/ListenBrainz.HostTest). With LB_SERVER and LB_TOKEN_FILE
     set it also submits to that server (a fake ListenBrainz, or a real one).
     Not part of Elpis.sln.
@@ -9,9 +9,12 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>disable</Nullable>
-    <NoWarn>$(NoWarn);SYSLIB0014</NoWarn>
+    <NoWarn>$(NoWarn);SYSLIB0014;CA1416</NoWarn>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../Elpis/ListenBrainz.cs" Link="ListenBrainz.cs" />
+    <Compile Include="../../Elpis/ListenUri.cs" Link="ListenUri.cs" />
+    <Compile Include="../../Elpis/ListenLinks.cs" Link="ListenLinks.cs" />
+    <Compile Include="../../Elpis/ListenScheme.cs" Link="ListenScheme.cs" />
   </ItemGroup>
 </Project>

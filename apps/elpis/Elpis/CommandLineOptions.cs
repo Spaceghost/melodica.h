@@ -15,5 +15,7 @@ namespace Elpis
         public bool ShowHelp = false;
         public string ConfigPath = null;
         public bool Exit = false;
+        /// <summary>A listen://, web+listen:// or https://spacegho.st/listen/ link to open (after asking).</summary>
+        public string ListenLink = null;
     }
 }

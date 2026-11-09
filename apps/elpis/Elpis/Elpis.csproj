@@ -189,6 +189,9 @@
     </Compile>
     <Compile Include="Config.cs" />
     <Compile Include="ListenBrainz.cs" />
+    <Compile Include="ListenLinks.cs" />
+    <Compile Include="ListenScheme.cs" />
+    <Compile Include="ListenUri.cs" />
     <Compile Include="ListenBrainzScrobbler.cs" />
     <Compile Include="Pages\UpdatePage.xaml.cs">
       <DependentUpon>UpdatePage.xaml</DependentUpon>

@@ -771,6 +771,28 @@ namespace PandoraSharpPlayer
             });
         }
 
+        /// <summary>
+        /// A new artist station from a name (a listen://artist link the listener confirmed): the artist of that name
+        /// if Pandora has one, else its best artist match. StationCreated fires when it is made.
+        /// </summary>
+        public void CreateStationFromArtistName(string name)
+        {
+            RunTask(() =>
+            {
+                var artists = _pandora.Search(name).Where(r => r.ResultType == SearchResultType.Artist && !string.IsNullOrEmpty(r.MusicToken)).ToList();
+                var pick = artists.FirstOrDefault(r => string.Equals(r.Name, name, StringComparison.OrdinalIgnoreCase))
+                           ?? artists.OrderByDescending(r => r.Score).FirstOrDefault();
+                if (pick == null)
+                {
+                    Log.O("listen:// link: Pandora has no artist called " + name);
+                    return;
+                }
+                Station station = _pandora.CreateStationFromSearch(pick.MusicToken);
+                if (StationCreated != null)
+                    StationCreated(this, station);
+            });
+        }
+
         public void CreateStation(SearchResult result)
         {
             RunTask(() =>

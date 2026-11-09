@@ -383,6 +383,13 @@
                         </StackPanel>
                     </Grid>
                 </Expander>
+                <Expander Header="listen:// links" IsExpanded="False" Margin="5">
+                    <StackPanel Orientation="Horizontal">
+                        <Button Name="btnListenScheme" Content="Open listen:// links with Elpis" Margin="5" Click="btnListenScheme_Click"
+                                ToolTip="Elpis asks before a link plays a station or opens a page"/>
+                        <TextBlock Name="lblListenScheme" Margin="5" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Expander>
 
             </StackPanel>
         </ScrollViewer>

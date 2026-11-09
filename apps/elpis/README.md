@@ -35,6 +35,7 @@ It includes a C# implementation of the Pandora web API, PandoraSharp, which is r
  * Automatic update check and download within the client
  * Last.FM Scrobbling
  * Scrobbling to a ListenBrainz-compatible server: spacegho.st by default (a token from https://spacegho.st/melodica/account/), listenbrainz.org, or your own. Listens that cannot be sent wait in %AppData%\Elpis\listenbrainz-queue.txt and are sent again. Host checks: `dotnet run --project tests/ListenBrainz.HostTest`.
+ * listen:// links: Elpis registers the listen scheme for your Windows user (unless another program already handles it; Settings, "listen:// links", makes Elpis the handler). Artist and genre links offer their station, station links offer yours, other links offer their spacegho.st page; Elpis asks before anything plays or opens.
  * HTTP Api allowing a user to control Elpis remotely. Here's a remote control called [ElpisRemote](https://github.com/seliver/ElpisRemote)
  * Beta testing (testing the newest commit done on Elpis without having to compile anything). For that, just check the option "Check for Beta Updates" on the Settings page.
  * Ability to switch audio output device

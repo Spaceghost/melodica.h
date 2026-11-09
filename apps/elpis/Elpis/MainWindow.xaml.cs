@@ -272,6 +272,13 @@ namespace Elpis
                 LoadStation(_clo.StationToLoad);
             }
 
+            if (_clo.ListenLink != null)
+            {
+                var link = _clo.ListenLink;
+                _clo.ListenLink = null;
+                OpenListenLink(link);
+            }
+
             if (_clo.Exit)
             {
                 _forceClose = true;
@@ -851,6 +858,7 @@ namespace Elpis
 
             LoadLastFM();
             LoadListenBrainz();
+            RegisterListenScheme();
 
             _player.AudioFormat = _config.Fields.Pandora_AudioFormat;
             _player.SetStationSortOrder(_config.Fields.Pandora_StationSortOrder);
@@ -1034,6 +1042,17 @@ namespace Elpis
             catch (Exception) { }
             ConfigureListenBrainz();
             _player.RegisterPlayerControlQuery(_listenBrainz);
+        }
+
+        /// <summary>listen:// opens Elpis for this Windows user, unless another program already handles it.</summary>
+        private static void RegisterListenScheme()
+        {
+            try
+            {
+                if (Elpis.Links.ListenScheme.Register(Assembly.GetEntryAssembly().Location, false))
+                    Log.O("listen:// links now open Elpis");
+            }
+            catch (Exception ex) { Log.O("listen:// registration failed: " + ex.Message); }
         }
 
         private void ConfigureListenBrainz()
@@ -1503,6 +1522,8 @@ namespace Elpis
         private void _player_StationsRefreshed(object sender)
         {
             _stationPage.Stations = _player.Stations;
+            if (_pendingListenLink != null)
+                OpenListenLink(_pendingListenLink);
         }
 
         private void mainBar_NextClick()
@@ -1635,6 +1656,53 @@ namespace Elpis
             {
                 this.Show();
                 ShowInTaskbar = true;
+            }
+        }
+
+        private string _pendingListenLink;
+
+        /// <summary>
+        /// A listen:// link (melodica-scrobble docs/LISTEN-URI.md). Elpis asks before anything plays or opens; station
+        /// links wait for the station list when Pandora is not signed in yet.
+        /// </summary>
+        public void OpenListenLink(string link)
+        {
+            _pendingListenLink = null;
+            List<KeyValuePair<string, string>> stations = null;
+            if (_player != null && _player.Stations != null && _player.Stations.Count > 0)
+                stations = _player.Stations.Select(s => new KeyValuePair<string, string>(s.ID, s.Name)).ToList();
+            var plan = Elpis.Links.ListenLinks.Plan(link, stations);
+            if (stations == null && plan.Link != null && (plan.Link.Target == "artist" || plan.Link.Target == "genre" || plan.Link.Target == "station"))
+            {
+                _pendingListenLink = link; // asked once the stations are loaded
+                return;
+            }
+            this.BeginDispatch(() => AskListenLink(plan));
+        }
+
+        private void AskListenLink(Elpis.Links.ListenLinkPlan plan)
+        {
+            if (plan.Action == Elpis.Links.ListenLinkAction.Unsupported || plan.Action == Elpis.Links.ListenLinkAction.StationMissing)
+            {
+                System.Windows.MessageBox.Show(this, plan.Message, "Elpis", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            if (System.Windows.MessageBox.Show(this, plan.Message, "Elpis", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+                return;
+            switch (plan.Action)
+            {
+                case Elpis.Links.ListenLinkAction.Browser:
+                    try { Process.Start(plan.BrowserUrl); }
+                    catch (Exception ex) { Log.O("listen:// link: could not open the browser: " + ex.Message); }
+                    break;
+                case Elpis.Links.ListenLinkAction.Station:
+                case Elpis.Links.ListenLinkAction.SeedStation:
+                    var have = plan.StationId == null ? null : _player.GetStationFromID(plan.StationId);
+                    if (have != null)
+                        _player.PlayStation(have);
+                    else if (plan.Action == Elpis.Links.ListenLinkAction.SeedStation)
+                        _player.CreateStationFromArtistName(plan.Link.Name); // StationCreated plays it
+                    break;
             }
         }
 

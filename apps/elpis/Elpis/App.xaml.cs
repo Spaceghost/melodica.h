@@ -67,7 +67,8 @@ namespace Elpis
 
             try
             {
-                p.Parse(args);
+                // A listen:// link arrives as a bare argument (Windows runs: Elpis.exe "listen://...").
+                clo.ListenLink = Elpis.Links.ListenLinks.FindLink(p.Parse(args));
             }
             catch (OptionException e)
             {
@@ -98,7 +99,7 @@ namespace Elpis
         {
             //only bring app to front if called with no arguments.  If argument was passed assume user
             //is calling exe for control purposes only and does not want the app to be brought to front
-            if (args.Count == 1)
+            if (args.Count == 1 || Elpis.Links.ListenLinks.FindLink(args) != null)
             {
                 ((Elpis.MainWindow)MainWindow).Show();
                 ((Elpis.MainWindow)MainWindow).Activate();
