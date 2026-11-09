@@ -1,5 +1,5 @@
-# dir	repo	branch	upstream-repo	upstream-branch
-melodica-web	Spaceghost/melodica-web	master	-	-
+# dir	repo	branch	upstream-repo	upstream-branch	exclude (comma-separated paths left out of the snapshot)
+melodica-web	Spaceghost/melodica-web	master	-	-	site,.github/workflows/site.yml
 pithos	Spaceghost/pithos	master	pithos/pithos	master
 elpis	Spaceghost/elpis-melodica	master	adammhaile/Elpis	master
 epimetheus	Spaceghost/epimetheus	dev	EpimetheusMusicPlayer/Epimetheus	dev
