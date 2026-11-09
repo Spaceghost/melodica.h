@@ -486,6 +486,8 @@ html.ext-popup .top-right { flex-wrap: nowrap; }
 .ext-scrobble-notice { padding: 0.8rem 1rem; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
 .ext-scrobble-notice p { margin: 0; }
 .ext-scrobble-fail { margin: 0 0 12px; padding: 0.45rem 0.8rem; border-radius: 8px; font-size: 0.9rem; color: var(--danger, #c0392b); background: color-mix(in srgb, var(--danger, #c0392b) 10%, transparent); }
+.ext-scrobble-deployed { margin: 0 0 12px; padding: 0.45rem 0.8rem; border-radius: 8px; font-size: 0.9rem; border: 1px solid color-mix(in srgb, var(--gold) 45%, transparent); background: color-mix(in srgb, var(--gold) 8%, transparent); }
+.ext-deploy-toast:empty { display: none; }
 .ext-copy-listen { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
 .ext-copy-listen button { min-height: 40px; }
 .ext-copy-done { margin: 0; font-size: 0.8rem; color: var(--muted); overflow-wrap: anywhere; }

@@ -221,6 +221,8 @@ tag Popup
 							<ScrobbleNotice scrobbling=player.scrobbling>
 						if player and player.scrobbling and player.scrobbling.failing
 							<p#scrobble-fail.ext-scrobble-fail role="status"> player.scrobbling.failing
+						if player and player.scrobbling and player.scrobbling.deployed
+							<p#scrobble-deployed.ext-scrobble-deployed role="status"> player.scrobbling.deployed
 						if user.prompt
 							<UsernamePick user=user>
 						<div.card.now.ext-compact>

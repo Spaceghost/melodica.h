@@ -61,6 +61,16 @@ jobs:
         run: node tests/scrobble.test.mjs
       - name: listen:// parser test (melodica-scrobble's reference test, unchanged)
         run: node --test tests/listen-uri.test.mjs
+      - name: Shared Scrobbles UI pin at most one release behind live (melodica-scrobble check-ui-pin)
+        # spacegho.st answers 403 to GitHub's runners for latest.json (the content-hash
+        # files themselves load). Then the check cannot run here and says so; a pin that
+        # is known to be stale (exit 1) fails the job. The release flow runs it on bak too.
+        run: |
+          if curl -fsS -A "melodica-ci" https://spacegho.st/scrobble/assets/ui/latest.json -o latest.json; then
+            node scripts/check-ui-pin.mjs vendor/scrobble-ui/scrobble-ui.js latest.json
+          else
+            echo "::warning::latest.json not reachable from this runner; the UI pin staleness check did not run"
+          fi
       - name: Design lint (no colored single side on any element)
         run: node scripts/lint-edges.mjs public/*.css
       - name: Firefox manifest lint (web-ext)

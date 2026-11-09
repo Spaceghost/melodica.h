@@ -4,7 +4,7 @@
 //   node tests/scrobble.test.mjs
 import {
   trackMetadata, genomeTraits, thresholdSeconds, playingNow, single, scrobbleBase, recentFrom, listenOf, prependListen, isSpot, RECENT_MAX,
-  enqueue, outcome, QUEUE_MAX, failureText, seedKey, seedStation, seedPick,
+  enqueue, outcome, QUEUE_MAX, failureText, deploymentText, seedKey, seedStation, seedPick,
 } from '../build/node/scrobble.js';
 
 let n = 0;
@@ -69,6 +69,9 @@ eq(seedPick(found, 'genre', 'electronica').token, 'G1', 'genre station');
 eq(seedPick(found.filter((r) => r.kind !== 'genre'), 'genre', 'Synthwave').token, 'A2', 'no genre: best artist');
 eq(seedPick([{ kind: 'song', name: 'x', token: 'S' }], 'artist', 'y').token, 'S', 'then a song');
 eq(seedPick([], 'artist', 'y'), null, 'nothing');
+eq(deploymentText({ counted: 1, units: 1.5, listens: [{ counted: true, town: { key: 'radiohead', name: 'Radiohead' } }] }), 'Your listen deployed 1.5 units to Radiohead.', 'deployment line');
+eq(deploymentText({ counted: 0, units: 0, listens: [{ counted: false, reason: 'hourly_cap' }] }), '', 'nothing counted: no line');
+eq(deploymentText(undefined), '', 'no deployment');
 eq(failureText(null, 3), '', 'no line while it works');
 eq(failureText({ status: 401, error: 'invalid_token' }, 2), 'Scrobbling failed (HTTP 401 invalid_token). 2 listens wait to be sent.', 'failure line');
 eq(failureText({ status: 0, error: '' }, 1), 'Scrobbling failed (no connection). 1 listen waits to be sent.', 'offline line');

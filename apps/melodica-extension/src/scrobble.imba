@@ -157,3 +157,12 @@ export def seedPick results, kind, name
 	const all = (Array.isArray(results) ? results : []).filter(do(r) r and r.token)
 	const best = do(list) list.find(do(r) seedKey(r.name) === want) or list.slice().sort(do(x, y) (Number(y.score) or 0) - (Number(x.score) or 0))[0]
 	best(all.filter(do(r) r.kind === kind)) or best(all.filter(do(r) r.kind === 'artist')) or all.find(do(r) r.kind === 'song') or null
+
+# The popup's line for a listen that deployed Conquest units (docs/CLIENTS.md,
+# Deployments: the single's answer carries `deployment`). Empty when nothing counted.
+export def deploymentText d
+	return '' unless d and typeof d === 'object' and Number(d.counted) > 0 and Number(d.units) > 0
+	const units = Math.round(Number(d.units) * 10) / 10
+	const l = Array.isArray(d.listens) ? d.listens.find(do(x) x and x.counted and x.town and x.town.name) : null
+	const town = l ? String(l.town.name).slice(0, 80) : ''
+	"Your listen deployed {units} {units === 1 ? 'unit' : 'units'}{town ? ' to ' + town : ''}."

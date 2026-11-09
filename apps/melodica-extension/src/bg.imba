@@ -18,7 +18,7 @@ import { Pandora, PandoraError, QUALITIES } from './pandora.imba'
 import { browser, loadSettings, normalizeEndpoint, fromBase64, toBase64, SETTINGS_DEFAULTS } from './shared.imba'
 import { seal, unseal, wipe, vaultAvailable, sealAs, unsealAs, wipeAs } from './vault.imba'
 import { parseListenUri } from './listen-uri.js'
-import { SCROBBLE_NOTICE, LEADERBOARD_URL, MELODICA_PAGES, recentFrom, listenOf, prependListen, isSpot, trackMetadata, thresholdSeconds, playingNow, single, enqueue, outcome, genomeTraits, failureText, SEED_KINDS, seedStation, seedPick } from './scrobble.imba'
+import { SCROBBLE_NOTICE, LEADERBOARD_URL, MELODICA_PAGES, recentFrom, listenOf, prependListen, isSpot, trackMetadata, thresholdSeconds, playingNow, single, enqueue, outcome, genomeTraits, failureText, deploymentText, SEED_KINDS, seedStation, seedPick } from './scrobble.imba'
 import { normalizeAccountBase, randomString, pkceChallenge, authorizeUrl, parseRedirect, tokenForm, storedTokens, accessFresh, policyFrom, spotsFlag, accountLabel, jwtClaims, CLIENT_ID, TAB_CLIENT_ID, TAB_REDIRECT, POLICY_DEFAULT } from './account.imba'
 import { feedUrl, latestVersion, bannerState, compareVersions, STORE_URL } from './update.imba'
 import { Engine, dropAudioCopies } from './engine.imba'
@@ -678,13 +678,13 @@ def denyAccess
 
 const SCROBBLE_MAX_AGE = 60 * 60 * 1000
 const SCROBBLE_RETRY = 60 * 1000
-let scrobble = {on: null, checkedAt: 0, noticeSeen: null, play: null, lastFlush: 0, fail: null, waiting: 0}
+let scrobble = {on: null, checkedAt: 0, noticeSeen: null, play: null, lastFlush: 0, fail: null, waiting: 0, deployed: '', deployedAt: 0}
 const SCROBBLE_OFF_RECHECK = 5 * 60 * 1000
 const GENOME_WAIT = 4000
 
 def scrobbleView
 	const loggedIn = !!(state and state.client.loggedIn)
-	{on: scrobble.on !== no, notice: loggedIn and scrobble.on !== no and scrobble.noticeSeen === no ? SCROBBLE_NOTICE : '', failing: loggedIn and scrobble.on !== no ? failureText(scrobble.fail, scrobble.waiting) : '', leaderboard: LEADERBOARD_URL, history: MELODICA_PAGES.listens}
+	{on: scrobble.on !== no, notice: loggedIn and scrobble.on !== no and scrobble.noticeSeen === no ? SCROBBLE_NOTICE : '', failing: loggedIn and scrobble.on !== no ? failureText(scrobble.fail, scrobble.waiting) : '', deployed: loggedIn and scrobble.deployed and Date.now() - scrobble.deployedAt < 10 * 60 * 1000 ? scrobble.deployed : '', leaderboard: LEADERBOARD_URL, history: MELODICA_PAGES.listens}
 
 def noticeSeen
 	if scrobble.noticeSeen === null
@@ -716,6 +716,12 @@ def postListen body
 	const error = r.body and typeof r.body.error === 'string' ? r.body.error.slice(0, 40) : ''
 	note("scrobble {body.listen_type}: HTTP {r.status}{error ? ' ' + error : ''} -> {res}")
 	failed(res === 'ok' or res === 'off' ? null : {status: r.status, error, at: Date.now()})
+	if res === 'ok' and body.listen_type === 'single'
+		const text = deploymentText(r.body and r.body.deployment)
+		if text
+			scrobble.deployed = text
+			scrobble.deployedAt = Date.now()
+			playerChanged(player)
 	res
 
 # The popup shows the last failure and the queue length until a submission goes.

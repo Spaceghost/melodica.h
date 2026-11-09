@@ -71,6 +71,7 @@ tag Player
 			if stations.length === 0 and loggedIn
 				await reload()
 			loadCrew() if loggedIn
+			mountToast() if loggedIn
 		catch e
 			if e.kind === 'auth'
 				loggedIn = no
@@ -82,6 +83,26 @@ tag Player
 		try
 			crew = !!(await send({type: 'scrobble-recent'})).recent.crew
 			imba.commit()
+		catch e
+			null
+
+	# The map's "Play in melodica" (melodica-scrobble docs/CLIENTS.md, onPlay): a track
+	# seeds its artist; the station plays in this extension.
+	def playFromMap play
+		const kind = play and play.kind === 'genre' ? 'genre' : 'artist'
+		const name = String(play and (play.kind === 'track' ? play.artist_name : play.name) or '').trim()
+		throw new Error('Nothing to play.') unless name
+		const r = await send({type: 'play-seed', kind, name})
+		{station: {name: r.station and r.station.name or name}}
+
+	# Conquest deployments: the shared UI's toast for each listen that deployed units
+	# (the owner's live `deploy` and `retreat` events), above the player.
+	def mountToast
+		return if self.toastView
+		try
+			const ui = await scrobbleUi()
+			const host = self.querySelector('#deploy-toast')
+			self.toastView = ui.mod.mountDeployToast(host, {live: ui.live}) if host and ui.mod.mountDeployToast
 		catch e
 			null
 
@@ -104,11 +125,11 @@ tag Player
 				imba.commit())
 			const opts = {client: ui.client, live: ui.live}
 			if name === 'listens'
-				self.views[name] = ui.mod.mountListens(host, Object.assign({pageSize: 25}, opts))
+				self.views[name] = ui.mod.mountListens(host, Object.assign({pageSize: 25, mapHref: 'https://spacegho.st/melodica/map/'}, opts))
 			elif name === 'leaderboard'
 				self.views[name] = ui.mod.mountLeaderboard(host, Object.assign({window: '7d'}, opts))
 			elif name === 'map'
-				self.views[name] = ui.mod.mountMap(host, Object.assign({onStation: do(station)
+				self.views[name] = ui.mod.mountMap(host, Object.assign({onPlay: (do(play) playFromMap(play)), onStation: do(station)
 					const r = await send({type: 'terrain-station', station})
 					throw new Error(r and r.error or 'Pandora did not answer.') unless r and r.ok
 					r.station}, opts))
@@ -120,6 +141,7 @@ tag Player
 		browser.runtime.onMessage.removeListener(self.listener)
 		for own k, v of (self.views or {})
 			v.unmount()
+		self.toastView.unmount() if self.toastView
 		sui.live.close() if sui
 		clearInterval(self.pollTimer) if self.pollTimer
 
@@ -312,6 +334,7 @@ tag Player
 									<ScrobbleNotice scrobbling=player.scrobbling>
 								if player and player.scrobbling and player.scrobbling.failing
 									<p#scrobble-fail.ext-scrobble-fail role="status"> player.scrobbling.failing
+								<div#deploy-toast.ext-deploy-toast>
 								if listenLink
 									<ListenPrompt link=listenLink @done=(listenLink = null)>
 								if user.prompt

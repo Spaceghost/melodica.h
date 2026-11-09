@@ -1184,7 +1184,9 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     expect(blockedOurs, 'the browser blocked a request of the extension, the tuner or the page').toEqual([]);
 
     expect(evidence.errors, 'uncaught page errors').toEqual([]);
-    const consoleErrors = evidence.console.filter((l) => /:error\]/.test(l) && !/relay|HTTP 4|melodica\/api/.test(l));
+    // The fake account server has no live WebSocket: the shared UI's live channel (opened
+    // by the player tab's deployment toast) falls back to polling after Chrome logs the 404.
+    const consoleErrors = evidence.console.filter((l) => /:error\]/.test(l) && !/relay|HTTP 4|melodica\/api/.test(l) && !/WebSocket connection to 'wss:\/\/spacegho\.st\/scrobble\/api\/live' failed/.test(l));
     expect(consoleErrors, 'console errors (extension pages)').toEqual(consoleErrors.filter((l) => l.startsWith('[web:')));
 
     report.ok = true;
@@ -1483,16 +1485,23 @@ test('live: scrobbles reach spacegho.st', async () => {
   const st = await opts.evaluate(() => chrome.runtime.sendMessage({ type: 'stations' }));
   const station = (st.stations || [])[0];
   expect(station, 'a station').toBeTruthy();
+  // Low quality is the ADTS .aac the runner script lengthened to 70 s (an .m4a cannot be
+  // joined without a muxer), so a single comes due at 35 s.
+  await opts.evaluate(() => chrome.runtime.sendMessage({ type: 'player', action: 'quality', value: 'low' })).catch(() => null);
   const playAt = Date.now();
   await opts.evaluate((s) => chrome.runtime.sendMessage({ type: 'player', action: 'play', station: { token: s.token, name: s.name } }), station);
   await opts.close();
   const sw = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
-  const bg = () => sw.evaluate(() => chrome.runtime.sendMessage({ type: 'player-get' }).then((r) => r.state));
+  const bg = () => sw.evaluate(async () => (await chrome.storage.session.get('player')).player || {});
+  // Commands go from a short-lived extension page (a worker does not hear its own messages).
+  const command = async (action) => { const p = await context.newPage(); await p.goto(`chrome-extension://${id}/options.html`); const r = await p.evaluate((a) => chrome.runtime.sendMessage({ type: 'player', action: a }), action); await p.close(); return r; };
   // 1-2: playing in the background with no extension page open.
   await expect.poll(async () => (await bg()).status, { timeout: 30_000 }).toBe('playing');
   const first = (await bg()).track;
-  live.background = { title: first.title, pages: (await sw.evaluate(async () => (await chrome.tabs.query({})).map((t) => t.url).filter((u) => u.startsWith('chrome-extension://')))).length };
-  // 3: playing_now stored live within 5 s.
+  live.background = { title: first.title, pages: (await sw.evaluate(async () => (await chrome.tabs.query({})).map((t) => t.url || '').filter((u) => u.startsWith('chrome-extension://')))).length };
+  // 3: playing_now posted (the forwarder sees it), then stored live; an older now
+  // playing of the same title (an earlier run) does not count.
+  await expect.poll(() => liveCalls.some((c) => c.method === 'POST' && c.at >= playAt && c.sent?.listen_type === 'playing_now'), { timeout: 15_000 }).toBe(true);
   let np = null;
   for (let i = 0; i < 60 && !np; i++) {
     const me = await liveGet('/scrobble/api/me');
@@ -1500,13 +1509,18 @@ test('live: scrobbles reach spacegho.st', async () => {
     else await new Promise((ok) => setTimeout(ok, 500));
   }
   live.nowPlaying = { ms: np ? Date.now() - playAt : null, fields: np ? Object.keys(np) : [], art: np ? !!(np.art || np.art_cached) : false };
+  if (!np) {
+    console.log(`live calls: ${JSON.stringify(liveCalls.map(({ sent, ...c }) => ({ ...c, kind: sent && sent.listen_type })))}`);
+    console.log(`live me: ${JSON.stringify((await liveGet('/scrobble/api/me')).body?.now_playing || null)}`);
+    console.log(`worker log: ${JSON.stringify(((await sw.evaluate(async () => (await chrome.storage.session.get('log')).log || [])) || []).slice(-25))}`);
+  }
   expect(np, 'now playing on spacegho.st').toBeTruthy();
-  const sentNp = liveCalls.find((c) => c.method === 'POST' && c.sent?.listen_type === 'playing_now');
+  const sentNp = liveCalls.find((c) => c.method === 'POST' && c.at >= playAt && c.sent?.listen_type === 'playing_now');
   live.nowPlaying.postedMs = sentNp ? sentNp.at - playAt : null;
   live.nowPlaying.sentInfo = sentNp ? Object.keys(sentNp.sent.payload[0].track_metadata.additional_info || {}) : [];
   expect(sentNp && sentNp.at - playAt, 'playing_now posted within 5 s of play').toBeLessThan(5000);
   // 5: thumbs up and down reach Pandora (the tuner): the state shows the rating.
-  await sw.evaluate(() => chrome.runtime.sendMessage({ type: 'player', action: 'love' }));
+  await command('love');
   await expect.poll(async () => (await bg()).track?.rating, { timeout: 10_000 }).toBe(1);
   live.thumbs = { up: true };
   // 4: a single once half the song has played (needs a fixture song over 30 s).
@@ -1523,7 +1537,7 @@ test('live: scrobbles reach spacegho.st', async () => {
     live.listen = row ? { title: row.title, art: !!(row.art || row.art_cached), station: row.station || null } : null;
     expect(row, 'the listen is in me/listens').toBeTruthy();
   }
-  await sw.evaluate(() => chrome.runtime.sendMessage({ type: 'player', action: 'ban' })).catch(() => null);
+  await command('ban').catch(() => null);
   live.thumbs.down = true;
   live.ok = true;
   console.log(`live: ${JSON.stringify({ ...live, calls: liveCalls.map(({ sent, ...c }) => c) })}`);

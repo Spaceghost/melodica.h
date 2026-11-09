@@ -6,42 +6,36 @@ Updated 2026-11-09 for 0.8.5. Rewrite this after every release.
 
 | Version | Commit | What |
 | --- | --- | --- |
-| 0.8.5 | 288c0eb | Scrobbles: only 403 `scrobbling_off` turns scrobbling off. The queue is kept, flushed at start and every 60 s. The popup shows a failure line. `play-seed`/`seed` bridge command. Listens carry station_name and submission_client_version. No single-side accents, linted by scripts/lint-edges.mjs. |
-| 0.8.4 | 9c4f9dc | Resume of the last song on this device (sealed record, audio copy). Sign in with GitHub. Album art as Pandora gives it. |
-| 0.8.3 | 4ff3106 | Thumbs to Conquest (crew), genome traits on listens, terrain stations. |
+| 0.8.7 | 5b22d59 | Shared Scrobbles UI pinned by content hash 5d0e0d0e496df10f, with a staleness check in CI. latest.json gets 403 from GitHub runners, and the check then warns. Map "Play in melodica" goes through play-seed. Deployment toast in the player tab and a deployment line in the popup. |
+| 0.8.6 | 8ffb7c8 | listen:// links: player-tab prompt (never autoplays), omnibox `listen`, Firefox web+listen, iOS listen://, "Copy listen link". `queue` (Up next) in the bridge state and the player tab. |
+| 0.8.5 | 288c0eb | Only 403 scrobbling_off turns scrobbling off. The queue is kept and flushed. The popup shows a failure line. play-seed. station_name and submission_client_version on listens. No single-side accents. |
+| 0.8.4 | 9c4f9dc | Resume on this device, Sign in with GitHub, album art as Pandora gives it. |
 
-Each release has 55 assets. The extensions feeds (spacegho.st/extensions) and the melodica site carry it, and melodica.h has the snapshot (apps/pull.sh).
+Each release has 55 assets. The extensions feeds and the melodica site carry it, and melodica.h has the snapshot.
 
-## In progress: 0.8.6 on branch `wip/0.8.6`
+## Live e2e (tests/live-e2e.sh, Chromium on bak, 2026-11-09)
 
-- listen:// links (melodica-scrobble docs/LISTEN-URI.md, parser in src/listen-uri.js):
-  - player.html?listen= prompt (never autoplays);
-  - content script on spacegho.st/listen/*;
-  - omnibox keyword `listen`;
-  - Firefox `web+listen` protocol_handlers (scripts/build.mjs);
-  - iOS `listen://` (Info.plist, SceneDelegate);
-  - "Copy listen link" in the popup and player tab.
-- `queue` (Up next) in the bridge state and the player tab.
-- A live e2e test: `test('live: …')` in tests/smoke-extension.spec.mjs, run by tests/live-e2e.sh.
-  - It forwards /scrobble/ to the real spacegho.st with a throwaway token.
-  - The token file lives outside the repo and never goes in the repo.
+Run with Pandora replaced by melodica-tuner, /oauth/ faked, and /scrobble/ going to the real spacegho.st as the throwaway account u_e2eext00001 (bearer from the scrobble agent's access_token).
 
-Next steps:
-1. Run the smoke on bak:
-   `GH=/home/linuxbrew/.linuxbrew/bin/gh scripts/remote-sync.sh 'export PATH=$HOME/.local/bin:/usr/local/bin:$PATH; npm run build; xvfb-run -a npx playwright test'`
-2. Merge to master and wait for CI to go green on the full SHA.
-3. Tag `v0.8.6` and wait for ci and ios (55 assets).
-4. Sync extensions-site and the melodica site (melodica-web `site/scripts/sync.mjs melodica-extension`).
-5. Run apps/pull.sh.
-6. Tell the web agent that `queue` is live.
+Proven:
+- background playback with 0 extension pages;
+- playing_now posted 0.5 to 1.1 s after play, with art_url, station_name and the client version;
+- now playing on spacegho.st within 0.9 to 2.9 s, with art and art_cached;
+- thumbs up and down.
 
-## Queue after 0.8.6
+Not proven live:
+- a single at half the track: the tuner's songs stayed 10 s; the single logic is unit-tested;
+- Brave and Firefox live;
+- real GitHub sign-in;
+- crew views.
 
-1. Live e2e in Chrome, Brave and Firefox. The test account `u_e2eext00001` is owned by the scrobble agent: ask it to delete the account afterwards, and do not delete it yourself.
-   - The live login cannot pass access without Jack adding an allow-list entry, so the test fakes /oauth/ and keeps /scrobble/ live.
-   - Crew views, real GitHub sign-in and Firefox audio on bak are not provable there.
-2. Pending contracts, not yet in melodica-scrobble docs/CLIENTS.md: the deployment chip/toast/popup line, and the shared ui `cover()` in the popup and player.
-3. The history rewrite (ad scrub) was already done on 2026-11-08. Bundles are on bak:~/history-rewrite-2026-11-08/. Nothing remains.
+The CI smokes (fake spacegho.st) cover detection, remote control, resume after a worker kill, and the feeds.
+
+When finished, tell the scrobble agent so it erases u_e2eext00001. Do not erase it yourself.
+
+## Queue
+
+1. The pending contract is `defineElements` (optional). The mountX functions still work.
 
 ## Rules
 
