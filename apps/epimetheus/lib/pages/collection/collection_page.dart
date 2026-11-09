@@ -1,3 +1,4 @@
+import 'package:epimetheus/listen/listen_links.dart';
 import 'package:epimetheus/pages/collection/albums_tab.dart';
 import 'package:epimetheus/pages/collection/artists_tab.dart';
 import 'package:epimetheus/pages/collection/playlists_tab.dart';
@@ -41,10 +42,21 @@ class _CollectionPageState extends State<CollectionPage> with SingleTickerProvid
       });
 
     _fabData = CollectionPageFAB._fabs[_tabController.index];
+
+    // listen:// links wait here until the user is signed in and the collection is shown.
+    ListenLinks.instance.pending.addListener(_onListenLink);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onListenLink());
+  }
+
+  void _onListenLink() {
+    if (!mounted) return;
+    final link = ListenLinks.instance.take();
+    if (link != null) handleListenLink(context, link);
   }
 
   @override
   void dispose() {
+    ListenLinks.instance.pending.removeListener(_onListenLink);
     _tabController.dispose();
     super.dispose();
   }

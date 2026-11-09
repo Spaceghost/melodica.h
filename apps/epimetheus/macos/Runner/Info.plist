@@ -28,5 +28,16 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>st.spacegho.listen</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>listen</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

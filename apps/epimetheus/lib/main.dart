@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:audio_service/audio_service.dart';
+import 'package:epimetheus/listen/listen_links.dart';
 import 'package:epimetheus/models/collection/collection_model.dart';
 import 'package:epimetheus/melodica_native.dart';
 import 'package:epimetheus/models/color/color_model.dart';
@@ -19,6 +20,7 @@ import 'package:window_size/window_size.dart';
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   MelodicaNative.initialize();
+  ListenLinks.instance.init();
 
   // TODO save and restore the path after login
   if (kIsWeb) window.history.pushState(null, '', '/');

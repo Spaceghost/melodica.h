@@ -43,6 +43,8 @@ dependencies:
       ref: 8ea9f1ce79f04e44bd6392f4155a014b0a7eb6e8
       path: plugins/window_size
   universal_html: ^1.2.3
+  unorm_dart: 0.1.2 # NFC for listen:// names (lib/listen/listen_uri.dart)
+  uni_links: 0.4.0 # listen:// links on Android and iOS (lib/listen/listen_links.dart)
 
 dev_dependencies:
   flutter_test:

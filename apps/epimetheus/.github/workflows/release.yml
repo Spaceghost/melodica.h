@@ -85,6 +85,23 @@ jobs:
       - run: flutter pub get
       - name: Scrobbler tests (plain Dart, fake ListenBrainz server)
         run: PATH="$(dirname "$(command -v flutter)")/cache/dart-sdk/bin:$PATH" sh tool/scrobble_test.sh
+      - name: listen:// parser tests (the reference cases)
+        run: PATH="$(dirname "$(command -v flutter)")/cache/dart-sdk/bin:$PATH" sh tool/listen_uri_test.sh
+      # services.gradle.org redirects to GitHub releases, which answered 504 for
+      # gradle-6.3 on 2026-11-09. Fetch the zip (GitHub first, then a mirror),
+      # check it against gradle.org's published sha256, and point the wrapper at it.
+      - name: Gradle 6.3 distribution (checked against gradle.org's sha256)
+        run: |
+          url=$(sed -n 's/^distributionUrl=//p' android/gradle/wrapper/gradle-wrapper.properties | sed 's/\\//g')
+          name=${url##*/}
+          want=$(curl -fsSL --retry 5 "$url.sha256")
+          for src in "$url" "https://mirrors.cloud.tencent.com/gradle/$name"; do
+            curl -fsSL --retry 3 -o "$RUNNER_TEMP/$name" "$src" && echo "$want  $RUNNER_TEMP/$name" | sha256sum -c - && break
+            rm -f "$RUNNER_TEMP/$name"
+          done
+          test -f "$RUNNER_TEMP/$name"
+          sed -i "s|^distributionUrl=.*|distributionUrl=file\\://$RUNNER_TEMP/$name|" android/gradle/wrapper/gradle-wrapper.properties
+          cat android/gradle/wrapper/gradle-wrapper.properties
       - run: flutter build apk --release -v
       - name: Collect APK
         run: |
