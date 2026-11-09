@@ -22,7 +22,7 @@ function validRoomCommand(body) {
     join: [], heartbeat: [], close: [], leave: [], 'claim-source': [],
     react: ['play_id', 'reaction'], skip: ['play_id'], end: ['play_id'],
     pause: ['play_id'], resume: ['play_id'],
-    'request-dj': [], 'vote-dj': ['account', 'approve', 'override'],
+    'request-dj': [], 'leave-dj': [], 'vote-dj': ['account', 'approve', 'override'],
     scrobble: ['enabled'], 'scrobble-past': ['play_id', 'heard'],
     settings: ['kind', 'mode', 'spots', 'skip_fraction'], invite: ['username'],
     heard: ['play_id', 'listened_ms'], clock: ['play_id', 'position_ms'],
@@ -122,6 +122,9 @@ export class RoomEngine extends EventTarget {
       if (paused) await this.session.pause();
       return this.waitForInitialState();
     }
+    if (this.id && this.session?.getState?.()?.play && this.isDj()) {
+      throw new Error('Leave your DJ room before joining another room.');
+    }
     await this.leave({ leave: false });
     this.turnGeneration++;
     const media = await this.loadMedia();
@@ -151,6 +154,7 @@ export class RoomEngine extends EventTarget {
     this.connection = connection;
     this.audio = audio;
     this.session = session;
+    session.setVolume?.(Number.isFinite(this.engine.snapshot.volume) ? this.engine.snapshot.volume : 80);
     const sendState = () => this.publish();
     const sendAudio = () => this.publish();
     const sendClock = (event) => this.publishClock(event.detail || {});
@@ -216,7 +220,9 @@ export class RoomEngine extends EventTarget {
     const needsSource = !this.engine.snapshot.station;
     if (!needsSource) await this.engine.skip();
     while (Date.now() < deadline) {
-      if (generation !== this.turnGeneration || !this.session) throw new Error('The DJ turn ended before its audio started.');
+      if (generation !== this.turnGeneration || !this.session || !this.isDj()) {
+        throw Object.assign(new Error('The DJ turn ended before its audio started.'), { code: 'dj_turn_ended' });
+      }
       const state = this.engine.snapshot, token = state.track?.trackToken;
       const sourceReady = needsSource ? !!state.station : (token && (token !== before || state.changedAt > changedBefore));
       if (sourceReady && token && state.status === 'playing' && !this.engine.audio.paused) {

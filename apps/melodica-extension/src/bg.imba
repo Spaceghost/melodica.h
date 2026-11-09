@@ -1421,7 +1421,9 @@ def publicRoomAudio value
 
 def roomIsDj
 	const mine = room.state and room.state.you
-	!!(room.id and mine and (room.state.play ? room.state.play.dj === mine and room.state.you_broadcasting !== false : room.state.current_dj === mine and room.state.you_broadcasting !== false))
+	return no unless room.id and mine and room.state.you_broadcasting !== no
+	const dj = room.state.play ? room.state.play.dj : room.state.current_dj
+	dj === mine
 
 def roomBroadcastActive
 	const mine = room.state and room.state.you
@@ -1507,7 +1509,8 @@ def restoreRoomSession
 
 def playerView
 	const view = Object.assign({}, player, {last: lastView(), stations: state and state.saved.stations or [], loggedIn: !!(state and state.client.loggedIn), account: {signedIn: account.signedIn, label: account.label}, user: userView(), scrobbling: scrobbleView(), access: {allowed: !!access.allowed, message: access.allowed ? '' : String(access.message or '')}, room: roomView()})
-	if room.id and room.state and room.state.play
+	view.volume = room.audio.volume if room.id and room.audio and Number.isFinite(room.audio.volume)
+	if room.id and room.state and (room.state.play or !roomIsDj())
 		const play = room.state and room.state.play
 		const meta = play and play.track_metadata
 		const durationMs = Number(meta and meta.additional_info and meta.additional_info.duration_ms) or Number(play and play.duration_ms) or 0
@@ -1517,7 +1520,7 @@ def playerView
 		const paused = !!(play and play.paused_at) or !!(room.audio and room.audio.paused)
 		const audible = ['listening', 'broadcasting'].includes(String(room.audio and room.audio.state or '')) and !paused
 		const track = meta ? {title: meta.track_name or '', artist: meta.artist_name or '', album: meta.release_name or '', coverArt: meta.additional_info and meta.additional_info.art_url or '', duration: durationMs / 1000, kind: 'room'} : null
-		Object.assign(view, {status: audible ? 'playing' : (paused ? 'paused' : (room.audio and room.audio.state === 'connecting' ? 'loading' : 'idle')), station: {name: "Room · {room.state and room.state.name or 'Listening room'}", token: ''}, track, position: Math.max(0, Math.min(durationMs / 1000, position)), duration: durationMs / 1000, volume: Number(room.audio and room.audio.volume) or player.volume, queueLength: 0, queue: [], error: room.audio and room.audio.message or '', last: null, stations: []})
+		Object.assign(view, {status: audible ? 'playing' : (paused ? 'paused' : (room.audio and room.audio.state === 'connecting' ? 'loading' : 'idle')), station: {name: "Room · {room.state and room.state.name or 'Listening room'}", token: ''}, track, position: Math.max(0, Math.min(durationMs / 1000, position)), duration: durationMs / 1000, volume: room.audio and Number.isFinite(room.audio.volume) ? room.audio.volume : player.volume, queueLength: 0, queue: [], error: room.audio and room.audio.message or '', last: null, stations: []})
 	view
 
 # Save the engine's "last playing" record (at most every 2 s; pause, stop and
@@ -1912,6 +1915,7 @@ def roomOffscreen sender
 	!!(sender and sender.id === browser.runtime.id and (sender.url === browser.runtime.getURL('offscreen.html') or (TAB_ENGINE and sender.url === PLAYER_URL)))
 
 def joinRoom roomId, paused = no
+	throw new PandoraError('Leave your DJ room before joining another room.', null, 0, 'room') if room.id and room.id !== roomId and roomBroadcastActive()
 	throw new PandoraError('Rooms require a signed-in spacegho.st account.', null, 0, 'auth') unless account.signedIn
 	const token = await accountBearer()
 	throw new PandoraError('Sign in to spacegho.st before joining a room.', null, 0, 'auth') unless token

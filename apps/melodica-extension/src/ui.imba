@@ -144,6 +144,7 @@ export tag StationList
 export tag NowPlaying
 	prop now = null
 	prop compact = no
+	prop idleTitle = 'Pick a station'
 
 	def render
 		const song = now and now.song
@@ -153,7 +154,7 @@ export tag NowPlaying
 				<img.cover#np-cover src=(song and song.coverArt or FALLBACK_COVER) alt=(song and song.album ? "Cover of {song.album}" : '')>
 			<div.meta>
 				<p.eyebrow.station-name#np-station> (song and !song.ad and now.station ? "on {now.station.name}" : '')
-				<h2.title#np-title> (song ? song.title : "Pick a station")
+				<h2.title#np-title> (song ? song.title : idleTitle)
 				<p.artist#np-artist> (song ? song.artist : '')
 				if !compact
 					<p.album#np-album> (song and song.album or '')

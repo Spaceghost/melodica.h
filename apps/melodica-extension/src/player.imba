@@ -482,7 +482,7 @@ tag Player
 									<Transport now=now @control=control(e.detail)>
 									<label.deck-item for="room-volume">
 										<span.sr> "Room volume"
-										<input#room-volume type="range" min="0" max="100" value=(player and player.volume or 80) aria-label="Room volume" @change=setVolume(e.target.value)>
+										<input#room-volume type="range" min="0" max="100" value=(player and Number.isFinite(player.volume) ? player.volume : 80) aria-label="Room volume" @change=setVolume(e.target.value)>
 							<p.fine> (currentRoom() and currentRoom().locked ? 'Your DJ broadcast is active. Leave the room to change private stations or quality.' : (currentRoom() and currentRoom().role === 'dj' ? 'Your DJ turn is ready. Choose a Pandora station from the Player tab to start broadcasting.' : 'You are listening to the room. Leave before starting private playback.'))
 							<div#panel-room-content>
 						<div.ext-desk hidden=(panel !== 'player')>
@@ -510,7 +510,7 @@ tag Player
 												<path d="M15.5 8.5a5 5 0 0 1 0 7">
 												<path d="M19 5.5a9 9 0 0 1 0 13">
 											<span.sr> "Volume"
-											<input#volume type="range" min="0" max="100" value=(player and player.volume or 80) aria-label="Volume" @change=setVolume(e.target.value)>
+											<input#volume type="range" min="0" max="100" value=(player and Number.isFinite(player.volume) ? player.volume : 80) aria-label="Volume" @change=setVolume(e.target.value)>
 										<label.deck-item for="quality">
 											<span> "Quality"
 											<select#quality value=(player and player.quality or 'high') aria-label="Audio quality" @change=setQuality(e.target.value)>

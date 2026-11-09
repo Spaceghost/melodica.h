@@ -26,6 +26,9 @@ tag Popup
 	prop roomSearchBusy = no
 	prop roomSearchError = ''
 	prop roomSearchGeneration = 0
+	prop roomCursor = null
+	prop roomSearchQuery = ''
+	prop roomBusy = ''
 
 	def mount
 		self.notice = do(msg, sender, sendResponse) onNotice(msg, sender, sendResponse)
@@ -67,10 +70,12 @@ tag Popup
 			recent = msg.recent
 			imba.commit()
 		if msg.type === 'account'
+			const wasSignedIn = account and account.signedIn
 			account = msg.account
 			if account and account.signedIn
-				loadRooms()
+				loadRooms() unless wasSignedIn
 			else
+				roomSearchGeneration++
 				recentRooms = []
 				foundRooms = []
 			imba.commit()
@@ -98,16 +103,22 @@ tag Popup
 		catch e
 			null
 
-	def loadRooms
+	def loadRooms more = no
+		return if more and (roomSearchBusy or !roomCursor)
+		const query = roomQuery.trim()
+		return loadRooms() if more and query !== roomSearchQuery
 		const generation = ++roomSearchGeneration
 		roomSearchBusy = yes
 		roomSearchError = ''
 		try
 			const ids = (await send({type: 'room-recent'})).recentRoomIds or []
-			const result = await send({type: 'room-search', query: roomQuery.trim(), cursor: null, recentIds: ids})
+			const result = await send({type: 'room-search', query, cursor: more ? roomCursor : null, recentIds: ids})
 			return unless generation === roomSearchGeneration
-			recentRooms = result.recent or []
-			foundRooms = result.rooms or []
+			recentRooms = result.recent or [] unless more
+			const next = result.rooms or []
+			foundRooms = more ? Array.from(new Map(foundRooms.concat(next).map(do(r) [r.id, r])).values()) : next
+			roomCursor = result.next_cursor or null
+			roomSearchQuery = query
 			imba.commit()
 		catch e
 			return unless generation === roomSearchGeneration
@@ -233,17 +244,46 @@ tag Popup
 		loadRooms()
 
 	def joinRoom id
+		return if roomBusy
+		return toast('Stop DJing or leave your current room before joining another.', 'error') if player and player.room and player.room.locked
+		roomBusy = id
+		message = ''
 		try
 			await send({type: 'room-join', roomId: id})
 			player = (await send({type: 'player-get'})).state
 			loadRooms()
 		catch e
 			toast(String(e.message or e), 'error')
+		finally
+			roomBusy = ''
 
 	def leaveRoom
+		return if roomBusy
+		roomBusy = 'leave'
+		message = ''
 		try
 			await send({type: 'room-leave', roomId: player.room.id})
 			player = (await send({type: 'player-get'})).state
+		catch e
+			toast(String(e.message or e), 'error')
+		finally
+			roomBusy = ''
+
+	def djCommand action
+		return if roomBusy
+		roomBusy = 'dj'
+		message = ''
+		try
+			await send({type: 'room-command', roomId: player.room.id, command: {action}})
+			player = (await send({type: 'player-get'})).state
+		catch e
+			toast(String(e.message or e), 'error')
+		finally
+			roomBusy = ''
+
+	def roomAudio action, value = null
+		try
+			player = (await send({type: 'room-audio-command', roomId: player.room.id, action, value})).state
 		catch e
 			toast(String(e.message or e), 'error')
 
@@ -279,6 +319,7 @@ tag Popup
 
 	get statusText
 		return '' unless player
+		return roomStatus if player.room and player.room.id
 		switch player.status
 			when 'playing' then "Playing in the background"
 			when 'paused' then "Paused"
@@ -286,7 +327,20 @@ tag Popup
 			when 'error' then player.error
 			else "Pick a station"
 
+	get roomStatus
+		const room = player and player.room
+		return '' unless room and room.id
+		return 'This room is closed.' if room.state and room.state.closed_at
+		return room.role === 'dj' ? 'Choose a station to start your DJ turn.' : 'Waiting for the next DJ.' unless room.state and room.state.play
+		return 'Room playback is paused.' if room.audio and room.audio.paused
+		const labels = {broadcasting: 'Your DJ broadcast is active.', listening: 'Listening together.', connecting: 'Connecting room audio…', blocked: 'Tap Play to hear the room.', error: 'Room audio needs to reconnect.', unavailable: 'Room audio is unavailable on this device.'}
+		labels[room.audio and room.audio.state] or 'Connecting room audio…'
+
 	def render
+		const activeRoom = player and player.room and player.room.id ? player.room : null
+		const roomState = activeRoom and activeRoom.state
+		const listedDj = !!(roomState and (roomState.djs or []).includes(roomState.you))
+		const inDjLine = !!(roomState and ((roomState.waiting or []).includes(roomState.you) or (roomState.requests or []).some(do(r) r.account === roomState.you)))
 		<self.ext-root>
 			<Top label="extension">
 				<nav.ext-nav>
@@ -296,49 +350,63 @@ tag Popup
 			<main#app.app data-view=view data-status=(player and player.status or '')>
 				<div.view>
 					<UpdateBanner update=update @reload=reloadExtension>
-					if account and account.signedIn
-						if player and player.room and player.room.id
-							<section#current-room.card.now.ext-compact>
-								<p.eyebrow> "CURRENT ROOM"
-								if !loggedIn
-									<NowPlaying now=now compact=yes>
-									<Transport now=now @control=control>
-								<h3> (player.room.state and player.room.state.name or 'Shared room')
-								<p.fine> "{player.room.role === 'dj' ? (player.room.locked ? 'DJ broadcast active' : 'DJ turn ready') : 'Listening'} · {player.room.audio and player.room.audio.state or 'connecting'}"
-								<button#current-room-open.quiet type="button" @click=openRoom(player.room.id)> "View room"
-								<button#current-room-leave.quiet type="button" @click=leaveRoom> "Leave room"
-						<section#room-discovery.card>
-							<h3> "Rooms"
-							<form @submit=searchRooms>
-								<label for="room-search"> "Find a room"
-								<input#room-search type="search" bind=roomQuery maxlength=80 placeholder="Search rooms">
-								<button.quiet type="submit" disabled=roomSearchBusy> (roomSearchBusy ? 'Searching…' : 'Search')
-							if recentRooms.length
-								<h4> "Recently joined"
-								for r in recentRooms
-									if !player or !player.room or r.id !== player.room.id
-										<button.room-recent-open.quiet type="button" @click=joinRoom(r.id)> "{r.name} · {r.listeners} listeners · Join"
-							for r in foundRooms
-								if !player or !player.room or r.id !== player.room.id
-									<button.room-search-join.quiet type="button" @click=joinRoom(r.id)> "{r.name} · {r.listeners} listeners · Join"
-							if !roomSearchBusy and !recentRooms.length and !foundRooms.length and !roomSearchError
-								<p.fine> "No rooms found. Open Rooms to create one."
-							<p.message.error role="status"> roomSearchError
 					if view === 'loading'
 						<p.message#status> "Loading…"
 					elif view === 'error'
 						<div.card>
 							<h2> "melodica could not start"
 							<p.message.error#status role="alert"> message
-					elif view === 'login'
-						if !player or !player.room or !player.room.id
-							<Login busy=busy message=message kind=kind @login=login @github=accountAction('account-signin')>
-						else
-							<p.message.error role="status"> message
+					elif view === 'login' and !activeRoom
+						<Login busy=busy message=message kind=kind @login=login @github=accountAction('account-signin')>
 					else
-						<div.ext-account>
-							<span#signed-in> (user.username or "Signed in")
-							<button#logout type="button" @click=logout> "Sign out"
+						if loggedIn
+							<div.ext-account>
+								<span#signed-in> (user.username or "Signed in")
+								<button#logout type="button" @click=logout> "Sign out"
+						<div#popup-player.card.now.ext-compact>
+							<NowPlaying now=now compact=yes idleTitle=(activeRoom ? 'Waiting for the DJ' : 'Pick a station')>
+							<Transport now=now @control=control>
+							<CopyListen song=(now and now.song)>
+							<p#player-status.ext-state> statusText
+							if activeRoom
+								<label for="popup-room-volume"> "Room volume"
+								<input#popup-room-volume type="range" min=0 max=100 value=(player and Number.isFinite(player.volume) ? player.volume : 80) aria-label="Room volume" @change=roomAudio('volume', Number(e.target.value))>
+					if account and account.signedIn
+						if player and player.room and player.room.id
+							<section#current-room.card>
+								<p.eyebrow> "CURRENT ROOM"
+								<h3> (player.room.state and player.room.state.name or 'Shared room')
+								<p.fine> roomStatus
+								<button#current-room-open.quiet type="button" @click=openRoom(player.room.id)> "View room"
+								if inDjLine or listedDj
+									<button#current-room-stop-dj.quiet type="button" disabled=!!roomBusy @click=djCommand('leave-dj')> (roomBusy === 'dj' ? 'Updating…' : listedDj ? 'Stop DJing' : 'Cancel DJ request')
+								elif player.room.state and (player.room.state.mode === 'rotation' or player.room.state.host === player.room.state.you)
+									<button#current-room-request-dj.quiet type="button" disabled=!!roomBusy @click=djCommand('request-dj')> (player.room.state.host === player.room.state.you ? 'Start DJing' : 'Request to DJ')
+								if player.room.audio and ['blocked', 'error', 'unavailable'].includes(player.room.audio.state)
+									<button#current-room-retry.quiet type="button" @click=roomAudio('resume')> "Retry room audio"
+								<button#current-room-leave.quiet type="button" disabled=!!roomBusy @click=leaveRoom> "Leave room"
+						<section#room-discovery.card aria-busy=String(roomSearchBusy)>
+							<h3> "Rooms"
+							<form @submit=searchRooms>
+								<label for="room-search"> "Find a room"
+								<input#room-search type="search" bind=roomQuery maxlength=80 placeholder="Search rooms">
+								<button.quiet type="submit" disabled=roomSearchBusy> (roomSearchBusy ? 'Searching…' : 'Search')
+							if recentRooms.some(do(r) !activeRoom or r.id !== activeRoom.id)
+								<h4> "Recently joined"
+								for r in recentRooms
+									if !player or !player.room or r.id !== player.room.id
+										<button.room-recent-open.quiet type="button" disabled=(!!roomBusy or !!(player and player.room and player.room.locked)) @click=joinRoom(r.id)> "{r.name} · {r.listeners} listeners · {roomBusy === r.id ? 'Joining…' : 'Join'}"
+							for r in foundRooms
+								if !player or !player.room or r.id !== player.room.id
+									<button.room-search-join.quiet type="button" disabled=(!!roomBusy or !!(player and player.room and player.room.locked)) @click=joinRoom(r.id)> "{r.name} · {r.listeners} listeners · {roomBusy === r.id ? 'Joining…' : 'Join'}"
+							if player and player.room and player.room.locked
+								<p.fine> "Your DJ broadcast has priority. Stop DJing or leave the room to switch rooms."
+							if roomCursor
+								<button#room-search-more.quiet type="button" disabled=roomSearchBusy @click=loadRooms(yes)> "More rooms"
+							if !roomSearchBusy and !recentRooms.length and !foundRooms.length and !roomSearchError
+								<p.fine> "No rooms found. Open Rooms to create one."
+							<p.message.error role="status"> roomSearchError
+					if loggedIn
 						if player and player.scrobbling and player.scrobbling.notice
 							<ScrobbleNotice scrobbling=player.scrobbling>
 						if player and player.scrobbling and player.scrobbling.failing
@@ -347,15 +415,10 @@ tag Popup
 							<p#scrobble-deployed.ext-scrobble-deployed role="status"> player.scrobbling.deployed
 						if user.prompt
 							<UsernamePick user=user>
-						<div.card.now.ext-compact>
-							<NowPlaying now=now compact=yes>
-							<Transport now=now @control=control>
-							<CopyListen song=(now and now.song)>
-							<p#player-status.ext-state> statusText
 						<StationList stations=stations active=(player and player.station and player.station.token) compact=yes @select=select @refresh=reload @delete=remove>
 						if recent
 							<RecentListens recent=recent max=5>
-						<p.message#player-message .error=(kind === 'error') .info=(kind === 'info')> message
+					<p.message#player-message .error=(kind === 'error') .info=(kind === 'info') role="status"> message
 			<Foot version=version>
 				<AccountLine account=account busy=accountBusy message=accountError @signin=accountAction('account-signin') @signout=accountAction('account-signout')>
 

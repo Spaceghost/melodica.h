@@ -152,3 +152,24 @@ test('DJ monitor mutes only local source output and restores the previous mute s
   room.monitor(false);
   assert.equal(audio.muted, true);
 });
+
+test('an active DJ cannot switch rooms without first stepping down or leaving', async () => {
+  let loaded = 0;
+  const room = new RoomEngine({ engine: { audio: new EventTarget() }, send: async () => ({}), loadMedia: async () => { loaded++; } });
+  const id = 'r'.repeat(20);
+  room.id = id;
+  room.session = { getState: () => ({ you: 'dj', current_dj: 'dj', you_broadcasting: true, play: { id: 'play', dj: 'dj' } }) };
+  await assert.rejects(room.join('s'.repeat(20)), /Leave your DJ room/);
+  assert.equal(room.id, id); assert.equal(loaded, 0);
+  assert.equal((await room.join(id)).id, id, 'opening another view of the same room keeps playback');
+  assert.deepEqual(validRoomCommand({ action: 'leave-dj' }), { action: 'leave-dj' });
+  assert.throws(() => validRoomCommand({ action: 'leave-dj', account: 'other' }));
+});
+
+test('stepping down cancels a source that is still loading', async () => {
+  const state = {you:'me',current_dj:'other',play:null};
+  const engine={audio:new EventTarget(),snapshot:{station:null}};
+  const room=new RoomEngine({engine,send:async()=>({}),loadMedia:async()=>({})});
+  room.session={getState:()=>state};
+  await assert.rejects(room.startTurn(),{code:'dj_turn_ended'});
+});

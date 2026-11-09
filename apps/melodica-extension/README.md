@@ -23,6 +23,12 @@ login. The full player, room page and open web app control the same session. Clo
 any of those views keeps room playback running. An active DJ broadcast owns the
 player: private stations, stop and quality changes require leaving the room first.
 
+The popup keeps its player first, then room controls and searchable recent rooms.
+Room volume includes mute, discovery supports pagination, and an active DJ must
+explicitly stop DJing or leave before switching rooms. **Stop DJing** ends the current
+broadcast, hands off to the next DJ and keeps you in the room as a listener. Hosts
+retain ownership and can choose Start DJing later; queued requests can be cancelled.
+
 Room audio defaults to the shared Opus/WebM relay. The DJ monitors the same delayed
 relay as listeners, with a common 1.25-second playout target and periodic source
 position broadcasts. Devices correct drift against the server clock. This aims for

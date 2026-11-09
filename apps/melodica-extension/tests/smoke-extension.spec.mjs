@@ -111,6 +111,12 @@ async function handleRoomProbe(req, res, url, raw) {
     const room = { id: roomProbe.id, name: roomProbe.state.name, kind: roomProbe.state.kind, mode: roomProbe.state.mode,
       listeners: roomProbe.state.members.length, created_at: roomProbe.state.created_at || 1730000000,
       current_play: roomProbe.state.play?.track_metadata || null };
+    if (query.q === 'pagination') {
+      const first = { ...room, id: 'paginationRoomFirst123', name: 'First room page' };
+      const second = { ...room, id: 'paginationRoomNext1234', name: 'Second room page' };
+      json(200, { rooms: query.cursor ? [first, second] : [first], recent: [], next_cursor: query.cursor ? null : 'next-room-page' });
+      return true;
+    }
     const rows = !query.q || room.name.toLowerCase().includes(query.q.toLowerCase()) ? [room] : [];
     const recent = query.recent.split(',').includes(roomProbe.id) ? [room] : [];
     json(200, { rooms: rows, recent, next_cursor: null });
@@ -155,6 +161,14 @@ async function handleRoomProbe(req, res, url, raw) {
     roomProbe.commands.push({ viewer, action: body.action, play_id: body.play_id, listened_ms: body.listened_ms });
     if (body.action === 'join') roomProbe.joinCalls++;
     if (body.action === 'leave') roomProbe.leaveCalls++;
+    if (body.action === 'leave-dj') {
+      roomProbe.state.djs = roomProbe.state.djs.filter(account => account !== viewer);
+      roomProbe.state.waiting = roomProbe.state.waiting.filter(account => account !== viewer);
+      roomProbe.state.requests = roomProbe.state.requests.filter(request => request.account !== viewer);
+      if (roomProbe.state.play?.dj === viewer) roomProbe.state.play = null;
+      if (roomProbe.state.current_dj === viewer) roomProbe.state.current_dj = roomProbe.state.djs[0] || null;
+      roomProbe.state.seq++;
+    }
     if (body.action === 'clock') {
       roomProbe.clockCalls.push({ viewer, play_id: body.play_id, position_ms: body.position_ms });
       if (roomProbe.state.play?.id === body.play_id) {
@@ -1999,8 +2013,15 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
     expect(bridgedSearch.result.rooms.map((entry) => entry.id)).toEqual([roomId]);
 
     const discoveryPopup = await context.newPage();
+    await discoveryPopup.setViewportSize({ width: 380, height: 600 });
     await discoveryPopup.goto(`chrome-extension://${id}/popup.html`);
     await expect(discoveryPopup.locator('#room-discovery')).toBeVisible();
+    await discoveryPopup.locator('#room-search').fill('pagination');
+    await discoveryPopup.locator('#room-discovery button[type="submit"]').click();
+    await expect(discoveryPopup.locator('.room-search-join')).toHaveCount(1);
+    await discoveryPopup.locator('#room-search-more').click();
+    await expect(discoveryPopup.locator('.room-search-join')).toHaveCount(2);
+    expect(roomProbe.searches.at(-1)).toMatchObject({ q: 'pagination', cursor: 'next-room-page' });
     await discoveryPopup.locator('#room-search').fill('native');
     await discoveryPopup.locator('#room-discovery button[type="submit"]').click();
     await expect(discoveryPopup.locator('.room-search-join')).toHaveCount(1);
@@ -2008,11 +2029,28 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
     await expect.poll(async () => (await send({ type: 'room-get' })).room?.id).toBe(roomId);
     await expect(discoveryPopup.locator('#current-room')).toBeVisible();
     await expect(discoveryPopup.locator('#current-room-leave')).toBeVisible();
+    expect(await discoveryPopup.evaluate(() => {
+      const player = document.getElementById('popup-player');
+      const current = document.getElementById('current-room');
+      const rooms = document.getElementById('room-discovery');
+      return !!(player.compareDocumentPosition(current) & Node.DOCUMENT_POSITION_FOLLOWING) &&
+        !!(current.compareDocumentPosition(rooms) & Node.DOCUMENT_POSITION_FOLLOWING);
+    }), 'room information and discovery are below the single player').toBe(true);
+    await expect(discoveryPopup.locator('#play')).toHaveCount(1);
+    const optionsBounds = await discoveryPopup.locator('#open-options').boundingBox();
+    expect(optionsBounds.x + optionsBounds.width, 'all header actions fit the popup').toBeLessThanOrEqual(380);
+    await discoveryPopup.locator('#popup-room-volume').evaluate(input => { input.value = '0'; });
+    await discoveryPopup.locator('#popup-room-volume').dispatchEvent('change');
+    await expect.poll(async () => (await send({ type: 'player-get' })).state.volume).toBe(0);
     const remoteRoom = await bridgeAsk(bridgePage, { type: 'command', action: 'room-get' });
     expect(remoteRoom.room?.id, 'the open web page controls the same extension room').toBe(roomId);
     const remoteVolume = await bridgeAsk(bridgePage, { type: 'command', action: 'room-volume', roomId, value: 43 });
     expect(remoteVolume.ok, remoteVolume.error).toBe(true);
+    await discoveryPopup.evaluate(() => { document.body.scrollTop = 0; document.documentElement.scrollTop = 0; window.scrollTo(0, 0); });
     await discoveryPopup.screenshot({ path: resolve(ARTIFACTS, 'rooms-popup.png') });
+    await discoveryPopup.emulateMedia({ colorScheme: 'dark' });
+    await discoveryPopup.screenshot({ path: resolve(ARTIFACTS, 'rooms-popup-dark.png') });
+    await discoveryPopup.emulateMedia({ colorScheme: 'light' });
     await discoveryPopup.close();
 
     const tunerBefore = await getJson(`${tuner.http}/__tuner/log`);
@@ -2093,6 +2131,36 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
     await expect.poll(async () => (await send({ type: 'room-get' })).room?.audio?.state).toBe('listening');
     await new Promise((resolve) => setTimeout(resolve, 1400));
     expect(roomProbe.heard, 'room opt-out suppresses the next real audio receipt').toHaveLength(1);
+    const beforeSteppingDown = structuredClone(roomProbe.state.play);
+    roomProbe.state.djs.push('listener-ci');
+    roomProbe.state.current_dj = 'listener-ci';
+    roomProbe.state.play = { ...roomProbe.state.play, dj: 'listener-ci' };
+    roomProbe.state.seq++;
+    try { await expect.poll(async () => (await send({ type: 'room-get' })).room?.locked).toBe(true); }
+    catch (error) { console.log('DJ protection diagnostics', JSON.stringify({ result: await send({type:'room-get'}), state: roomProbe.state, commands: roomProbe.commands.slice(-8), logs: await ctl.evaluate(async () => (await chrome.storage.session.get('log')).log?.slice(-15)) })); throw error; }
+    const protectedJoin = await send({ type: 'room-join', roomId: 'anotherRoom123456789' });
+    expect(protectedJoin.ok).toBe(false);
+    expect(protectedJoin.error).toMatch(/Leave your DJ room/);
+    expect((await send({ type: 'room-get' })).room.id).toBe(roomId);
+    const djPopup = await context.newPage();
+    await djPopup.goto(`chrome-extension://${id}/popup.html`);
+    await expect(djPopup.locator('#current-room-stop-dj')).toBeVisible();
+    const leavesBeforeStepDown = roomProbe.leaveCalls;
+    await djPopup.locator('#current-room-stop-dj').click();
+    await expect.poll(async () => (await send({ type: 'room-get' })).room?.role).toBe('listener');
+    const afterStepDown = (await send({ type: 'room-get' })).room;
+    expect(afterStepDown.id).toBe(roomId);
+    expect(afterStepDown.locked).toBe(false);
+    expect(afterStepDown.state.members.some(member => member.account === 'listener-ci')).toBe(true);
+    expect(roomProbe.leaveCalls).toBe(leavesBeforeStepDown);
+    expect(roomProbe.commands.some(command => command.viewer === 'listener-ci' && command.action === 'leave-dj')).toBe(true);
+    await expect(djPopup.locator('#current-room-stop-dj')).toHaveCount(0);
+    await expect(djPopup.locator('#current-room-request-dj')).toBeVisible();
+    await djPopup.close();
+    roomProbe.state.current_dj = 'dj-owner';
+    roomProbe.state.play = { ...beforeSteppingDown, started_at: Date.now() };
+    roomProbe.state.seq++;
+    await expect.poll(async () => (await send({ type: 'room-get' })).room?.audio?.state).toBe('listening');
     const tunerAfter = await getJson(`${tuner.http}/__tuner/log`);
     expect(tunerAfter.filter((row) => row.protocol === 'json').length, 'room transfer performs no Pandora JSON RPC').toBe(jsonBefore);
     expect(tunerAfter.filter((row) => row.protocol === 'audio').length, 'room transfer fetches no Pandora media').toBe(mediaBefore);
