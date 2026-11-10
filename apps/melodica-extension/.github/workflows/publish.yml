@@ -37,7 +37,9 @@ concurrency:
 
 jobs:
   checks:
-    runs-on: ubuntu-24.04
+    # Release events use default-branch code and must not depend on hosted minutes.
+    # PR and push validation stay hosted: never run proposed code on the publisher.
+    runs-on: ${{ fromJSON(contains(fromJSON('["workflow_run","workflow_dispatch","schedule","release"]'), github.event_name) && '["self-hosted","Linux","X64","fedora-release"]' || '["ubuntu-24.04"]') }}
     outputs:
       publish: ${{ steps.event.outputs.publish }}
       tag: ${{ steps.event.outputs.tag }}

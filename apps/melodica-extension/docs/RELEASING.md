@@ -6,6 +6,11 @@ release after successful desktop CI, and runs again when the iOS workflow finish
 An hourly catch-up also repairs interrupted publication. No manual site sync is part
 of the normal release cycle.
 
+Release-event validation and publication both run on `fedora-release`, using
+default-branch publisher code. They do not require GitHub-hosted runner minutes or
+wait for the hourly catch-up. Proposed changes on pushes and pull requests are
+validated separately on hosted runners, away from the release runner's logins.
+
 The dedicated `fedora-release` runner uses Fedora's existing Wrangler and GitHub
 logins. No Cloudflare credential is copied into GitHub secrets. Wrangler handles
 refreshing its local login. The runner is a user systemd service with linger enabled,
