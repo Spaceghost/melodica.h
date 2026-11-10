@@ -111,6 +111,8 @@ export tag StationList
 	prop active = null
 	prop filter = ''
 	prop compact = no
+	prop blocked = no
+	prop deleteBlocked = no
 
 	get shown
 		const q = filter.trim().toLowerCase()
@@ -134,9 +136,9 @@ export tag StationList
 			<ul#station-list.station-list>
 				for s in shown
 					<li .active=(active and s.token === active) data-token=s.token>
-						<button.station type="button" title=s.name aria-current=(active and s.token === active ? 'true' : null) @click=emit('select', s)> s.name
+						<button.station type="button" title=s.name disabled=blocked aria-current=(active and s.token === active ? 'true' : null) @click=emit('select', s)> s.name
 						if !compact and !s.isQuickMix and s.allowDelete
-							<button.delete type="button" title="Delete station {s.name}" aria-label="Delete station {s.name}" @click=emit('delete', s)> "×"
+							<button.delete type="button" disabled=(blocked or deleteBlocked) title="Delete station {s.name}" aria-label="Delete station {s.name}" @click=emit('delete', s)> "×"
 			if stations.length === 0
 				<p.fine#station-empty> "No stations yet."
 
@@ -161,7 +163,7 @@ export tag NowPlaying
 				if song and song.audioFormat
 					<p.line>
 						<span.chip#np-quality> "{song.quality} · {song.audioFormat}"
-			if song and !compact
+			if song
 				<div.progress>
 					<span#np-time-cur> fmtTime(now.position or 0)
 					<progress#np-progress max=(now.duration or song.duration or 1) value=(now.position or 0) aria-label="Playback position">
@@ -169,6 +171,7 @@ export tag NowPlaying
 
 export tag Transport
 	prop now = null
+	prop allowTired = yes
 
 	def render
 		const song = now and now.song
@@ -192,7 +195,7 @@ export tag Transport
 				<button#next.round type="button" title="Next song" aria-label="Next song" disabled=fixed @click=emit('control', 'next')>
 					<svg aria-hidden="true" viewBox="0 0 24 24">
 						<path.fill d="M5 5v14l10-7zM17 5h2v14h-2z">
-				<button#tired.round type="button" title="Tired of this song (a month off)" aria-label="Tired" disabled=fixed @click=emit('control', 'tired')>
+				<button#tired.round type="button" title="Tired of this song (a month off)" aria-label="Tired" disabled=(fixed or !allowTired) @click=emit('control', 'tired')>
 					<svg aria-hidden="true" viewBox="0 0 24 24">
 						<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z">
 

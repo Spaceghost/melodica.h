@@ -3,6 +3,7 @@
 # page is a view of the background's player state and sends it commands.
 
 import { browser, send } from './shared.imba'
+import { roomTimeline, roomNowPlaying } from './room-playback-view.js'
 import { Login, StationList, NowPlaying, Transport, AccountLine, UpdateBanner, Top, Foot, UsernamePick, ScrobbleNotice, RecentListens, CopyListen } from "./ui.imba"
 
 tag Popup
@@ -29,13 +30,16 @@ tag Popup
 	prop roomCursor = null
 	prop roomSearchQuery = ''
 	prop roomBusy = ''
+	prop roomClock = null
 
 	def mount
 		self.notice = do(msg, sender, sendResponse) onNotice(msg, sender, sendResponse)
 		browser.runtime.onMessage.addListener(self.notice)
 		refresh()
+		self.progressTimer = setInterval((do imba.commit() if player and player.room and player.room.id), 500)
 
 	def unmount
+		clearInterval(self.progressTimer) if self.progressTimer
 		browser.runtime.onMessage.removeListener(self.notice)
 
 	def onNotice msg
@@ -43,6 +47,7 @@ tag Popup
 		if msg.type === 'player-state'
 			const priorRoom = player and player.room and player.room.id or null
 			player = msg.state
+			roomClock = roomTimeline(roomClock, player and player.room)
 			stations = msg.state.stations if Array.isArray(msg.state.stations) and msg.state.stations.length
 			loadRooms() if account and account.signedIn and player.room and player.room.id and priorRoom !== player.room.id
 			if msg.state.loggedIn === no and loggedIn
@@ -57,15 +62,15 @@ tag Popup
 				pickView()
 				loadRooms()
 			imba.commit()
-			lockPrivateControls()
 		if msg.type === 'room-clock'
 			const room = player and player.room
-			const clock = msg.state and msg.state.room and msg.state.room.state and msg.state.room.state.play or msg.state
-			const playId = clock and (clock.play_id or clock.playId or clock.id)
-			if room and room.id === (msg.room and msg.room.id) and room.state and room.state.play and playId and room.state.play.id === playId
-				room.state.play.position_ms = clock.position_ms
-				room.state.play.server_time = clock.server_time
-				imba.commit()
+			const clock = msg.room and msg.room.state and msg.room.state.play
+			const current = room and room.state and room.state.play
+			if room and msg.room and room.id === msg.room.id and current and clock and current.id === clock.id
+				if Number.isSafeInteger(clock.position_ms) and clock.position_ms >= 0 and Number.isSafeInteger(clock.server_time) and clock.server_time > (current.server_time or 0)
+					room.state.play = Object.assign({}, current, {position_ms: clock.position_ms, server_time: clock.server_time})
+					roomClock = roomTimeline(roomClock, room)
+					imba.commit()
 		if msg.type === 'scrobble-recent'
 			recent = msg.recent
 			imba.commit()
@@ -137,6 +142,7 @@ tag Popup
 			email = s.email
 			stations = s.stations
 			player = s.player
+			roomClock = roomTimeline(roomClock, player and player.room)
 			version = s.version
 			account = s.account
 			update = s.update
@@ -145,14 +151,13 @@ tag Popup
 			loadRecent() if loggedIn
 			loadRooms() if account and account.signedIn
 			accessMessage(s.access) unless s.loggedIn
-			if s.loggedIn and stations.length === 0
+			if s.loggedIn and stations.length === 0 and (!player.room or !player.room.id or player.room.role === 'dj')
 				stations = (await send({type: 'stations'})).stations
 		catch e
 			view = 'error'
 			message = String(e.message or e)
 			kind = 'error'
 		imba.commit()
-		lockPrivateControls()
 
 	def login e
 		const mail = e.detail.email
@@ -298,25 +303,9 @@ tag Popup
 
 	get now
 		const room = player and player.room
-		if room and room.id and room.state and room.state.play and room.state.play.track_metadata
-			const p = room.state.play
-			const t = p.track_metadata
-			const extra = t.additional_info or {}
-			return {song: {title: t.track_name, artist: t.artist_name, album: t.release_name, coverArt: extra.art_url or '', duration: Number(extra.duration_ms or 0) / 1000, rating: p.reaction === 'like' ? 1 : (p.reaction === 'dislike' ? 2 : 0)}, station: {name: room.state.name or 'Room'}, paused: !['broadcasting', 'listening'].includes(room.audio and room.audio.state), position: Number(p.position_ms or 0) / 1000, duration: Number(extra.duration_ms or 0) / 1000}
+		return roomNowPlaying(room, roomClock) if room and room.id
 		return null unless player and player.track
 		{song: player.track, station: player.station, paused: player.status !== 'playing', position: player.position, duration: player.duration}
-
-	def lockPrivateControls
-		const room = player and player.room
-		const blocked = !!(room and room.id and room.role !== 'dj')
-		window.requestAnimationFrame(do
-			for control of document.querySelectorAll('#station-list button.station')
-				control.disabled = blocked
-			for control of document.querySelectorAll('#station-list button.delete')
-				control.disabled = blocked or !!(room and room.locked)
-			for control of document.querySelectorAll('#tired')
-				control.disabled = !!(room and room.id)
-		)
 
 	get statusText
 		return '' unless player
@@ -365,14 +354,24 @@ tag Popup
 							<div.ext-account>
 								<span#signed-in> (user.username or "Signed in")
 								<button#logout type="button" @click=logout> "Sign out"
+							if player and player.scrobbling and player.scrobbling.notice
+								<ScrobbleNotice scrobbling=player.scrobbling>
+							if player and player.scrobbling and player.scrobbling.failing
+								<p#scrobble-fail.ext-scrobble-fail role="status"> player.scrobbling.failing
+							if player and player.scrobbling and player.scrobbling.deployed
+								<p#scrobble-deployed.ext-scrobble-deployed role="status"> player.scrobbling.deployed
+							if user.prompt
+								<UsernamePick user=user>
 						<div#popup-player.card.now.ext-compact>
-							<NowPlaying now=now compact=yes idleTitle=(activeRoom ? 'Waiting for the DJ' : 'Pick a station')>
-							<Transport now=now @control=control>
+							<NowPlaying now=now compact=yes idleTitle=(activeRoom and activeRoom.role !== 'dj' ? 'Waiting for the DJ' : 'Pick a station')>
+							<Transport now=now allowTired=!activeRoom @control=control>
 							<CopyListen song=(now and now.song)>
 							<p#player-status.ext-state> statusText
 							if activeRoom
 								<label for="popup-room-volume"> "Room volume"
 								<input#popup-room-volume type="range" min=0 max=100 value=(player and Number.isFinite(player.volume) ? player.volume : 80) aria-label="Room volume" @change=roomAudio('volume', Number(e.target.value))>
+					if loggedIn and (!activeRoom or activeRoom.role === 'dj')
+						<StationList stations=stations active=(player and player.station and player.station.token) compact=yes blocked=(!!activeRoom and activeRoom.role !== 'dj') deleteBlocked=(!!activeRoom and activeRoom.locked) @select=select @refresh=reload @delete=remove>
 					if account and account.signedIn
 						if player and player.room and player.room.id
 							<section#current-room.card>
@@ -409,15 +408,6 @@ tag Popup
 								<p.fine> "No rooms found. Open Rooms to create one."
 							<p.message.error role="status"> roomSearchError
 					if loggedIn
-						if player and player.scrobbling and player.scrobbling.notice
-							<ScrobbleNotice scrobbling=player.scrobbling>
-						if player and player.scrobbling and player.scrobbling.failing
-							<p#scrobble-fail.ext-scrobble-fail role="status"> player.scrobbling.failing
-						if player and player.scrobbling and player.scrobbling.deployed
-							<p#scrobble-deployed.ext-scrobble-deployed role="status"> player.scrobbling.deployed
-						if user.prompt
-							<UsernamePick user=user>
-						<StationList stations=stations active=(player and player.station and player.station.token) compact=yes @select=select @refresh=reload @delete=remove>
 						if recent
 							<RecentListens recent=recent max=5>
 					<p.message#player-message .error=(kind === 'error') .info=(kind === 'info') role="status"> message

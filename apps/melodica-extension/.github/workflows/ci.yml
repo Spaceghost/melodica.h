@@ -406,6 +406,7 @@ jobs:
             node -e 'const f=process.argv[1]; const u=require("./"+f).username; if (!u || u.chosen!=="night_owl" || u.changed!=="night_owl_2") { console.error(f+": username not proven"); process.exit(1); } console.log(f+": username picked and changed")' "$f"
             node -e 'const f=process.argv[1]; const c=require("./"+f).scrobbles; if (!c || !c.notice || !(c.playingNow>0) || c.slotScrobbled!==false || !c.optOut) { console.error(f+": scrobbling not proven"); process.exit(1); } console.log(f+": scrobbles sent, no slot, opt-out ok")' "$f"
             node -e 'const f=process.argv[1]; const u=require("./"+f).scrobbleUi; if (!u || !u.listens || !u.leaderboard || !u.mapHidden || !/^[0-9a-f]{40}$/.test(u.pin)) { console.error(f+": scrobble panels not proven"); process.exit(1); } console.log(f+": scrobble-ui "+u.pin+": listens, leaderboard")' "$f"
+            node -e 'const f=process.argv[1]; const r=require("./"+f).rooms; if (!r || r.result!=="passed" || !r.popupProgress || !r.fullPlayerProgress || !r.singleTransport || !r.roomDetailsBelowPlayer || !r.tabsSurviveRoomUpdates) { console.error(f+": complete room player UI not proven"); process.exit(1); }' "$f"
             node -e 'const f=process.argv[1]; const c=require("./"+f).coldStart; const okr=(r)=>r && r.detectedMs<1000 && r.stations>0 && r.played && r.paused && r.extensionPages.length===0; if (!c || !c.ok || !okr(c.restart) || !okr(c.workerStopped) || c.restart.offscreenBeforePlay!==0) { console.error(f+": cold start not proven"); process.exit(1); } console.log(f+": cold start: page found the extension in "+c.restart.detectedMs+" ms after a restart, "+c.workerStopped.detectedMs+" ms after the worker stopped")' "$f"
             node -e 'const f=process.argv[1]; const r=require("./"+f).resume; const near=(x)=>x && x.sameTrack && x.status==="playing" && Math.abs(x.resumedAt-x.saved)<1.5; if (!r || !r.ok || !near(r.offscreenAndWorker) || !near(r.restart) || !near(r.expiredWithCopy) || !r.expiredWithCopy.continued || !r.expiredNoCopy || !r.expiredNoCopy.continued) { console.error(f+": resume not proven"); process.exit(1); } console.log(f+": resume at "+r.restart.resumedAt.toFixed(1)+" s after a restart; expired link played the audio copy, then the station")' "$f"
           done
@@ -425,6 +426,7 @@ jobs:
             SHA256SUMS
             smoke-extension.json
             smoke-extension-slot.png
+            smoke-extension-rooms-*.png
             smoke-extension-access-request.png
             smoke-extension-account.png
             smoke-extension-login.png
@@ -442,6 +444,7 @@ jobs:
             smoke-extension-username-pick.png
             smoke-brave.json
             smoke-brave-slot.png
+            smoke-brave-rooms-*.png
             smoke-brave-access-request.png
             smoke-brave-account.png
             smoke-brave-login.png

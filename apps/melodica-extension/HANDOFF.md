@@ -1,5 +1,19 @@
 # Handoff (melodica-extension)
 
+## Player regression audit — 0.9.17
+
+- The 0.9.17 room proof passes all mandatory UI assertions, including the authoritative duration and controls after live updates. An idle DJ now retains the room play log between tracks; no private history flashes into the room view. v0.9.15/v0.9.16 were not published; v0.9.17 is the audited release.
+
+- The final 0.9.17 local run passed all 8 browser tests (live-credentials test skipped), and the saved report includes every mandatory room UI flag. Full proof: `/var/home/jack/workspaces/melodica-player-audit-final-smoke.json`. v0.9.15 was cancelled before publication while correcting the room proof export; release v0.9.17 only.
+
+- Compared the source and released 0.8.8 player screenshot against 0.9.14. The room integration replaced the complete player with a reduced card, hid the progress bar and album/artwork/copy controls, duplicated transport IDs, and forced the Room tab on every state push. Room getters also bypassed clock interpolation, ignored pause flags and the authoritative duration, and the full player did not commit clock updates. Popup discovery had moved station selection and existing notices out of their original flow.
+- The complete original player now remains above room details, with one progress bar/transport, existing artwork/album/copy/volume controls, a receipt-anchored room clock and correct paused state. Compact popups include the progress bar. Background updates refresh the mounted room view without changing the selected tab. Station selection and existing notices are back beside the player; room discovery follows the player controls.
+- DJ upcoming tracks are visible unless a different station is queued. The play log reflects the room while joined and restores the private log on leaving. Listeners do not fetch Pandora stations merely by opening the player. Private explanations are guarded during room playback, including the keyboard shortcut.
+- Existing colors, fonts, artwork treatment and card styles remain; CSS changes only allow the compact progress row and a full-width listener player. Reviewed actual 380px popup, 390px phone and 1280px desktop screenshots in light/dark, plus the original radio screen against the 0.8.8 release image.
+- Local verification: all 8 extension browser tests passed (1 credential-dependent live test skipped), 18 room/compiled-player/clock tests passed. Added UI checks for visible/advancing progress, authoritative duration, a single transport, artwork/album/history, room placement, stable Player/Listens navigation during updates and pause/resume. Chromium/Brave room UI assertions and screenshots are mandatory release evidence.
+- Audit baseline: signed 0.9.14. Audited replacement: 0.9.17. The automated publication record below is authoritative; feeds and downloads must be verified before calling a release published.
+
+
 ## Mobile DJ station selection — 2026-11-09
 
 - Final native 0.9.14 private-playback/full-page bridge proof passed (2.6 minutes) using isolated tuner ports 18443/18080 and actual web 0.13.12. Native room evidence also reports 0.9.14 passed. Primary proof is preserved in `/var/home/jack/workspaces/melodica-next-station-primary-smoke.json`; combined release status is `/var/home/jack/workspaces/melodica-next-station-release-status.json`.
@@ -25,11 +39,11 @@
 <!-- extension-publication:start -->
 ## Extension catalog publication
 
-- v0.9.14 is published at https://spacegho.st/extensions/#melodica-extension and https://spacegho.st/melodica/extension/.
+- v0.9.17 is published at https://spacegho.st/extensions/#melodica-extension and https://spacegho.st/melodica/extension/.
 - Mozilla unlisted signing is preserved. Both browser update feeds and eight public installable downloads passed checksum verification.
 - Both catalogs passed browser checks at 390 and 1280 pixels; the Melodica catalog contains only its browser extension and keeps the player bar pinned.
 - The Worker release manifests were updated in R2; all other Melodica projects were preserved. No player or Worker code was deployed by this publication.
-- Evidence: https://github.com/Spaceghost/melodica-extension/actions/runs/42725618560.
+- Evidence: the self-hosted publication workflow.
 <!-- extension-publication:end -->
 
 Updated 2026-11-09. Self-hosted 0.9.2 published and verified; full tag browser suites remain in progress.

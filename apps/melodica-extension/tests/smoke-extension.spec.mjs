@@ -390,6 +390,7 @@ test.afterAll(async () => {
     bridge: report.bridge,
     coldStart: report.coldStart,
     resume: report.resume,
+    rooms: report.rooms || null,
     blocked: report.blocked,
     failedRequests: report.failedRequests,
     shields: report.shields,
@@ -661,6 +662,8 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     await expect(popup.locator('#np-title')).not.toHaveText(/^(Pick a station)?$/);
     await expect(popup.locator('#np-artist')).not.toHaveText('');
     await expect(popup.locator('#np-station')).toContainText(chosen);
+    await expect(popup.locator('#np-progress')).toBeVisible();
+    expect((await popup.locator('#np-progress').boundingBox()).width).toBeGreaterThan(150);
     const now = {
       title: (await popup.locator('#np-title').textContent()).trim(),
       artist: (await popup.locator('#np-artist').textContent()).trim(),
@@ -1979,7 +1982,7 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
   } };
   const ctl = await context.newPage();
   const pageErrors = [];
-  let roomPage = null, djPage = null, bridgePage = null;
+  let roomPage = null, djPage = null, bridgePage = null, fullPlayer = null;
   try {
     await ctl.goto(`chrome-extension://${id}/options.html`);
     await useTuner(ctl);
@@ -2040,6 +2043,8 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
         !!(current.compareDocumentPosition(rooms) & Node.DOCUMENT_POSITION_FOLLOWING);
     }), 'room information and discovery are below the single player').toBe(true);
     await expect(discoveryPopup.locator('#play')).toHaveCount(1);
+    await expect(discoveryPopup.locator('#np-progress')).toBeVisible();
+    expect((await discoveryPopup.locator('#np-progress').boundingBox()).width).toBeGreaterThan(150);
     const optionsBounds = await discoveryPopup.locator('#open-options').boundingBox();
     expect(optionsBounds.x + optionsBounds.width, 'all header actions fit the popup').toBeLessThanOrEqual(380);
     await discoveryPopup.locator('#popup-room-volume').evaluate(input => { input.value = '0'; });
@@ -2050,9 +2055,9 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
     const remoteVolume = await bridgeAsk(bridgePage, { type: 'command', action: 'room-volume', roomId, value: 43 });
     expect(remoteVolume.ok, remoteVolume.error).toBe(true);
     await discoveryPopup.evaluate(() => { document.body.scrollTop = 0; document.documentElement.scrollTop = 0; window.scrollTo(0, 0); });
-    await discoveryPopup.screenshot({ path: resolve(ARTIFACTS, 'rooms-popup.png') });
+    await discoveryPopup.screenshot({ path: shot('rooms-popup') });
     await discoveryPopup.emulateMedia({ colorScheme: 'dark' });
-    await discoveryPopup.screenshot({ path: resolve(ARTIFACTS, 'rooms-popup-dark.png') });
+    await discoveryPopup.screenshot({ path: shot('rooms-popup-dark') });
     await discoveryPopup.emulateMedia({ colorScheme: 'light' });
     await discoveryPopup.close();
 
@@ -2115,12 +2120,58 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
     expect(roomProbe.heard[0]).toMatchObject({ viewer: 'listener-ci', play_id: 'room-play-1' });
     expect(roomProbe.heard[0].listened_ms).toBeGreaterThanOrEqual(1000);
 
+    // The authoritative room duration may differ from cached track metadata.
+    // Keep this display proof long enough to observe progress on slower CI hosts.
+    roomProbe.state.play.duration_ms = 60000;
+    roomProbe.state.seq++;
+    await expect.poll(async () => (await send({ type: 'room-get' })).room?.state?.play?.duration_ms).toBe(60000);
+    // Rooms retain the complete player, one transport and the original visual system.
+    fullPlayer = await context.newPage();
+    fullPlayer.on('pageerror', e => pageErrors.push(String(e)));
+    await fullPlayer.setViewportSize({ width: 1280, height: 900 });
+    await fullPlayer.goto(`chrome-extension://${id}/player.html`);
+    await expect(fullPlayer.locator('#app')).toHaveAttribute('data-view', 'player');
+    await expect(fullPlayer.locator('#np-title')).toHaveText(metadata.track_name);
+    await expect(fullPlayer.locator('#np-album')).toHaveText(metadata.release_name);
+    await expect(fullPlayer.locator('#np-cover')).toBeVisible();
+    await expect(fullPlayer.locator('#np-progress')).toBeVisible();
+    await expect(fullPlayer.locator('#np-progress')).toHaveAttribute('max', '60');
+    await expect(fullPlayer.locator('#play')).toHaveCount(1);
+    await expect(fullPlayer.locator('#volume')).toHaveCount(1);
+    await expect(fullPlayer.locator('#explain')).toBeDisabled();
+    await expect(fullPlayer.locator('#quality')).toBeDisabled();
+    const progressBefore = await fullPlayer.locator('#np-progress').evaluate(p => p.value);
+    await expect.poll(() => fullPlayer.locator('#np-progress').evaluate(p => p.value)).toBeGreaterThan(progressBefore);
+    await expect(fullPlayer.locator('#tired')).toBeDisabled();
+    expect(await fullPlayer.evaluate(() => !!(document.querySelector('.ext-desk').compareDocumentPosition(document.querySelector('#panel-room')) & Node.DOCUMENT_POSITION_FOLLOWING)), 'room details follow the complete player').toBe(true);
+    await expect(fullPlayer.locator('#history .hist-title').first()).toHaveText(metadata.track_name);
+    await fullPlayer.screenshot({ path: shot('rooms-player-1280') });
+    await fullPlayer.setViewportSize({ width: 390, height: 844 });
+    await fullPlayer.screenshot({ path: shot('rooms-player-390') });
+    await fullPlayer.emulateMedia({ colorScheme: 'dark' });
+    await fullPlayer.screenshot({ path: shot('rooms-player-dark-390') });
+    await fullPlayer.emulateMedia({ colorScheme: 'light' });
+    await fullPlayer.locator('#tab-player').click();
+    await expect(fullPlayer.locator('#panel-room')).toBeHidden();
+    await send({ type: 'room-audio-command', roomId, action: 'volume', value: 41 });
+    await expect(fullPlayer.locator('#volume')).toHaveValue('41');
+    await expect(fullPlayer.locator('#tab-player')).toHaveAttribute('aria-pressed', 'true');
+    await expect(fullPlayer.locator('#np-progress')).toBeVisible();
+    await fullPlayer.locator('#tab-listens').click();
+    await send({ type: 'room-audio-command', roomId, action: 'volume', value: 42 });
+    await expect(fullPlayer.locator('#tab-listens')).toHaveAttribute('aria-pressed', 'true');
+    await expect(fullPlayer.locator('#panel-listens')).toBeVisible();
+    await fullPlayer.locator('#tab-room').click();
+    await expect(fullPlayer.locator('#np-progress')).toBeVisible();
     const paused = await send({ type: 'room-audio-command', roomId, action: 'pause' });
     expect(paused.ok, paused.error).toBe(true);
     await expect.poll(async () => (await send({ type: 'room-get' })).room?.audio?.paused).toBe(true);
+    await expect(fullPlayer.locator('#play')).toHaveAttribute('aria-label', 'Play');
     const resumed = await send({ type: 'room-audio-command', roomId, action: 'resume' });
     expect(resumed.ok, resumed.error).toBe(true);
     await expect.poll(async () => (await send({ type: 'room-get' })).room?.audio?.paused).toBe(false);
+    await expect(fullPlayer.locator('#play')).toHaveAttribute('aria-label', 'Pause');
+    await fullPlayer.close(); fullPlayer = null;
     const volume = await send({ type: 'room-audio-command', roomId, action: 'volume', value: 37 });
     expect(volume.ok, volume.error).toBe(true);
 
@@ -2245,16 +2296,18 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
     }
     expect((await send({ type: 'room-get' })).room?.id).toBe(null);
     expect((await send({ type: 'room-recent' })).recentRoomIds).toEqual([]);
-    const evidence = { date: new Date().toISOString().slice(0, 10), browser: 'Chromium native extension',
+    const evidence = { date: new Date().toISOString().slice(0, 10), browser: BROWSER === 'brave' ? 'Brave native extension' : 'Chromium native extension',
       test: 'rooms: native ownership survives UI close, routes search, and leaves before sign-out',
       result: 'passed', roomId, transport: liveRoom.room?.audio?.transport || null,
       roomReceipt: roomProbe.heard[0], optOutBlockedSecondReceipt: roomProbe.heard.length === 1,
+      popupProgress: true, fullPlayerProgress: true, singleTransport: true, roomDetailsBelowPlayer: true, tabsSurviveRoomUpdates: true,
       pageUnmountPreservedRoom: true, workerRestartPreservedRoom, duplicateJoinOnWarmRestart: workerRestartPreservedRoom ? false : null,
       recentAndSearch: true, signOutLeftRoom: roomProbe.leaveCalls > 0, offscreenTarget: liveOffscreen.url,
       noPandoraRPC: true, noPandoraMedia: true,
       workerLifecycle: workerRestartPreservedRoom ? 'CDP stopped and running states observed; offscreen target retained' : null,
       extensionVersion: await ctl.evaluate(() => chrome.runtime.getManifest().version),
       playwright: `focused local tuner and synthetic OAuth/room API, isolated ports ${new URL(tuner.https).port}/${new URL(tuner.http).port}` };
+    report.rooms = evidence;
     await writeFile(resolve(here, 'evidence/extension-rooms.json'), JSON.stringify(evidence, null, 2) + '\n');
     console.log('native extension room proof', JSON.stringify(evidence));
   } finally {
@@ -2262,6 +2315,7 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
     if (djPage) await djPage.close().catch(() => {});
     if (roomPage) await roomPage.close().catch(() => {});
     if (bridgePage) await bridgePage.close().catch(() => {});
+    if (fullPlayer) await fullPlayer.close().catch(() => {});
     await ctl.close().catch(() => {});
   }
 });

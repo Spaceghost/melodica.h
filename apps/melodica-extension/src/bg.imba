@@ -26,6 +26,7 @@ import { validatePlayback } from './playback-transfer.js'
 import { PlaybackCopy } from './playback-copy.js'
 import { RoomEngine, validRoomCommand } from './room-engine.js'
 import { publicRoomMember, publicRoomSummary } from './room-state.js'
+import { roomHistory } from './room-playback-view.js'
 
 const METHOD = /^[a-z]+\.[A-Za-z]+$/
 const PLAYER_URL = browser.runtime.getURL('player.html')
@@ -1510,17 +1511,40 @@ def restoreRoomSession
 def playerView
 	const view = Object.assign({}, player, {last: lastView(), stations: state and state.saved.stations or [], loggedIn: !!(state and state.client.loggedIn), account: {signedIn: account.signedIn, label: account.label}, user: userView(), scrobbling: scrobbleView(), access: {allowed: !!access.allowed, message: access.allowed ? '' : String(access.message or '')}, room: roomView()})
 	view.volume = room.audio.volume if room.id and room.audio and Number.isFinite(room.audio.volume)
+	view.history = roomHistory(roomView()) if room.id and room.state
 	if room.id and room.state and (room.state.play or !roomIsDj())
 		const play = room.state and room.state.play
 		const meta = play and play.track_metadata
-		const durationMs = Number(meta and meta.additional_info and meta.additional_info.duration_ms) or Number(play and play.duration_ms) or 0
+		const durationMs = Number(play and play.duration_ms) or Number(meta and meta.additional_info and meta.additional_info.duration_ms) or 0
 		let position = (Number(play and play.position_ms) or 0) / 1000
 		if play and Number(play.server_time) > 0 and !play.paused_at
 			position += Math.max(0, (Date.now() - Number(play.server_time)) / 1000)
 		const paused = !!(play and play.paused_at) or !!(room.audio and room.audio.paused)
 		const audible = ['listening', 'broadcasting'].includes(String(room.audio and room.audio.state or '')) and !paused
 		const track = meta ? {title: meta.track_name or '', artist: meta.artist_name or '', album: meta.release_name or '', coverArt: meta.additional_info and meta.additional_info.art_url or '', duration: durationMs / 1000, kind: 'room'} : null
-		Object.assign(view, {status: audible ? 'playing' : (paused ? 'paused' : (room.audio and room.audio.state === 'connecting' ? 'loading' : 'idle')), station: {name: "Room · {room.state and room.state.name or 'Listening room'}", token: ''}, track, position: Math.max(0, Math.min(durationMs / 1000, position)), duration: durationMs / 1000, volume: room.audio and Number.isFinite(room.audio.volume) ? room.audio.volume : player.volume, queueLength: 0, queue: [], error: room.audio and room.audio.message or '', last: null, stations: roomIsDj() ? (state and state.saved.stations or []) : [], pendingStation: roomIsDj() ? player.pendingStation : null})
+		let status = 'idle'
+		if audible
+			status = 'playing'
+		elif paused
+			status = 'paused'
+		elif room.audio and room.audio.state === 'connecting'
+			status = 'loading'
+		const dj = roomIsDj()
+		const upcoming = dj and !player.pendingStation ? (player.queue or []) : []
+		Object.assign(view, {
+			status
+			station: {name: "Room · {room.state and room.state.name or 'Listening room'}", token: ''}
+			track
+			position: Math.max(0, Math.min(durationMs / 1000, position))
+			duration: durationMs / 1000
+			volume: room.audio and Number.isFinite(room.audio.volume) ? room.audio.volume : player.volume
+			queueLength: upcoming.length
+			queue: upcoming
+			error: room.audio and room.audio.message or ''
+			last: null
+			stations: dj ? (state and state.saved.stations or []) : []
+			pendingStation: dj ? player.pendingStation : null
+		})
 	view
 
 # Save the engine's "last playing" record (at most every 2 s; pause, stop and

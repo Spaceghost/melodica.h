@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { compile } from 'imba/compiler';
+import { roomHistory } from '../src/room-playback-view.js';
 
 test('compiled room role works while playing, idle and on the DJ account secondary device', async () => {
   const source = await readFile(new URL('../src/bg.imba', import.meta.url), 'utf8');
@@ -43,13 +44,19 @@ test('compiled room player keeps station choices for its DJ and hides private ch
   const source=await readFile(new URL('../src/bg.imba',import.meta.url),'utf8');
   const body=source.match(/^def playerView\b[\s\S]*?(?=^def \w)/m)[0];
   const {js}=compile(body+'\nglobalThis.view=playerView\n',{platform:'node',format:'esm',sourcePath:'src/player-view-test.imba',raiseErrors:true});
-  const context=vm.createContext({dj:true,player:{volume:80,pendingStation:{token:'new',name:'Queued radio'}},
+  const context=vm.createContext({dj:true,player:{volume:80,pendingStation:{token:'new',name:'Queued radio'},queueLength:1,queue:[{title:'Next DJ song'}],history:[{title:'Private song'}]},
     state:{client:{loggedIn:true},saved:{stations:[{token:'radio',name:'Radio'}]}},account:{signedIn:true,label:'DJ'},access:{allowed:true},
     room:{id:'room',state:{name:'Room',play:{id:'play',dj:'dj',duration_ms:10000,track_metadata:{track_name:'Current song',artist_name:'Artist'}}},audio:{state:'broadcasting'}},
-    lastView:()=>null,userView:()=>({}),scrobbleView:()=>({}),roomView:()=>({id:'room'}),roomIsDj:()=>context.dj});
+    roomHistory,lastView:()=>null,userView:()=>({}),scrobbleView:()=>({}),roomView:()=>context.room,roomIsDj:()=>context.dj});
   vm.runInContext(js,context);let view=context.view();
   assert.equal(view.stations[0].token,'radio');assert.equal(view.pendingStation.token,'new');assert.equal(view.track.title,'Current song');
-  context.dj=false;view=context.view();assert.equal(view.stations.length,0);assert.equal(view.pendingStation,null);
+  assert.equal(view.queue.length,0,'an old station queue is hidden when another station is selected');
+  assert.equal(view.history[0].title,'Current song');
+  assert.equal(view.history.some(track=>track.title==='Private song'),false);
+  context.player.pendingStation=null;view=context.view();assert.equal(view.queue[0].title,'Next DJ song');
+  context.dj=false;view=context.view();assert.equal(view.stations.length,0);assert.equal(view.pendingStation,null);assert.equal(view.queue.length,0);
+  context.dj=true;context.room.state.play=null;context.room.state.current_dj='dj';view=context.view();assert.equal(view.history.length,0,'an idle DJ still sees room history rather than the private log');
+  context.room.id=null;view=context.view();assert.equal(view.history[0].title,'Private song','leaving restores the original private play log');
 });
 
 test('compiled engine queues the station without changing the current track, then uses it for the next song', async()=>{

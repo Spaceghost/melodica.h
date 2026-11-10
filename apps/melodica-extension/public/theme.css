@@ -406,10 +406,11 @@ html.ext-popup .mark svg { width: 72px; height: 72px; }
 .ext-nav button.pill { min-height: 36px; padding: 0 0.8rem; }
 /* transport: the extension's ids */
 #play[data-state=playing] .ico-play, #play[data-state=paused] .ico-pause { display: none; }
-.now.ext-compact .stage { flex-direction: row; align-items: center; gap: 0.9rem; padding: 1rem 1rem 0.4rem; }
+.now.ext-compact .stage { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 0.9rem; padding: 1rem 1rem 0.4rem; }
 .now.ext-compact .art { width: 96px; }
 .now.ext-compact .cover { border-radius: 10px; }
-.now.ext-compact .meta { text-align: left; }
+.now.ext-compact .meta { text-align: left; flex: 1; width: auto; }
+.now.ext-compact .progress { flex: 0 0 100%; }
 .now.ext-compact .title { font-size: 1.35rem; }
 .now.ext-compact .artist { font-size: 0.98rem; }
 .now.ext-compact .line { justify-content: flex-start; }
@@ -453,6 +454,7 @@ html.ext-player .login, html.ext-options .login { width: 100%; max-width: calc(v
 .ext-desk .title { font-size: clamp(2rem, 3.2vw, 2.8rem); }
 .ext-desk .line { justify-content: flex-start; }
 .ext-desk .progress { grid-column: 1 / -1; }
+html.ext-player .ext-desk.room-listener { grid-template-columns: minmax(0, 1fr); }
 .ext-desk .controls-bar { padding: 0.4rem 2rem 0.3rem; }
 .ext-desk .deck { padding: 0.8rem 2rem 1rem; }
 .ext-desk .ext-state { padding: 0 2rem 0.8rem; }

@@ -3,6 +3,7 @@
 # it stops nothing. It renders `player-state` and sends `player` commands.
 
 import { browser, send, FALLBACK_COVER } from './shared.imba'
+import { roomTimeline, roomNowPlaying } from './room-playback-view.js'
 import { StationList, NowPlaying, Transport, AccountLine, UpdateBanner, Top, Foot, UsernamePick, ScrobbleNotice, ListenPrompt, CopyListen } from './ui.imba'
 import { parseListenUri, routeOf } from './listen-uri.js'
 import { MELODICA_PAGES } from './scrobble.imba'
@@ -48,6 +49,7 @@ tag Player
 	prop liveState = ''
 	prop panelError = ''
 	prop listenLink = null
+	prop roomClock = null
 
 	# ?listen=<listen://, web+listen:// or https://spacegho.st/listen/ link> (Firefox's
 	# web+listen handler, the omnibox, a spacegho.st/listen/ page): artist, genre and
@@ -66,6 +68,7 @@ tag Player
 	def mount
 		self.listener = do(msg, sender, sendResponse) onMessage(msg, sender, sendResponse)
 		browser.runtime.onMessage.addListener(self.listener)
+		self.progressTimer = setInterval((do imba.commit() if currentRoom()), 500)
 		version = browser.runtime.getManifest().version
 		takeListen()
 		try
@@ -74,7 +77,7 @@ tag Player
 			account = r.account or null
 			update = r.update or null
 			self.pollTimer = setInterval((do poll()), ACCOUNT_POLL)
-			if stations.length === 0 and loggedIn
+			if stations.length === 0 and loggedIn and (!currentRoom() or currentRoom().role === 'dj')
 				await reload()
 			loadCrew() if loggedIn
 			mountToast() if loggedIn
@@ -122,14 +125,7 @@ tag Player
 		return if name === 'player'
 		self.views ||= {}
 		if name === 'room'
-			return if self.views.room and roomUiId === currentRoom().id
-			self.views.room.unmount() if self.views.room and self.views.room.unmount
-			delete self.views.room if self.views.room
-			try
-				await mountRoomPanel()
-			catch e
-				panelError = String(e and e.message or e)
-			imba.commit()
+			await ensureRoomPanel()
 			return
 		return if self.views[name]
 		try
@@ -164,16 +160,22 @@ tag Player
 		roomUiId = null
 		sui.live.close() if sui
 		clearInterval(self.pollTimer) if self.pollTimer
+		clearInterval(self.progressTimer) if self.progressTimer
 
 	def apply state
 		return unless state
 		const priorRoomId = player and player.room and player.room.id or null
 		player = state
-		stations = state.stations if Array.isArray(state.stations) and (state.stations.length or stations.length === 0)
+		roomClock = roomTimeline(roomClock, player.room)
+		stations = state.stations if Array.isArray(state.stations)
 		loggedIn = !!state.loggedIn
 		const nextRoomId = currentRoom() and currentRoom().id or null
+		if nextRoomId !== priorRoomId
+			traits = null
+			message = ''
+			kind = ''
 		if nextRoomId
-			panel = 'room'
+			panel = 'room' if !priorRoomId and panel === 'player'
 			if roomUiId and roomUiId !== nextRoomId
 				roomView.unmount() if roomView and roomView.unmount
 				roomView = null
@@ -186,7 +188,6 @@ tag Player
 			roomUiId = null
 			panel = 'player' if panel === 'room'
 		document.title = state.track ? "{state.track.title} – {state.track.artist} · melodica" : 'melodica'
-		lockPrivateControls()
 
 	def currentRoom
 		player and player.room and player.room.id ? player.room : null
@@ -199,18 +200,40 @@ tag Player
 		roomSnapshot = info
 		if player
 			player.room = info
+			roomClock = roomTimeline(roomClock, info)
 		roomConnection.dispatchEvent(new CustomEvent('state', {detail: info.state})) if info.state and roomConnection
 		roomAudio.dispatchEvent(new CustomEvent('state', {detail: info.audio or {state: 'idle'}})) if roomAudio
 		imba.commit()
+
+	def ensureRoomPanel
+		const info = currentRoom()
+		return unless info
+		return if self.views and self.views.room and roomUiId === info.id
+		return self.roomMount if self.roomMount and self.roomMountId === info.id
+		self.views ||= {}
+		self.roomMountId = info.id
+		const task = mountRoomPanel()
+		self.roomMount = task
+		try
+			await task
+		catch e
+			panelError = String(e and e.message or e)
+		finally
+			if self.roomMount === task
+				self.roomMount = null
+				self.roomMountId = null
+			imba.commit()
 
 	def mountRoomPanel
 		const info = currentRoom()
 		return unless info
 		const ui = await scrobbleUi()
+		return unless currentRoom() and currentRoom().id === info.id
 		throw new Error('Rooms are not available in this extension build.') unless ui.mod.mountRoom
 		const host = self.querySelector('#panel-room-content')
 		throw new Error('The room panel is not ready.') unless host
 		const id = info.id
+		roomView.unmount() if roomView and roomView.unmount
 		roomSnapshot = info
 		roomConnection = new EventTarget()
 		roomConnection.getState = do roomSnapshot and roomSnapshot.state or null
@@ -257,20 +280,6 @@ tag Player
 		panel = 'player'
 		imba.commit()
 
-	def lockPrivateControls
-		const room = currentRoom()
-		const blocked = !!(room and room.role !== 'dj')
-		window.requestAnimationFrame(do
-			for control of self.querySelectorAll('#station-list button.station')
-				control.disabled = blocked
-			for control of self.querySelectorAll('#quality')
-				control.disabled = !!(room and (room.locked or room.role !== 'dj'))
-			for control of self.querySelectorAll('#station-list button.delete')
-				control.disabled = blocked or !!(room and room.locked)
-			for control of self.querySelectorAll('#tired')
-				control.disabled = !!room
-		)
-
 	# Pushes from the background.
 	def onMessage msg, sender, sendResponse
 		return no unless msg and typeof msg === 'object'
@@ -280,7 +289,7 @@ tag Player
 			imba.commit()
 			if currentRoom()
 				acceptRoom({room: currentRoom()})
-				show('room') unless self.views and self.views.room and roomUiId === currentRoom().id
+				ensureRoomPanel() unless self.views and self.views.room and roomUiId === currentRoom().id
 			elif priorRoomId and self.views and self.views.room
 				self.views.room.unmount() if self.views.room.unmount
 				delete self.views.room
@@ -293,7 +302,9 @@ tag Player
 				if Number.isSafeInteger(nextPlay.position_ms) and nextPlay.position_ms >= 0 and Number.isSafeInteger(nextPlay.server_time) and nextPlay.server_time > (currentPlay.server_time or 0)
 					roomSnapshot = Object.assign({}, activeRoom, {state: Object.assign({}, activeRoom.state, {play: Object.assign({}, currentPlay, {position_ms: nextPlay.position_ms, server_time: nextPlay.server_time})})})
 					player.room = roomSnapshot
+					roomClock = roomTimeline(roomClock, roomSnapshot)
 					roomConnection.dispatchEvent(new CustomEvent('clock', {detail: {play_id: nextPlay.id, position_ms: nextPlay.position_ms, server_time: nextPlay.server_time}})) if roomConnection
+					imba.commit()
 		elif msg.type === 'account'
 			account = msg.account
 			imba.commit()
@@ -372,6 +383,7 @@ tag Player
 			else throw new Error("Unknown control {action}")
 
 	def explain
+		return toast('Song explanations are available for your Pandora playback.', 'info') if currentRoom()
 		return unless player and player.track
 		try
 			traits = (await send({type: 'explain', trackToken: player.track.trackToken})).traits
@@ -424,13 +436,14 @@ tag Player
 
 	get now
 		const activeRoom = currentRoom()
-		if activeRoom and activeRoom.state and activeRoom.state.play and activeRoom.state.play.track_metadata
-			const p = activeRoom.state.play
-			const track = p.track_metadata
-			const extra = track.additional_info or {}
-			return {song: {title: track.track_name, artist: track.artist_name, album: track.release_name, coverArt: extra.art_url or '', duration: Number(extra.duration_ms or 0) / 1000, rating: p.reaction === 'like' ? 1 : (p.reaction === 'dislike' ? 2 : 0)}, station: {name: activeRoom.state.name or 'Room'}, paused: !['broadcasting', 'listening'].includes(activeRoom.audio and activeRoom.audio.state), position: Number(p.position_ms or 0) / 1000, duration: Number(extra.duration_ms or 0) / 1000}
+		return roomNowPlaying(activeRoom, roomClock) if activeRoom
 		return null unless player and player.track
 		{song: player.track, station: player.station, paused: player.status !== 'playing', position: player.position, duration: player.duration}
+
+	def isCurrentHistory entry
+		const song = now and now.song
+		return no unless song
+		if entry.roomPlayId then song.roomPlayId === entry.roomPlayId else !!(song.trackToken and entry.trackToken === song.trackToken)
 
 	get statusLine
 		return '' unless player
@@ -450,8 +463,8 @@ tag Player
 						<span#status> (user.username or "Signed in")
 						<button#logout type="button" @click=logout> "Sign out"
 				else
-					<span#status.fine> "Not signed in"
-			<main#app.app data-view=(loggedIn ? 'player' : 'login') data-status=(player and player.status or '')>
+					<span#status.fine> (currentRoom() ? "Listening to the room" : "Not signed in")
+			<main#app.app data-view=(loggedIn or currentRoom() ? 'player' : 'login') data-status=(player and player.status or '')>
 				<div.view>
 					<UpdateBanner update=update @reload=reloadExtension>
 					if !loggedIn and !currentRoom()
@@ -477,22 +490,9 @@ tag Player
 						<section#panel-listens.ext-panel.card hidden=(panel !== 'listens')>
 						<section#panel-leaderboard.ext-panel.card hidden=(panel !== 'leaderboard')>
 						<section#panel-map.ext-panel.card hidden=(panel !== 'map')>
-						<section#panel-room.ext-panel.card hidden=(panel !== 'room')>
-							if now and now.song
-								<div.card.now>
-									<p.eyebrow> "ROOM PLAYBACK"
-									<p#room-now-title> "{now.song.title} · {now.song.artist}"
-									<Transport now=now @control=control(e.detail)>
-									<label.deck-item for="room-volume">
-										<span.sr> "Room volume"
-										<input#room-volume type="range" min="0" max="100" value=(player and Number.isFinite(player.volume) ? player.volume : 80) aria-label="Room volume" @change=setVolume(e.target.value)>
-							if player and player.pendingStation
-								<p.fine> "{player.pendingStation.name} queued for your next DJ track."
-							<p.fine> (currentRoom() and currentRoom().locked ? 'Your DJ broadcast is active. Select a station for your next DJ track.' : (currentRoom() and currentRoom().role === 'dj' ? 'Your DJ turn is ready. Choose a Pandora station from the Player tab to start broadcasting.' : 'You are listening to the room. Leave before starting private playback.'))
-							<div#panel-room-content>
-						<div.ext-desk hidden=(panel !== 'player')>
-							<aside.ext-side>
-								<StationList stations=stations active=(player and player.station and player.station.token) @select=select @refresh=reload @delete=remove>
+						<div.ext-desk .room-listener=(!!currentRoom() and currentRoom().role !== 'dj') hidden=(panel !== 'player' and panel !== 'room')>
+							<aside.ext-side hidden=(!!currentRoom() and currentRoom().role !== 'dj')>
+								<StationList stations=stations active=(player and player.station and player.station.token) blocked=(!!currentRoom() and currentRoom().role !== 'dj') deleteBlocked=(!!currentRoom() and currentRoom().locked) @select=select @refresh=reload @delete=remove>
 							<section.ext-main>
 								if player and player.scrobbling and player.scrobbling.notice
 									<ScrobbleNotice scrobbling=player.scrobbling>
@@ -504,8 +504,8 @@ tag Player
 								if user.prompt
 									<UsernamePick user=user>
 								<div.card.now>
-									<NowPlaying now=now>
-									<Transport now=now @control=control(e.detail)>
+									<NowPlaying now=now idleTitle=(currentRoom() and currentRoom().role !== 'dj' ? 'Waiting for the DJ' : 'Pick a station')>
+									<Transport now=now allowTired=!currentRoom() @control=control(e.detail)>
 									<CopyListen song=(now and now.song)>
 									<p#player-status.ext-state> statusLine
 									<div.deck>
@@ -518,11 +518,11 @@ tag Player
 											<input#volume type="range" min="0" max="100" value=(player and Number.isFinite(player.volume) ? player.volume : 80) aria-label="Volume" @change=setVolume(e.target.value)>
 										<label.deck-item for="quality">
 											<span> "Quality"
-											<select#quality value=(player and player.quality or 'high') aria-label="Audio quality" @change=setQuality(e.target.value)>
+											<select#quality disabled=(!!currentRoom() and (currentRoom().locked or currentRoom().role !== 'dj')) value=(player and player.quality or 'high') aria-label="Audio quality" @change=setQuality(e.target.value)>
 												<option value="high"> "high"
 												<option value="medium"> "medium"
 												<option value="low"> "low"
-										<button#explain.round type="button" disabled=!song aria-label="Why is this song playing?" title="Why this song? (e)" @click=explain>
+										<button#explain.round type="button" disabled=(!song or !!currentRoom()) aria-label="Why is this song playing?" title="Why this song? (e)" @click=explain>
 											<svg aria-hidden="true" viewBox="0 0 24 24">
 												<circle cx="12" cy="12" r="9">
 												<path d="M9.3 9.2a2.8 2.8 0 0 1 5.4 1c0 1.8-2.7 2.5-2.7 4">
@@ -535,7 +535,7 @@ tag Player
 								if player and player.queue and player.queue.length
 									<section.panel.next>
 										<div.panel-head>
-											<h3> "Up next"
+											<h3> (currentRoom() ? "Your next DJ tracks" : "Up next")
 											<span.fine.nowrap> "{player.queue.length} {player.queue.length === 1 ? 'song' : 'songs'}"
 										<ol.up-next#up-next>
 											for q in player.queue
@@ -546,15 +546,20 @@ tag Player
 									<section.panel.recent>
 										<div.panel-head>
 											<h3> "Play log"
-											<span.fine.nowrap> "this session"
+											<span.fine.nowrap> (currentRoom() ? "this room" : "this session")
 										<ol.history#history>
 											for h in player.history
-												<li.hist .now=(song and h.trackToken === song.trackToken) data-rating=(h.rating or 0)>
+												<li.hist .now=(isCurrentHistory(h)) data-rating=(h.rating or 0)>
 													<img.hist-cover src=(h.coverArt or FALLBACK_COVER) alt="">
 													<div.hist-meta>
 														<span.hist-title> h.title
 														<span.hist-artist> h.artist
-														<span.hist-rating> (song and h.trackToken === song.trackToken ? 'now playing' : (h.rating === 1 ? 'loved' : (h.rating === 2 ? 'banned' : (h.rating === 3 ? 'tired' : ''))))
+														<span.hist-rating> (isCurrentHistory(h) ? 'now playing' : (h.rating === 1 ? 'loved' : (h.rating === 2 ? 'banned' : (h.rating === 3 ? 'tired' : ''))))
+						<section#panel-room.ext-panel.card hidden=(panel !== 'room')>
+							if player and player.pendingStation
+								<p.fine> "{player.pendingStation.name} queued for your next DJ track."
+							<p.fine> (currentRoom() and currentRoom().locked ? 'Your DJ broadcast is active. Select a station for your next DJ track.' : (currentRoom() and currentRoom().role === 'dj' ? 'Your DJ turn is ready. Choose a Pandora station from the Player tab to start broadcasting.' : 'You are listening to the room. Leave before starting private playback.'))
+							<div#panel-room-content>
 			<Foot version=version>
 				<AccountLine account=account busy=accountBusy message=accountError @signin=accountAction('account-signin') @signout=accountAction('account-signout')>
 				<span.fine> "Keys: space play/pause · n next · + love · - ban · t tired · e why"
