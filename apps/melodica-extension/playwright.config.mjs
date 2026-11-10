@@ -5,7 +5,7 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: 'tests',
-  testMatch: ['smoke-extension.spec.mjs'],
+  testMatch: ['smoke-extension.spec.mjs', 'cdn-playback.spec.mjs'],
   outputDir: 'tests/artifacts/playwright',
   timeout: 180_000,
   expect: { timeout: 20_000 },

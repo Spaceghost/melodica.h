@@ -147,6 +147,8 @@ export class RoomEngine extends EventTarget {
       capture: async () => {
         await media.resumePlayerAudio?.(this.engine.audio);
         await this.waitForPlayerAudio();
+        await this.engine.preparePlayerAudioForCapture();
+        await this.waitForPlayerAudio();
         return media.capturePlayerAudio(this.engine.audio);
       },
       pause: () => this.engine.pause(),
@@ -238,7 +240,16 @@ export class RoomEngine extends EventTarget {
       const sourceReady = needsSource ? !!state.station : (token && (token !== before || state.changedAt > changedBefore));
       if (sourceReady && token && state.status === 'playing' && !this.engine.audio.paused && this.engine.audio.readyState >= 2) {
         const metadata = trackMetadata(state.track, state.duration);
-        if (metadata) return { track_metadata: metadata };
+        if (metadata) {
+          await this.engine.preparePlayerAudioForCapture();
+          if (generation !== this.turnGeneration || !this.session || !this.isDj()) {
+            throw Object.assign(new Error('The DJ turn ended before its audio was prepared.'), { code: 'dj_turn_ended' });
+          }
+          if (this.engine.audio.paused || this.engine.audio.readyState < 2 || this.engine.snapshot.status !== 'playing') {
+            throw new Error('The player paused before room audio was ready. Resume playback and try the DJ turn again.');
+          }
+          return { track_metadata: metadata };
+        }
       }
       await new Promise((resolve) => setTimeout(resolve, 80));
     }

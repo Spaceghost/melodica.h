@@ -46,6 +46,9 @@ export class Engine
 		# The current track came from a saved record: {cacheTried, url}.
 		self.restored = null
 		self.copyUrl = null
+		self.copyTask = null
+		self.copyToken = null
+		self.preparingSource = null
 		self.restoring = null
 		# Said once on the song after a saved one could not be played again.
 		self.continueNotice = ''
@@ -62,8 +65,6 @@ export class Engine
 		self.fetching = no
 		self.failures = 0
 		self.audio = self.doc.createElement('audio')
-		# Player capture requires origin-clean media, even when the CDN allows CORS.
-		self.audio.crossOrigin = 'anonymous'
 		self.audio.preload = 'auto'
 		self.audio.id = 'audio'
 		self.doc.body.appendChild(self.audio) if self.doc.body
@@ -107,6 +108,81 @@ export class Engine
 			log("audio copy kept ({Math.round(blob.size / 1024)} KiB)")
 		catch e
 			log("audio copy not kept: {e and e.name or e} {e and e.message or ''}")
+
+	# DJ capture must use origin-clean bytes, while ordinary radio must remain
+	# playable when Pandora's CDN does not send CORS headers. Reuse the bounded
+	# current-track cache and switch this same element without changing position.
+	def preparePlayerAudioForCapture
+		const song = state.track
+		throw new Error('There is no current song to broadcast.') unless song and !song.ad and song.trackToken
+		return if copyUrl and audio.src === copyUrl
+		const token = song.trackToken
+		const gen = generation
+		if copyToken !== token or !copyTask
+			copyToken = token
+			copyTask = keepCopy(song)
+		let timer = null
+		try
+			await Promise.race([copyTask, new Promise do(resolve, reject)
+				timer = setTimeout((do reject(new Error('The room audio copy is taking too long. Private playback can continue.'))), 10000)
+			])
+		finally
+			clearTimeout(timer) if timer
+		throw new Error('The player changed tracks before its audio copy was ready.') if generation !== gen or !state.track or state.track.trackToken !== token
+		const cleanUrl = await copyOf(token)
+		let captureUrl = cleanUrl
+		if !captureUrl
+			const controller = new AbortController()
+			const abortCopy = do controller.abort()
+			const timer = setTimeout(abortCopy, 10000)
+			try
+				const res = await globalThis.fetch(song.audioUrl, {credentials: 'omit', cache: 'no-store', signal: controller.signal})
+				if res.ok and res.status === 200
+					const blob = await res.blob()
+					captureUrl = URL.createObjectURL(blob) if blob.size > 0
+			finally
+				clearTimeout(timer)
+		throw new Error('Could not prepare origin-clean audio for the room. Private playback can continue.') unless captureUrl
+		if generation !== gen or !state.track or state.track.trackToken !== token
+			URL.revokeObjectURL(captureUrl)
+			throw new Error('The player changed tracks before audio capture was ready.')
+		const position = Number(audio.currentTime) or Number(state.position) or 0
+		const wasPlaying = !audio.paused and !held
+		audio.pause() if wasPlaying
+		preparingSource = captureUrl
+		audio.src = captureUrl
+		audio.load()
+		copyUrl = captureUrl
+		const deadline = Date.now() + 10000
+		while (audio.readyState < 2 and !audio.error and Date.now() < deadline)
+			if generation !== gen or !state.track or state.track.trackToken !== token
+				preparingSource = null if preparingSource === captureUrl
+				throw new Error('The player changed tracks before audio capture was ready.')
+			await new Promise(do(resolve) setTimeout(resolve, 50))
+		if generation !== gen or !state.track or state.track.trackToken !== token
+			preparingSource = null if preparingSource === captureUrl
+			throw new Error('The player changed tracks before audio capture was ready.')
+		if audio.error or audio.readyState < 2
+			preparingSource = null
+			copyUrl = null
+			URL.revokeObjectURL(captureUrl)
+			audio.src = song.audioUrl
+			audio.load()
+			const restoreDeadline = Date.now() + 5000
+			while audio.readyState < 1 and Date.now() < restoreDeadline
+				if generation !== gen or !state.track or state.track.trackToken !== token
+					throw new Error('The player changed tracks before private audio could be restored.')
+				await new Promise(do(resolve) setTimeout(resolve, 50))
+			if generation !== gen or !state.track or state.track.trackToken !== token
+				throw new Error('The player changed tracks before private audio could be restored.')
+			try audio.currentTime = position if audio.readyState >= 1 catch e null
+			await audio.play() if wasPlaying and !held
+			throw new Error('Origin-clean room audio could not be loaded. Private playback was restored.')
+		try audio.currentTime = Math.min(position, Math.max(0, (Number(audio.duration) or position) - 0.1)) catch e null
+		preparingSource = null
+		if wasPlaying and !held
+			await audio.play()
+			throw new Error('The player changed tracks before audio capture was ready.') if generation !== gen or !state.track or state.track.trackToken !== token
 
 	def copyOf token
 		return null unless globalThis.caches and token
@@ -324,8 +400,9 @@ export class Engine
 		applyVolume()
 		restored = null
 		releaseCopyUrl()
+		copyToken = song.trackToken
+		copyTask = keepCopy(song)
 		audio.src = song.audioUrl
-		keepCopy(song)
 		if held
 			set({status: 'paused'})
 			updateMediaSession()
@@ -475,6 +552,7 @@ export class Engine
 
 	# A track that cannot be played is skipped; several in a row stop the station.
 	def onError
+		return if preparingSource and (audio.currentSrc or audio.src) === preparingSource
 		if roomControl
 			try
 				return if await roomControl('ended')

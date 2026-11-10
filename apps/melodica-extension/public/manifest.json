@@ -46,6 +46,8 @@
   "host_permissions": [
     "https://tuner.pandora.com/*",
     "https://*.pandora.com/*",
+    "https://*.p-cdn.us/*",
+    "https://*.p-cdn.com/*",
     "https://spacegho.st/oauth/*",
     "https://spacegho.st/scrobble/*",
     "https://spacegho.st/extensions/*"

@@ -61,6 +61,7 @@ test('room engine uses the current player audio and waits for a fresh song to ac
     },
     pause() { audio.paused = true; },
     resume() { audio.paused = false; },
+    async preparePlayerAudioForCapture() {},
     setVolume() {},
   };
   let playerOptions, connectionOptions;
@@ -190,4 +191,19 @@ test('DJ station selection queues the next turn without touching the live broadc
   await rooms.selectStation({token:'mobile-station',name:'Mobile radio'});
   assert.equal(selected.token,'mobile-station');assert.equal(rooms.state().state.play.id,'current');
   state={...state,you_broadcasting:false};await assert.rejects(rooms.selectStation({token:'secondary'}));
+});
+
+test('a source paused during origin-clean preparation is never announced as a DJ track', async () => {
+  const audio = new EventTarget();
+  audio.paused = false;
+  audio.readyState = 2;
+  const engine = {
+    audio,
+    snapshot: { station: { token: 'station' }, track: { trackToken: 'fresh', title: 'Fresh', artist: 'Band', duration: 20 }, status: 'playing', changedAt: 2 },
+    async skip() { this.snapshot.changedAt++; },
+    async preparePlayerAudioForCapture() { audio.paused = true; this.snapshot.status = 'paused'; },
+  };
+  const room = new RoomEngine({ engine, send: async () => ({}), loadMedia: async () => ({}) });
+  room.session = { getState: () => ({ you: 'dj-user', current_dj: 'dj-user', you_broadcasting: true, play: null }) };
+  await assert.rejects(room.startTurn(), /player paused before room audio was ready/);
 });
