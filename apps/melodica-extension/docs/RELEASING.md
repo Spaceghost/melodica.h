@@ -44,6 +44,16 @@ selection. It does not publish a public Mozilla listing or submit to other store
 
 ## Repair and evidence
 
+If Mozilla accepted a signing submission but the build lost its connection before
+downloading the XPI, dispatch **ci** from the default branch with `release_tag` set
+to the existing stable tag. The workflow checks out that exact tag, recovers its
+existing Mozilla signature, compares all manifest JSON values and every other
+payload byte against the build, and
+runs all three desktop browser gates before creating the release. It submits to
+Mozilla only when the version lookup definitively returns 404. Do not move the
+tag or increment the extension version to retry a download. Once recovery CI
+succeeds, dispatch the publisher below for the same tag.
+
 The GitHub **Publish self-hosted release** workflow accepts an existing tag for
 repair, without rebuilding the extension, retagging it or submitting it to Mozilla
 again. Leave the tag empty for the latest release. `force_files` re-uploads the

@@ -51,6 +51,7 @@ class FakeSession extends EventTarget {
 
 test('room engine uses the current player audio and waits for a fresh song to actually play', async () => {
   const audio = new EventTarget();
+  audio.readyState = 2;
   audio.paused = false;
   const engine = {
     audio,
@@ -89,7 +90,13 @@ test('room engine uses the current player audio and waits for a fresh song to ac
   const next = await playerOptions.startTurn();
   assert.deepEqual(next.track_metadata, { track_name: 'Fresh', artist_name: 'Band', release_name: '', additional_info: { duration_ms: 20000 } });
   assert.equal(Object.hasOwn(next.track_metadata, 'audioUrl'), false);
-  assert.equal(playerOptions.capture().element, audio);
+  audio.readyState = 0;
+  let captured = false;
+  const capture = playerOptions.capture().then(value => { captured = true; return value; });
+  await new Promise(resolve => setTimeout(resolve, 70));
+  assert.equal(captured, false, 'play status alone must not capture an unbuffered source');
+  audio.readyState = 2;
+  assert.equal((await capture).element, audio);
   assert.equal(playerOptions.scrobbling(), false);
   await roomEngine.leave({ leave: false });
   const held = new FakeSession();

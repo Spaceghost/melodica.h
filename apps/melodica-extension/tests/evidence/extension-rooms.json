@@ -8,7 +8,7 @@
   "roomReceipt": {
     "viewer": "listener-ci",
     "play_id": "room-play-1",
-    "listened_ms": 1159
+    "listened_ms": 1203
   },
   "optOutBlockedSecondReceipt": true,
   "popupProgress": true,
@@ -16,6 +16,7 @@
   "singleTransport": true,
   "roomDetailsBelowPlayer": true,
   "tabsSurviveRoomUpdates": true,
+  "webRemoteProof": true,
   "pageUnmountPreservedRoom": true,
   "workerRestartPreservedRoom": false,
   "duplicateJoinOnWarmRestart": null,
@@ -25,6 +26,6 @@
   "noPandoraRPC": true,
   "noPandoraMedia": true,
   "workerLifecycle": null,
-  "extensionVersion": "0.9.17",
-  "playwright": "focused local tuner and synthetic OAuth/room API, isolated ports 29443/29080"
+  "extensionVersion": "0.9.18",
+  "playwright": "focused local tuner and synthetic OAuth/room API, isolated ports 31443/31080"
 }

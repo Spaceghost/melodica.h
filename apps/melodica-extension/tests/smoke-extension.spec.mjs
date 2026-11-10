@@ -2125,6 +2125,38 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
     roomProbe.state.play.duration_ms = 60000;
     roomProbe.state.seq++;
     await expect.poll(async () => (await send({ type: 'room-get' })).room?.state?.play?.duration_ms).toBe(60000);
+    // The fully open page is the extension's remote: it must follow the extension's
+    // room snapshot, not display private playback or start its own relay player.
+    const webRemoteProof = !!process.env.MELODICA_WEB_DIST;
+    if (webRemoteProof) {
+    await expect(bridgePage.locator('#np-title')).toHaveText(metadata.track_name);
+    await expect(bridgePage.locator('#np-artist')).toHaveText(metadata.artist_name);
+    await expect(bridgePage.locator('#np-album')).toHaveText(metadata.release_name);
+    await expect(bridgePage.locator('#app .stage')).not.toHaveClass(/idle/);
+    await expect(bridgePage.locator('#progress')).toBeVisible();
+    await expect(bridgePage.locator('#progress')).toHaveAttribute('max', '60');
+    await expect(bridgePage.locator('#remote-signin')).toBeHidden();
+    await expect(bridgePage.locator('#player-room-current')).toBeVisible();
+    await expect(bridgePage.locator('#player-room-link')).toHaveText('Native extension room');
+    await expect(bridgePage.locator('#btn-explain')).toBeDisabled();
+    await expect(bridgePage.locator('#btn-tired')).toBeDisabled();
+    await bridgePage.locator('#player-rooms-browse > summary').click();
+    const roomSearch = bridgePage.locator('#player-rooms-list form.sui-room-search');
+    await expect(roomSearch).toBeVisible();
+    await roomSearch.getByRole('searchbox', { name: 'Search rooms' }).fill('Native extension room');
+    await roomSearch.getByRole('button', { name: 'Search rooms' }).click();
+    await expect.poll(() => roomProbe.searches.at(-1)?.q).toBe('Native extension room');
+    await expect(bridgePage.locator('#player-rooms-list .sui-room-tile')).toContainText('Native extension room');
+    await expect(bridgePage.locator('#player-rooms-list .sui-rooms-grid').first()).toContainText('Native extension room');
+    await bridgePage.locator('#player-rooms-browse > summary').click();
+    const remoteProgress = await bridgePage.locator('#progress').evaluate(p => p.value);
+    await expect.poll(() => bridgePage.locator('#progress').evaluate(p => p.value)).toBeGreaterThan(remoteProgress);
+    await expect(bridgePage.locator('#audio')).not.toHaveAttribute('src', /.+/);
+    await bridgePage.setViewportSize({ width: 390, height: 844 });
+    await bridgePage.screenshot({ path: shot('rooms-web-remote-390') });
+    await bridgePage.setViewportSize({ width: 1280, height: 900 });
+    await bridgePage.screenshot({ path: shot('rooms-web-remote-1280') });
+    }
     // Rooms retain the complete player, one transport and the original visual system.
     fullPlayer = await context.newPage();
     fullPlayer.on('pageerror', e => pageErrors.push(String(e)));
@@ -2202,7 +2234,9 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
     const webHasRooms = await bridgePage.locator('a[data-k="rooms"]').count() > 0;
     if (webHasRooms) {
       await bridgePage.locator('a[data-k="rooms"]').click();
-      await bridgePage.locator('.sui-room-open').click();
+      const roomOpen = bridgePage.locator('#route-body .sui-rooms .sui-room-open').first();
+      await expect(roomOpen).toBeVisible();
+      await roomOpen.click();
       await expect(bridgePage.locator('.sui-room-track h2')).toHaveText(metadata.track_name);
       await expect(bridgePage.getByRole('button', { name: 'Stop DJing', exact: true })).toBeVisible();
     }
@@ -2301,6 +2335,7 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
       result: 'passed', roomId, transport: liveRoom.room?.audio?.transport || null,
       roomReceipt: roomProbe.heard[0], optOutBlockedSecondReceipt: roomProbe.heard.length === 1,
       popupProgress: true, fullPlayerProgress: true, singleTransport: true, roomDetailsBelowPlayer: true, tabsSurviveRoomUpdates: true,
+      webRemoteProof,
       pageUnmountPreservedRoom: true, workerRestartPreservedRoom, duplicateJoinOnWarmRestart: workerRestartPreservedRoom ? false : null,
       recentAndSearch: true, signOutLeftRoom: roomProbe.leaveCalls > 0, offscreenTarget: liveOffscreen.url,
       noPandoraRPC: true, noPandoraMedia: true,

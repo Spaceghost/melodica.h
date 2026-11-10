@@ -9,6 +9,12 @@ on:
       - tests/release-publisher.test.mjs
       - .github/workflows/publish.yml
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing stable release tag to rebuild and validate (for example v0.9.18)
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -28,18 +34,34 @@ jobs:
       HAS_AMO: ${{ secrets.AMO_JWT_ISSUER != '' && secrets.AMO_JWT_SECRET != '' }}
     outputs:
       version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: AMO signed-package recovery helper tests
+        run: node --test tests/amo-recover.test.mjs
       - name: Version
         id: v
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF_NAME#v}"; else v="0.0.0-$(git rev-parse --short HEAD)"; fi
+          cp scripts/amo-recover.mjs "$RUNNER_TEMP/amo-recover.mjs"
+          tag="${INPUT_RELEASE_TAG:-}"
+          if [[ -n "$tag" ]]; then
+            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::release_tag must match vMAJOR.MINOR.PATCH"; exit 1; }
+            git fetch origin "refs/tags/$tag:refs/tags/$tag"
+            git checkout --detach "$tag"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="$GITHUB_REF_NAME"
+          fi
+          if [[ -n "$tag" ]]; then v="${tag#v}"; else v="0.0.0-$(git rev-parse --short HEAD)"; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
       - name: Toolchain (clang + lld for wasm32, Jack's Nelua fork)
         run: |
           for i in 1 2 3 4 5; do sudo apt-get update -qq && sudo apt-get install -y -qq lld clang && break; sleep 20; done
@@ -85,6 +107,7 @@ jobs:
       - name: Package (zips, .xpi, .crx signed with CRX_PRIVATE_KEY, source tarball)
         env:
           CRX_PRIVATE_KEY: ${{ secrets.CRX_PRIVATE_KEY }}
+          RELEASE_TAG: ${{ steps.v.outputs.tag }}
         run: |
           v="${{ steps.v.outputs.version }}"
           if [[ -n "$CRX_PRIVATE_KEY" ]]; then
@@ -92,30 +115,41 @@ jobs:
             export CRX_KEY="$RUNNER_TEMP/crx.pem"
             id="$(node scripts/crx-id.mjs "$CRX_KEY")"
             [[ "$id" == "$CRX_ID" ]] || { echo "::error::CRX_PRIVATE_KEY derives id $id, expected $CRX_ID"; exit 1; }
-          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+          elif [[ -n "$RELEASE_TAG" ]]; then
             echo "::error::CRX_PRIVATE_KEY is not set; a release needs the .crx"; exit 1
           else
             echo "::warning::CRX_PRIVATE_KEY is not set; no .crx in this branch build"
           fi
           OUT="$PWD/release" scripts/package.sh "$v"
           rm -f "$RUNNER_TEMP/crx.pem"
-      # Mozilla signing happens only on tags and only when the repository has AMO API
-      # credentials (secrets AMO_JWT_ISSUER + AMO_JWT_SECRET). Without them the .xpi stays
-      # unsigned and the notes say so. `unlisted` keeps it off addons.mozilla.org listings.
-      # Branch builds are not signed: every one of them is version 0.0.0 to AMO, which
-      # takes a version once (the master build after v0.1.4 failed there with "Not Found").
-      - name: Sign the .xpi with AMO (tags only, when AMO_JWT_ISSUER/AMO_JWT_SECRET exist)
-        if: env.HAS_AMO == 'true' && startsWith(github.ref, 'refs/tags/v')
+      # Reuse an already-public unlisted signature by exact version first. AMO accepts
+      # each version once; only a definite 404 proceeds to a normal web-ext submission.
+      - name: Recover or sign the .xpi with AMO (release tag and credentials only)
+        if: env.HAS_AMO == 'true' && steps.v.outputs.tag != ''
         env:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
           AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
         run: |
           v="${{ steps.v.outputs.version }}"
-          npx web-ext sign --channel unlisted --source-dir dist/firefox --artifacts-dir "$RUNNER_TEMP/signed" \
-            --api-key "$AMO_JWT_ISSUER" --api-secret "$AMO_JWT_SECRET"
-          signed="$(ls "$RUNNER_TEMP"/signed/*.xpi | head -1)"
+          set +e
+          node "$RUNNER_TEMP/amo-recover.mjs" --version "$v" --addon-id "melodica-extension@spacegho.st" \
+            --source-dir dist/firefox --output "$RUNNER_TEMP/recovered.xpi"
+          recover_status=$?
+          set -e
+          if [[ "$recover_status" == 0 ]]; then
+            signed="$RUNNER_TEMP/recovered.xpi"
+          elif [[ "$recover_status" == 2 ]]; then
+            npx web-ext sign --channel unlisted --source-dir dist/firefox --artifacts-dir "$RUNNER_TEMP/signed" \
+              --api-key "$AMO_JWT_ISSUER" --api-secret "$AMO_JWT_SECRET"
+            signed="$(ls "$RUNNER_TEMP"/signed/*.xpi | head -1)"
+          else
+            echo "::error::AMO recovery failed; refusing to submit a possibly-existing version."
+            exit "$recover_status"
+          fi
           [[ -s "$signed" ]] || { echo "::error::web-ext sign produced no .xpi"; exit 1; }
           cp "$signed" "release/melodica-extension-$v.xpi"
+          unzip -Z1 "release/melodica-extension-$v.xpi" > "$RUNNER_TEMP/xpi-files.txt"
+          grep -Fxq META-INF/mozilla.rsa "$RUNNER_TEMP/xpi-files.txt" || { echo "::error::Recovered/signing XPI lacks the Mozilla signature"; exit 1; }
           echo amo > release/SIGNED
           ( cd release && sha256sum melodica-extension-*.zip melodica-extension-*.xpi melodica-extension-*.crx melodica-extension-*-src.tar.gz > SHA256SUMS )
       - name: Release notes
@@ -179,6 +213,8 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
       - uses: actions/download-artifact@v4
         with:
           name: dist-${{ needs.build.outputs.version }}
@@ -235,6 +271,8 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
       - uses: actions/download-artifact@v4
         with:
           name: dist-${{ needs.build.outputs.version }}
@@ -300,6 +338,8 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
       - uses: actions/download-artifact@v4
         with:
           name: dist-${{ needs.build.outputs.version }}
@@ -366,7 +406,7 @@ jobs:
 
   release:
     needs: [build, smoke, smoke-brave, smoke-firefox]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: needs.build.outputs.tag != ''
     runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '"ubuntu-latest"') }}
     steps:
       - uses: actions/setup-node@v4
@@ -415,6 +455,7 @@ jobs:
           cat SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.build.outputs.tag }}
           name: melodica-extension ${{ needs.build.outputs.version }}
           body_path: RELEASE_BODY.md
           files: |

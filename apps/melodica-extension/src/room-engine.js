@@ -143,7 +143,12 @@ export class RoomEngine extends EventTarget {
       currentTrack: () => trackMetadata(this.engine.snapshot.track, this.engine.snapshot.duration),
       positionMs: () => Math.max(0, Math.min(3_600_000, Math.floor((Number(this.engine.audio?.currentTime) || 0) * 1000))),
       startTurn: () => this.startTurn(),
-      capture: () => media.capturePlayerAudio(this.engine.audio),
+      unlock: () => media.resumePlayerAudio?.(this.engine.audio),
+      capture: async () => {
+        await media.resumePlayerAudio?.(this.engine.audio);
+        await this.waitForPlayerAudio();
+        return media.capturePlayerAudio(this.engine.audio);
+      },
       pause: () => this.engine.pause(),
       resume: () => this.engine.resume(),
       setVolume: (value) => this.engine.setVolume(value),
@@ -231,13 +236,26 @@ export class RoomEngine extends EventTarget {
       }
       const state = this.engine.snapshot, token = state.track?.trackToken;
       const sourceReady = needsSource ? !!state.station : (token && (token !== before || state.changedAt > changedBefore));
-      if (sourceReady && token && state.status === 'playing' && !this.engine.audio.paused) {
+      if (sourceReady && token && state.status === 'playing' && !this.engine.audio.paused && this.engine.audio.readyState >= 2) {
         const metadata = trackMetadata(state.track, state.duration);
         if (metadata) return { track_metadata: metadata };
       }
       await new Promise((resolve) => setTimeout(resolve, 80));
     }
     throw new Error('The player did not start a new song for your DJ turn.');
+  }
+
+  async waitForPlayerAudio() {
+    const generation = this.turnGeneration, deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      if (generation !== this.turnGeneration || !this.session || !this.isDj()) {
+        throw Object.assign(new Error('The DJ turn ended before capture was ready.'), { code: 'dj_turn_ended' });
+      }
+      const audio = this.engine.audio;
+      if (audio && !audio.paused && audio.readyState >= 2) return;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    throw new Error('The player is still buffering. Press Play to reconnect your broadcast.');
   }
 
   async command(body) {
@@ -262,6 +280,7 @@ export class RoomEngine extends EventTarget {
 
   monitor(enabled) {
     const audio = this.engine.audio;
+    if (typeof this.media?.monitorPlayerAudio === 'function') return this.media.monitorPlayerAudio(audio, enabled);
     if (enabled && this.sourceMuted === undefined) {
       this.sourceMuted = !!audio.muted;
       audio.muted = true;

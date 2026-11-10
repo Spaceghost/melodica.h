@@ -62,6 +62,8 @@ export class Engine
 		self.fetching = no
 		self.failures = 0
 		self.audio = self.doc.createElement('audio')
+		# Player capture requires origin-clean media, even when the CDN allows CORS.
+		self.audio.crossOrigin = 'anonymous'
 		self.audio.preload = 'auto'
 		self.audio.id = 'audio'
 		self.doc.body.appendChild(self.audio) if self.doc.body
