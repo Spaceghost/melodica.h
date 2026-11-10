@@ -2,10 +2,11 @@
 
 ## Room audio recovery — 2026-11-10
 
-- Candidate web 0.13.14 / extension 0.9.18 use shared UI c29f401fcdc2db66 (source 183061f). Both players load CDN audio in anonymous CORS mode before assigning a source, fixing SecurityError during real media-element capture. Safari sources use the cached Web Audio capture path with a separate speaker monitor and explicit gesture unlock.
+- Published web 0.13.14 and signed extension 0.9.18 use shared UI c29f401fcdc2db66 (source 183061f). Both players load CDN audio in anonymous CORS mode before assigning a source, fixing SecurityError during real media-element capture. Safari sources use the cached Web Audio capture path with a separate speaker monitor and explicit gesture unlock.
 - Relay supports ManagedMediaSource, starts receiving on Resume, confirms initialization uploads, and recovers a lost stream header. Publish and monitor stream identities are separate. Polling receivers recognize a recorder restart, including when their old cursor exceeds the new stream sequence. RoomHub preserves only the active play's header and bounded short replay window through hibernation and removes it at play end.
 - Room presentation keeps the existing palette/fonts and adds artwork/DJ identity, clock timing, on-air lineup, audience, public sharing and visible Play/Resume/Reconnect actions.
-- Validation: 166 shared service unit tests, actual Chromium source/CORS capture proof and WebKit fallback capture proof, independent four-receiver relay audio with late join/network gap/same-account secondary device, and native extension room test passed. Physical iPhone/iPad devices are not verified. Production publication is pending until the release record below is updated.
+- Validation: 166 shared service unit tests, actual Chromium and Firefox source/CORS capture proofs, WebKit fallback capture, independent four-receiver relay audio with late join/network gap/same-account secondary device, and native extension room tests passed. Exact-tag recovery CI 42760988456 passed build, Chromium, Brave, Firefox and release; publisher 42763448991 verified both catalogs/feeds and eight download checksums. The v0.9.18 tag remains a168d7935360b194e26840f1eedf8dea6891cf27; signing recovery reused AMO's existing signature and verified identical manifest values and all other payload bytes.
+- Physical iPhone/iPad devices remain unverified. The iOS IPA job was blocked before startup by GitHub billing. The optional combined local RoomSession/RoomHub receipt proof still times out with local media RPC calls taking up to 7.5 seconds; independent relay audio and backend reconstruction proofs passed separately. Firefox native/fallback RMS proof: /var/home/jack/workspaces/melodica-room-audio-firefox-selenium.log.
 
 
 ## Player regression audit — 0.9.17
@@ -51,7 +52,7 @@
 - Mozilla unlisted signing is preserved. Both browser update feeds and eight public installable downloads passed checksum verification.
 - Both catalogs passed browser checks at 390 and 1280 pixels; the Melodica catalog contains only its browser extension and keeps the player bar pinned.
 - The Worker release manifests were updated in R2; all other Melodica projects were preserved. No player or Worker code was deployed by this publication.
-- Evidence: https://github.com/Spaceghost/melodica-extension/actions/runs/42763448991.
+- Evidence: https://github.com/Spaceghost/melodica-extension/actions/runs/42764099363.
 <!-- extension-publication:end -->
 
 Updated 2026-11-09. Self-hosted 0.9.2 published and verified; full tag browser suites remain in progress.
