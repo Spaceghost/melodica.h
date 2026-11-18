@@ -208,7 +208,7 @@ install: $(BUILD)/c/libmelodica.a $(PIANO_INSTALL_LIB)
 	install -m 0644 include/melodica.h include/piano.h $(DESTDIR)$(PREFIX)/include/
 	install -m 0644 $(BUILD)/c/libmelodica.a $(DESTDIR)$(PREFIX)/lib/libmelodica.a
 	install -m 0644 $(PIANO_INSTALL_LIB) $(DESTDIR)$(PREFIX)/lib/libpiano.a
-	install -m 0644 LICENSE.libpiano $(DESTDIR)$(PREFIX)/share/licenses/melodica/
+	install -m 0644 LICENSE.libpiano LICENSE-NELUA BANLIST.md $(DESTDIR)$(PREFIX)/share/licenses/melodica/
 	cp -R bindings/python/melodica $(DESTDIR)$(PREFIX)/share/melodica/python/
 	install -m 0755 scripts/melodica-sync $(DESTDIR)$(PREFIX)/bin/melodica-sync
 	install -m 0755 scripts/melodica-library $(DESTDIR)$(PREFIX)/bin/melodica-library
