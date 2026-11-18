@@ -38,7 +38,13 @@ if [ "${1:-}" = --install ]; then
     nelua)
         git init "$dest/nelua"
         git -C "$dest/nelua" remote add origin https://github.com/edubart/nelua-lang.git
-        git -C "$dest/nelua" fetch --depth=1 origin "$NELUA_REV"
+        cached_nelua="${MELODICA_TOOLCHAIN_CACHE:-/opt/melodica-tools}/nelua"
+        if git -C "$cached_nelua" cat-file -e "$NELUA_REV^{commit}" 2>/dev/null; then
+            printf 'Using cached Nelua source; pinned commit verification follows: %s\n' "$cached_nelua" >&2
+            git -C "$dest/nelua" fetch --depth=1 "$cached_nelua" "$NELUA_REV"
+        else
+            git -C "$dest/nelua" fetch --depth=1 origin "$NELUA_REV"
+        fi
         git -C "$dest/nelua" checkout --detach FETCH_HEAD
         test "$(git -C "$dest/nelua" rev-parse HEAD)" = "$NELUA_REV"
         make -C "$dest/nelua" -j2
