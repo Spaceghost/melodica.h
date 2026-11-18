@@ -76,7 +76,8 @@ fn integer(j: J, key: [*:0]const u8) c_int {
     return c.json_object_get_int(get(j, key));
 }
 fn boolean(j: J, key: [*:0]const u8, default: bool) bool {
-    return if (has(j, key)) c.json_object_get_boolean(get(j, key)) != 0 else default;
+    var value: J = null;
+    return if (c.json_object_object_get_ex(j, key, &value) != 0) c.json_object_get_boolean(value) != 0 else default;
 }
 fn add(j: J, key: [*:0]const u8, value: J) void {
     _ = c.json_object_object_add(j, key, value);
@@ -95,6 +96,11 @@ fn equal(a: [*c]const u8, b: [*c]const u8) bool {
 }
 fn append(comptime T: type, head: [*c]T, node: [*c]T) [*c]T {
     return as(T, PianoListAppend(as(c.PianoListHead_t, head), as(c.PianoListHead_t, node)));
+}
+// Private builders retain a tail; public PianoListAppend keeps its ABI/semantics.
+fn appendTail(comptime T: type, head: *[*c]T, tail: *[*c]T, node: [*c]T) void {
+    if (tail.* == null) head.* = node else tail.*.*.head.next = &node.*.head;
+    tail.* = node;
 }
 export fn PianoListCount(l: [*c]const c.PianoListHead_t) usize {
     var n: usize = 0;
@@ -607,6 +613,7 @@ export fn PianoResponse(ph: [*c]c.PianoHandle_t, req: [*c]c.PianoRequest_t) Ret 
             if (!has(r, "items")) return c.PIANO_RET_OK;
             const items = get(r, "items");
             var list: [*c]c.PianoSong_t = null;
+            var tail: [*c]c.PianoSong_t = null;
             for (0..count(items)) |i| {
                 const item = at(items, i);
                 if (!has(item, "artistName")) continue;
@@ -627,7 +634,7 @@ export fn PianoResponse(ph: [*c]c.PianoHandle_t, req: [*c]c.PianoRequest_t) Ret 
                     s.*.audioFormat = if (equal(encoding, "aacplus")) c.PIANO_AF_AACPLUS else if (equal(encoding, "mp3")) c.PIANO_AF_MP3 else c.PIANO_AF_UNKNOWN;
                     s.*.audioUrl = str(q, "audioUrl");
                 }
-                list = append(c.PianoSong_t, list, s);
+                appendTail(c.PianoSong_t, &list, &tail, s);
             }
             d.*.retPlaylist = list;
         },
@@ -656,17 +663,19 @@ export fn PianoResponse(ph: [*c]c.PianoHandle_t, req: [*c]c.PianoRequest_t) Ret 
             const d = as(c.PianoRequestDataSearch_t, req.*.data);
             if (d == null) return c.PIANO_RET_INVALID_RESPONSE;
             _ = c.memset(&d.*.searchResult, 0, @sizeOf(c.PianoSearchResult_t));
+            var artist_tail: [*c]c.PianoArtist_t = null;
+            var song_tail: [*c]c.PianoSong_t = null;
             const artists = get(r, "artists");
             for (0..count(artists)) |i| {
                 const a = artist(at(artists, i), false);
                 if (a == null) return c.PIANO_RET_OUT_OF_MEMORY;
-                d.*.searchResult.artists = append(c.PianoArtist_t, d.*.searchResult.artists, a);
+                appendTail(c.PianoArtist_t, &d.*.searchResult.artists, &artist_tail, a);
             }
             const songs = get(r, "songs");
             for (0..count(songs)) |i| {
                 const s = song(at(songs, i), .search);
                 if (s == null) return c.PIANO_RET_OUT_OF_MEMORY;
-                d.*.searchResult.songs = append(c.PianoSong_t, d.*.searchResult.songs, s);
+                appendTail(c.PianoSong_t, &d.*.searchResult.songs, &song_tail, s);
             }
         },
         c.PIANO_REQUEST_CREATE_STATION => {

@@ -15,7 +15,7 @@ on:
       runner:
         description: Execution backend
         type: choice
-        options: [self-hosted, github-hosted]
+        options: [self-hosted]
         default: self-hosted
 
 permissions:
@@ -29,7 +29,7 @@ jobs:
     concurrency:
       group: melodica-worker-${{ github.repository }}
       queue: max
-    runs-on: ${{ inputs.runner == 'github-hosted' && 'ubuntu-24.04' || fromJSON('["self-hosted","Linux","X64","fedora44","spaceghost-melodica.h"]') }}
+    runs-on: [self-hosted, Linux, X64, fedora]
     timeout-minutes: 45
     env:
       CC: gcc
@@ -86,7 +86,7 @@ jobs:
     concurrency:
       group: melodica-worker-${{ github.repository }}
       queue: max
-    runs-on: ${{ inputs.runner == 'github-hosted' && 'ubuntu-24.04' || fromJSON('["self-hosted","Linux","X64","fedora44","spaceghost-melodica.h"]') }}
+    runs-on: [self-hosted, Linux, X64, fedora]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

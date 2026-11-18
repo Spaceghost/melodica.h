@@ -117,3 +117,7 @@ rates count requests. Archive bytes exclude external runtime libraries.
 See the [completeness ledger](docs/libpiano-completeness.md) for the exact contract
 and retained evidence, [CI documentation](docs/ci.md) for reproducible commands, and
 the [libpiano MIT notice](LICENSE.libpiano) for the original attribution.
+
+## Optimization race
+
+The [18 November paired race](docs/optimization-race-2026-11-18.md) compares all five native protocol implementations with their frozen pre-optimization builds, including raw timings, RSS, heap and call trees. The [developer site](https://spacegho.st/use/melodica.h/) provides an interactive comparison; [Get Melodica](https://spacegho.st/use/melodica/) introduces the players.

@@ -101,8 +101,9 @@ local function text(j: *Json, key: cstring): cstring
   return dup(json_object_get_string(get(j, key)))
 end
 local function flag(j: *Json, key: cstring, fallback: boolean): boolean
-  if not has(j, key) then return fallback end
-  return json_object_get_boolean(get(j, key)) ~= 0
+  local value: *Json = nilptr
+  if json_object_object_get_ex(j, key, &value) == 0 then return fallback end
+  return json_object_get_boolean(value) ~= 0
 end
 local function integer(j: *Json, key: cstring): cint
   return json_object_get_int(get(j, key))
@@ -486,6 +487,7 @@ local function response_body(ph: *Handle, req: *Request, result: *Json): cint
     if not has(result, 'items') then return 1 end
     local items = get(result, 'items')
     local list: *Song = nilptr
+    local tail: *Song = nilptr
     for i: csize = 0, <json_object_array_length(items) do
       local item = json_object_array_get_idx(items, i)
       if has(item, 'artistName') then
@@ -510,7 +512,8 @@ local function response_body(ph: *Handle, req: *Request, result: *Json): cint
         song.fileGain = (@float32)(json_object_get_double(get(item, 'trackGain')))
         song.length = (@cuint)(integer(item, 'trackLength'))
         if integer(item, 'songRating') == 1 then song.rating = 1 end
-        list = (@*Song)(PianoListAppend((@*List)(list), &song.head))
+        if tail == nilptr then list = song else tail.head.next = &song.head end
+        tail = song
       end
     end
     data.retPlaylist = list
@@ -529,19 +532,23 @@ local function response_body(ph: *Handle, req: *Request, result: *Json): cint
   elseif kind == 9 then
     local data = (@*SearchData)(req.data)
     C.memset(&data.searchResult, 0, #@SearchResult)
+    local artist_tail: *Artist = nilptr
+    local song_tail: *Song = nilptr
     local artists = get(result, 'artists')
     for i: csize = 0, <json_object_array_length(artists) do
       local artist = parse_artist(json_object_array_get_idx(artists, i))
       if artist == nilptr then PianoDestroySearchResult(&data.searchResult); return 4 end
       artist.musicId = text(json_object_array_get_idx(artists, i), 'musicToken')
-      data.searchResult.artists = (@*Artist)(PianoListAppend((@*List)(data.searchResult.artists), &artist.head))
+      if artist_tail == nilptr then data.searchResult.artists = artist else artist_tail.head.next = &artist.head end
+      artist_tail = artist
     end
     local songs = get(result, 'songs')
     for i: csize = 0, <json_object_array_length(songs) do
       local song = parse_song(json_object_array_get_idx(songs, i))
       if song == nilptr then PianoDestroySearchResult(&data.searchResult); return 4 end
       song.musicId = text(json_object_array_get_idx(songs, i), 'musicToken')
-      data.searchResult.songs = (@*Song)(PianoListAppend((@*List)(data.searchResult.songs), &song.head))
+      if song_tail == nilptr then data.searchResult.songs = song else song_tail.head.next = &song.head end
+      song_tail = song
     end
   elseif kind == 10 then
     local station = parse_station(result)

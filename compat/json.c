@@ -268,6 +268,7 @@ size_t melodica_json_object_get(const MelodicaJsonDoc *doc, const size_t object,
         const char *key) {
     if (doc == NULL || object >= doc->count || key == NULL ||
             doc->tokens[object].type != MELODICA_JSON_OBJECT) return MELODICA_JSON_NONE;
+    const size_t key_length = strlen(key);
     int key_slot = 1;
     int matched = 0;
     size_t found = MELODICA_JSON_NONE;
@@ -276,7 +277,16 @@ size_t melodica_json_object_get(const MelodicaJsonDoc *doc, const size_t object,
         if (doc->tokens[i].parent != object) continue;
         if (key_slot) {
             if (doc->tokens[i].type != MELODICA_JSON_STRING) return MELODICA_JSON_NONE;
-            matched = melodica_json_string_is(doc, i, key);
+            const MelodicaJsonToken *token = &doc->tokens[i];
+            const char *raw = doc->text + token->start;
+            const size_t length = token->end - token->start;
+            /* Most protocol keys are unescaped ASCII. Avoid repeated strlen
+             * and decoding scans for obviously different first bytes. Keep
+             * the decoded path for escaped keys and last-duplicate wins. */
+            if (length != 0u && raw[0] != key[0] && raw[0] != '\\') matched = 0;
+            else if (memchr(raw, '\\', length) == NULL) {
+                matched = length == key_length && memcmp(raw, key, length) == 0;
+            } else matched = melodica_json_string_is(doc, i, key);
             key_slot = 0;
         } else {
             if (matched) found = i;

@@ -30,22 +30,26 @@ response_playlist :: proc "contextless" (req: ^PianoRequest_t, result: rawptr) -
 	quality := [4]cstring{"", "lowQuality", "mediumQuality", "highQuality"}
 	for i in 0..<array_len(items) {
 		value := json_object_array_get_idx(items, i)
-		if !has(value, "artistName") { continue }
+		artist_value: rawptr
+		if json_object_object_get_ex(value, "artistName", &artist_value) == 0 { continue }
 		song := zeroed(PianoSong_t)
 		if song == nil { PianoDestroyPlaylist(playlist); return OUT_OF_MEMORY }
-		if has(value, "audioUrlMap") {
-			qmap := get(get(value, "audioUrlMap"), quality[d.quality])
-			if !has(qmap, "encoding") {
+		audio_map: rawptr
+		if json_object_object_get_ex(value, "audioUrlMap", &audio_map) != 0 {
+			qmap := get(audio_map, quality[d.quality])
+			encoding_value: rawptr
+			if json_object_object_get_ex(qmap, "encoding", &encoding_value) == 0 {
 				free(rawptr(song)); PianoDestroyPlaylist(playlist); return QUALITY_UNAVAILABLE
 			}
-			encoding := json_object_get_string(get(qmap, "encoding"))
+			encoding := json_object_get_string(encoding_value)
 			if encoding != nil {
 				if strcmp(encoding, "aacplus") == 0 { song.audioFormat = 1 }
 				if strcmp(encoding, "mp3") == 0 { song.audioFormat = 2 }
 			}
 			song.audioUrl = jdup(qmap, "audioUrl")
 		}
-		song.artist = jdup(value, "artistName")
+		artist_text := json_object_get_string(artist_value)
+		if artist_text != nil { song.artist = strdup(artist_text) }
 		song.album = jdup(value, "albumName")
 		song.title = jdup(value, "songName")
 		song.trackToken = jdup(value, "trackToken")
@@ -65,6 +69,8 @@ response_search :: proc "contextless" (req: ^PianoRequest_t, result: rawptr) -> 
 	d := cast(^PianoRequestDataSearch_t)req.data
 	if d == nil { return INVALID_RESPONSE }
 	d.searchResult = {}
+	artist_tail: ^PianoArtist_t
+	song_tail: ^PianoSong_t
 	artists := get(result, "artists")
 	for i in 0..<array_len(artists) {
 		value := json_object_array_get_idx(artists, i)
@@ -72,7 +78,8 @@ response_search :: proc "contextless" (req: ^PianoRequest_t, result: rawptr) -> 
 		if artist == nil { PianoDestroySearchResult(&d.searchResult); d.searchResult = {}; return OUT_OF_MEMORY }
 		artist.name = jdup(value, "artistName")
 		artist.musicId = jdup(value, "musicToken")
-		d.searchResult.artists = cast(^PianoArtist_t)PianoListAppend(cast(^PianoListHead_t)d.searchResult.artists, &artist.head)
+		if artist_tail == nil { d.searchResult.artists = artist } else { artist_tail.head.next = &artist.head }
+		artist_tail = artist
 	}
 	songs := get(result, "songs")
 	for i in 0..<array_len(songs) {
@@ -82,7 +89,8 @@ response_search :: proc "contextless" (req: ^PianoRequest_t, result: rawptr) -> 
 		song.title = jdup(value, "songName")
 		song.artist = jdup(value, "artistName")
 		song.musicId = jdup(value, "musicToken")
-		d.searchResult.songs = cast(^PianoSong_t)PianoListAppend(cast(^PianoListHead_t)d.searchResult.songs, &song.head)
+		if song_tail == nil { d.searchResult.songs = song } else { song_tail.head.next = &song.head }
+		song_tail = song
 	}
 	return OK
 }

@@ -134,8 +134,9 @@ jdup :: proc "contextless" (obj: rawptr, key: cstring) -> cstring {
 	return strdup(s)
 }
 boolean :: proc "contextless" (obj: rawptr, key: cstring, fallback := false) -> bool {
-	if !has(obj, key) { return fallback }
-	return json_object_get_boolean(get(obj, key)) != 0
+	v: rawptr
+	if json_object_object_get_ex(obj, key, &v) == 0 { return fallback }
+	return json_object_get_boolean(v) != 0
 }
 add_string :: proc "contextless" (obj: rawptr, key, value: cstring) {
 	json_object_object_add(obj, key, json_object_new_string(value))
