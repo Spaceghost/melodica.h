@@ -1,0 +1,40 @@
+# Root registrations for the gitlinks in imported apps/ snapshots.
+[submodule "apps/elpis/vendor/melodica"]
+	path = apps/elpis/vendor/melodica
+	url = https://github.com/Spaceghost/melodica.h.git
+[submodule "apps/epimetheus/fast_marquee"]
+	path = apps/epimetheus/fast_marquee
+	url = https://github.com/hacker1024/fast_marquee
+[submodule "apps/epimetheus/flutter_autofill"]
+	path = apps/epimetheus/flutter_autofill
+	url = https://github.com/hacker1024/flutter_autofill
+[submodule "apps/epimetheus/flutter_pagination_wrapper"]
+	path = apps/epimetheus/flutter_pagination_wrapper
+	url = https://github.com/hacker1024/flutter_pagination_wrapper
+[submodule "apps/epimetheus/flutter_secure_storage"]
+	path = apps/epimetheus/flutter_secure_storage
+	url = https://github.com/hacker1024/flutter_secure_storage
+[submodule "apps/epimetheus/vendor/melodica"]
+	path = apps/epimetheus/vendor/melodica
+	url = https://github.com/Spaceghost/melodica.h.git
+[submodule "apps/melodica-web/vendor/melodica.h"]
+	path = apps/melodica-web/vendor/melodica.h
+	url = https://github.com/Spaceghost/melodica.h
+[submodule "apps/pandoroid/vendor/melodica"]
+	path = apps/pandoroid/vendor/melodica
+	url = https://github.com/Spaceghost/melodica.h.git
+[submodule "apps/pianobar-windows/vendor/melodica"]
+	path = apps/pianobar-windows/vendor/melodica
+	url = https://github.com/Spaceghost/melodica.h.git
+[submodule "apps/pianobar/vendor/melodica.h"]
+	path = apps/pianobar/vendor/melodica.h
+	url = https://github.com/Spaceghost/melodica.h.git
+[submodule "apps/pithos/vendor/melodica.h"]
+	path = apps/pithos/vendor/melodica.h
+	url = https://github.com/Spaceghost/melodica.h.git
+[submodule "apps/pydora/vendor/melodica.h"]
+	path = apps/pydora/vendor/melodica.h
+	url = https://github.com/Spaceghost/melodica.h.git
+[submodule "apps/umbra-piano/drawing"]
+	path = apps/umbra-piano/drawing
+	url = https://github.com/una-xiv/drawing.git
