@@ -1,9 +1,0 @@
-New Nelua optimization contributions, 2026-11-18
-Copyright (c) 2026 Johnneylee Jack Rollins (Spaceghost)
-SPDX-License-Identifier: LicenseRef-Rollins-Nelua-Republication-1.0
-
-The new contributions are the single-lookup flag helper and local tail-pointer
-builders in PianoResponse playlist/search cases in piano.nelua. LICENSE-NELUA
-and the matching BANLIST.md apply to these newly published owned changes and
-their derivatives. Earlier material retains its valid earlier grants. The
-upstream Nelua compiler and third-party notices are unchanged.

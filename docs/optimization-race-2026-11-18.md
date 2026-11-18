@@ -58,7 +58,3 @@ The workspace must contain frozen `before/` and `after/` roots, their `build/<la
 - [Interactive comparison on spacegho.st](https://spacegho.st/use/melodica.h/)
 
 Application changes are independently built in `Spaceghost/melodica-web` and `Spaceghost/spaceghost-scrobble`; a library update alone does not replace an installed pianobar executable.
-
-## Distribution notices
-
-New Nelua contributions and Nelua-specific derived excerpts follow [LICENSE-NELUA](../LICENSE-NELUA) and [BANLIST.md](../BANLIST.md). Earlier grants and third-party notices remain intact. The raw profile archive includes both notices; the new covered material is source-available, not unmodified MIT or OSI-approved open source.
