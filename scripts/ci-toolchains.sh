@@ -7,7 +7,14 @@ ZIG_VERSION=0.16.0
 ZIG_SHA256=70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
 NELUA_REV=a58450563e2d2ec49bff499865c8b5cfdf6ff81a
 fetch() {
-    curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 \
+    local cached_archive="${MELODICA_TOOLCHAIN_CACHE:-/opt/melodica-tools}/$(basename -- "$2")"
+    if [ -f "$cached_archive" ]; then
+        # The caller always verifies the immutable pin before extracting.
+        cp -- "$cached_archive" "$2"
+        printf 'Using cached archive; pinned digest verification follows: %s\n' "$cached_archive" >&2
+        return
+    fi
+    curl --fail --silent --show-error --location --retry 3 --retry-all-errors --connect-timeout 15 \
         --max-time 300 --proto '=https' --proto-redir '=https' --tlsv1.2 "$1" -o "$2"
 }
 if [ "${1:-}" = --install ]; then
