@@ -2780,6 +2780,13 @@ def closeShortcuts()
 
 # ---------------------------------------------------------------- wiring
 def installEvents()
+	document.getElementById('bar-lyrics')?.addEventListener('click', do
+		if location.pathname.startsWith(SHELL_BASE) && route !== 'app'
+			go('app')
+		lyricElement.open = true
+		lyricElement.querySelector('summary').focus({preventScroll: true})
+		lyricElement.scrollIntoView({block: 'center'})
+	)
 	el.loginForm.addEventListener('submit', (do(ev)
 		ev.preventDefault()
 		login(el.email.value.trim(), el.password.value)

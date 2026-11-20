@@ -500,7 +500,7 @@ img-src 'self' data: https:; media-src https: http: blob:; connect-src 'self' ht
 cover art; `media-src https:` for Pandora's CDN and `blob:` for a saved copy (Resume); `connect-src` must include
 the relay's origin if it is not same-origin.
 
-Opening **Lyrics from LRCLIB** sends the track title, artist, album and duration to LRCLIB to match the recording. The player uses the playback clock to highlight the current line. Closing the panel stops further lookups.
+Select **Lyrics** on the player bar to open the lyrics for the current song. The hosted player asks LRCLIB through spacegho.st using the track title, artist, album and duration. If the album lookup misses, the player searches by artist and song. It shows the full text, highlights timed lines during playback and labels recordings with untimed lyrics. The panel remembers your choice on this device. Closing it stops further lookups.
 
 ### Hosting notes (spacegho.st)
 

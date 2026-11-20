@@ -149,7 +149,7 @@
         <summary>Lyrics from LRCLIB</summary>
         <p role="status" class="fine"></p>
         <button type="button" class="quiet" hidden>Retry lyric lookup</button>
-        <div data-words hidden>
+        <div data-words role="region" aria-label="Song lyrics" tabindex="0" hidden>
           <p></p>
           <p aria-current="true"></p>
           <p></p>
@@ -327,10 +327,13 @@
 
 <div id="bar" class="controls-bar" role="region" aria-label="Player">
   <progress id="bar-progress" class="bar-progress" value="0" max="1" aria-hidden="true"></progress>
+  <div class="bar-track">
   <a id="bar-expand" class="bar-now" href="https://spacegho.st/melodica/app/" title="Open the full player">
 <img id="bar-cover" class="bar-cover" alt="" src="data:,">
 <span class="mini"><span id="mini-title"></span><span id="mini-artist"></span></span>
   </a>
+  <button type="button" id="bar-lyrics" class="quiet" aria-controls="song-lyrics" hidden>Lyrics</button>
+  </div>
   <button id="bar-resume" class="bar-resume" type="button" hidden>Resume<span id="bar-resume-at"></span></button>
   <a id="bar-signin" class="bar-signin" href="https://spacegho.st/melodica/app/" hidden>Sign in to play</a>
   <div class="controls">

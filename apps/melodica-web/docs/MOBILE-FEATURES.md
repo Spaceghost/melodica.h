@@ -2,7 +2,7 @@
 
 The November 19 selection contains 79 features for Android and iPhone. The numbers refer to the original 100-choice catalog. They express product scope. Implementation and device verification are tracked separately.
 
-Feature 39 uses the same lyrics service as Jarlid. Open **Lyrics from LRCLIB** in Now Playing to look up the recording and follow its timed lines. A mobile-width browser test covered forward and backward seeks, silent passages and track changes. The Android debug package includes this player. On-device lyric playback and rights to redistribute a lyrics catalog remain unverified. [LRCLIB API](https://lrclib.net/docs)
+Feature 39 uses LRCLIB. Select **Lyrics** on the player bar to read the song. The hosted player also searches by artist and title when an album lookup misses. It follows timed lines, shows untimed words when available and remembers the open panel across tracks. Mobile-width browser tests cover these paths. Physical-device verification is pending. [LRCLIB API](https://lrclib.net/docs)
 
 ## Build and verification
 

@@ -244,7 +244,8 @@ a.button:hover, a.button:focus-visible { background: var(--ink-2); border-color:
 .progress { display: flex; align-items: center; gap: 0.7rem; width: min(100%, 34rem); font: 0.78rem var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
 .progress progress { flex: 1; height: 4px; width: auto; }
 .song-lyrics { width: min(100%, 34rem); text-align: center; }
-.song-lyrics summary { cursor: pointer; color: var(--gold-2); padding: .5rem; }
+.song-lyrics summary { cursor: pointer; color: var(--gold-2); padding: .6rem; font-weight: 600; }
+.song-lyrics [data-words] { position: relative; max-height: 13rem; overflow-y: auto; overscroll-behavior: contain; padding: .5rem 1rem; white-space: pre-line; overflow-wrap: anywhere; }
 .song-lyrics [data-words] p { color: var(--muted); white-space: pre-line; overflow-wrap: anywhere; margin: .3rem 0; }
 .song-lyrics [aria-current] { font-weight: 600; }
 .song-lyrics [data-words] [aria-current] { color: var(--text); }
@@ -445,6 +446,9 @@ body { padding-bottom: calc(var(--bar-h) + env(safe-area-inset-bottom)); min-hei
 .bar-progress::-webkit-progress-value { background: var(--gold); }
 .bar-progress::-moz-progress-bar { background: var(--gold); }
 .bar-now { display: flex; align-items: center; gap: 0.7rem; min-width: 0; color: var(--text); }
+.bar-track { display: flex; align-items: center; gap: .65rem; min-width: 0; width: 100%; }
+.bar-track .bar-now { flex: 1; }
+#bar-lyrics { flex: none; min-height: 40px; color: var(--gold-2); }
 .bar-now:hover, .bar-now:focus-visible { text-decoration: none; }
 .bar-cover { width: 48px; height: 48px; flex: none; border-radius: 8px; object-fit: cover; background: var(--ink-2); border: 1px solid var(--line-2); }
 .mini { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }

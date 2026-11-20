@@ -40,7 +40,7 @@ const MIME = {
 // Mirror the site worker's player policy, including the optional lyric lookup.
 const csp = (nonce) => `default-src 'none'; script-src 'self' 'nonce-${nonce}' 'wasm-unsafe-eval'; ` +
   `style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; media-src https: http: blob:; ` +
-  `connect-src 'self' https://lrclib.net/api/get; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; worker-src 'self'`;
+  `connect-src 'self' https://lrclib.net/api/get https://lrclib.net/api/search; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; worker-src 'self'`;
 
 let server = null;
 let base = '';
@@ -816,13 +816,20 @@ test('first paint as a remote after a reload: the player in under 100 ms of DOMC
 test('Now Playing looks up lyrics on request and follows the audible track position', async ({page},info) => {
   const requests = [];
   await page.setViewportSize({width:390,height:844});
-  await page.route('https://lrclib.net/api/get?**', async route => {
-    const params = new URL(route.request().url()).searchParams;
+  await page.route('https://lrclib.net/api/**', async route => {
+    const {pathname, searchParams:params} = new URL(route.request().url());
     requests.push(Object.fromEntries(params));
-    const syncedLyrics = params.get('track_name') === 'Slow Light'
-      ? '[ar:Test]\n[offset:250]\n[00:01.25][00:20.25]First test line\n[00:06.25]Second test line\n[00:11.25]'
-      : null;
-    await route.fulfill({json:{syncedLyrics},headers:{'access-control-allow-origin':'*'}});
+    const song = params.get('track_name');
+    const matches = [
+      {artistName:'Someone Else',trackName:song,duration:180,syncedLyrics:'[00:00.00]Wrong artist'},
+      {artistName:'Band Two',trackName:'Second Song (Live)',duration:180,syncedLyrics:'[00:00.00]Wrong edit'},
+      {artistName:'Band Two',trackName:song,albumName:'Another release',duration:181,syncedLyrics:'[00:00.00]Alternate album match'},
+    ];
+    let body;
+    if (pathname.endsWith('/search')) body = song === 'Second Song' ? matches : [];
+    else if (song === 'Slow Light') body = {syncedLyrics:'[ar:Test]\n[offset:250]\n[00:01.25][00:20.25]First test line\n[00:06.25]Second test line\n[00:11.25]'};
+    else body = song === 'Third Song' ? {plainLyrics:'First untimed verse\nSecond untimed verse'} : {};
+    await route.fulfill({json:body, headers:{'access-control-allow-origin':'*'}});
   });
   const evidence = await open(page);
   try {
@@ -831,18 +838,35 @@ test('Now Playing looks up lyrics on request and follows the audible track posit
     const lyrics = page.locator('#song-lyrics');
     expect(requests).toEqual([]);
     await page.evaluate(() => window.__ext.setState({position:0,status:'paused'}));
-    await lyrics.locator('summary').click();
+    await page.getByRole('button',{name:'Lyrics',exact:true}).click();
     await expect(lyrics.locator('[data-words] p').last()).toHaveText('First test line');
+    await expect(lyrics.locator('[data-words]')).toContainText('Second test line');
     expect(requests).toEqual([{artist_name:'Aurora Fields',track_name:'Slow Light',album_name:'Northern',duration:'200'}]);
     const current = lyrics.locator('[aria-current]');
     for (const [position, text] of [[6,'Second test line'],[12,''],[20,'First test line'],[1,'First test line']]) {
       await page.evaluate(pos => window.__ext.setState({position:pos,status:'paused'}),position);
-      await expect(current).toHaveText(text);
+      if (text) await expect(current).toHaveText(text);
+      else await expect(current).toHaveCount(0);
     }
     await page.locator('#btn-next').click();
-    await expect(lyrics.getByRole('status')).toHaveText('No timed lyrics for this recording.');
-    await expect(current).toBeHidden();
-    expect(requests).toHaveLength(2);
+    await expect(current).toHaveText('Alternate album match');
+    expect(requests.at(-1)).toEqual({artist_name:'Band Two',track_name:'Second Song'});
+    await page.locator('#btn-next').click();
+    await expect(lyrics.getByRole('status')).toHaveText('Lyrics without timestamps.');
+    await expect(lyrics.getByRole('region',{name:'Song lyrics'})).toHaveText('First untimed verse\nSecond untimed verse');
+    await expect(current).toHaveCount(0);
+    await page.evaluate(() => window.__ext.setState({track:null,status:'idle'}));
+    await expect(lyrics.getByRole('status')).toHaveText('Play a song in this player to see its lyrics.');
+    const track = {artist:'Test Band', title:'Missing Song', album:'No Match', duration:120};
+    await page.evaluate(track => window.__ext.setState({track,status:'paused'}),track);
+    await expect(lyrics.getByRole('status')).toHaveText('No lyrics found for this recording.');
+    await expect(lyrics.locator('[data-words]')).toBeHidden();
+    await lyrics.locator('summary').click();
+    await expect.poll(()=>page.evaluate(()=>localStorage.getItem('melodica.lyrics.open'))).toBe('0');
+    const before = requests.length;
+    await page.locator('#btn-next').click();
+    await expect(page.locator('#np-title')).toHaveText('Slow Light');
+    expect(requests).toHaveLength(before);
   } finally { await finish(page,evidence,info); }
 });
 

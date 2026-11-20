@@ -1,5 +1,13 @@
 # HANDOFF (melodica-web)
 
+## Timed lyrics on the hosted player — 2026-11-20
+
+The hosted player runs v0.17.1 from `d0267c1`. Open **Lyrics from LRCLIB** in Now Playing to look up timed lyrics for the current recording. The panel follows the playback clock in the browser and in extension mode. [Open Melodica](https://spacegho.st/melodica/app/)
+
+Production checks used a test playback of Judy Collins’s “Amazing Grace” from *Live at Wolf Trap*. LRCLIB returned recording 9198272. The highlighted line matched the recording at 40 seconds, after seeking to 125 seconds and on returning to 40 seconds. The standalone tab used a decoded audio fixture. The extension check covered desktop and phone-sized viewports.
+
+The public player assets match the release checksums. The source download contains the tracked client and its pinned library. The public source snapshot is `79e560b` in melodica.h. [Client source](https://github.com/Spaceghost/melodica.h/tree/79e560b/apps/melodica-web)
+
 ## Walk records — 2026-11-19
 
 Walk records at `/melodica/track/` opens the listener's own Melodica stations and saved walks. The web player records timestamped song changes and private foreground GPS, shows the station a recorded song came from when known, exports a cover and restores GPX with song times. A signed-out visitor can start recording or sign in to play. Both iPhone and Android can import a timed GPX from a separate GPS recorder for screen-locked walks. Legacy game entry links open the journal. `/melodica/apps/` lists all Melodica clients by platform with downloads from the public release mirror. The old Android directory redirects to `/melodica/apps/#android`. Current Epimetheus and Pandoroid APKs play radio independently of the web walking journal.
