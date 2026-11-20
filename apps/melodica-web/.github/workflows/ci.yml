@@ -23,7 +23,7 @@ jobs:
         run: node scripts/check-ui-pin.mjs web/vendor/scrobble-ui/scrobble-ui.js
 
   build:
-    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '"ubuntu-latest"') }}
+    runs-on: [self-hosted, Linux, X64, fedora]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,6 +37,7 @@ jobs:
           node-version: 22
       - name: Fetch the shared Scrobbles UI (pinned, sha256-checked)
         run: scripts/fetch-scrobble-ui.sh
+      - run: npm ci --no-audit --no-fund
       - name: Build dist/
         run: scripts/build.sh
       - name: Static checks
@@ -55,7 +56,14 @@ jobs:
         run: node tests/inserts-unit.mjs
       - name: Scrobble unit test (threshold, tracker, API calls; no network)
         run: node tests/scrobble-unit.mjs
+      - name: Room player and audio-source contracts
+        run: node --test tests/rooms.test.mjs tests/lastplay.test.mjs
       - uses: actions/upload-artifact@v4
+        id: optional_dist
+        continue-on-error: true
         with:
           name: dist
           path: dist/
+      - name: Report optional artifact retention failure
+        if: steps.optional_dist.outcome == 'failure'
+        run: echo "::warning::Actions artifact retention failed. Build and verification results above remain authoritative; tagged releases publish verified packages and browser proof directly as release assets."

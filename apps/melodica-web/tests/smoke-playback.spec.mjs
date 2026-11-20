@@ -61,8 +61,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const DIST = resolve(process.env.MELODICA_DIST || resolve(here, '..', 'dist'));
 const ARTIFACTS = resolve(here, 'artifacts');
 const APP_PATH = '/melodica/app/';
-const SHELL_PATHS = new Set(['/melodica/', '/melodica/listens/', '/melodica/leaderboard/', '/melodica/map/', '/melodica/account/', '/melodica/extension/']);
-const sitePage = await import('../site/src/page.js');
+const SHELL_PATHS = new Set(['/melodica/', '/melodica/track/', '/melodica/apps/', '/melodica/listens/', '/melodica/leaderboard/', '/melodica/map/', '/melodica/account/', '/melodica/extension/', '/melodica/aquarium/']);
+const sitePage = await import('../site/.build/page.js');
+const catalog = JSON.parse(await readFile(resolve(here, '../site/data/projects.json'), 'utf8'));
 const TUNER_DIR = process.env.MELODICA_TUNER_DIR || resolve(here, '..', '..', 'melodica-tuner');
 
 const tuner = {
@@ -144,7 +145,7 @@ test.beforeAll(async () => {
     // for every route, and the hub and the extension page as fragments from site/src/page.js.
     if (SHELL_PATHS.has(url.pathname)) {
       if (url.searchParams.has('fragment')) {
-        const html = url.pathname === '/melodica/' ? sitePage.hub(null, { prefix: '/melodica' }) : sitePage.render(null, { prefix: '/melodica' });
+        const html = url.pathname === '/melodica/' ? sitePage.hub(null, { prefix: '/melodica' }) : url.pathname === '/melodica/apps/' ? sitePage.appsPage(catalog, { prefix: '/melodica' }) : sitePage.render(null, { prefix: '/melodica' });
         const from = html.indexOf('<header class="hero'); const main = html.slice(from >= 0 ? from : html.indexOf('<main'), html.lastIndexOf('</main>') + 7).replace(/<script[\s\S]*?<\/script>/gi, '');
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         res.end(main);
@@ -1335,6 +1336,28 @@ test('the login card: Sign in with GitHub goes to spacegho.st GitHub sign-in, th
 // (Before the scrobbling tests: the CI's tuner report reads the log the last test leaves,
 // and that one plays inserts.)
 test.describe.serial('scrobbling to spacegho.st', () => {
+  test('the aquarium reads personal growth after restoring the player on reload', async ({ page }) => {
+    test.skip(!haveTuner, 'requires melodica-tuner');
+    await page.route('**/scrobble/api/garden?**', async route => {
+      const bearer = route.request().headers().authorization || '';
+      if (!account.who(bearer.slice(7))) return route.fulfill({status: 401, json: {error: 'invalid_token'}});
+      expect(new URL(route.request().url()).searchParams.get('plot')).toBe('me');
+      return route.fulfill({json: {plot: {owner: {you: true}, total: 1, listens: 1, plants: [
+        {key: 'aurora fields', artist: 'Aurora Fields', listens: 1, seed: 2},
+      ], reef_recent: [{key: 'aurora fields', artist: 'Aurora Fields'}]}}});
+    });
+    await begin(page, {every: 0, scrobble: true});
+    await expect.poll(() => page.evaluate(async () => {
+      const {Vault} = await import('./vault.js');
+      return !!(await new Vault().read('tab-engine-v1'))?.song;
+    })).toBe(true);
+    await page.locator('#site-nav a[data-k="aquarium"]').click();
+    await expect(page.locator('.aq-counts:visible')).toContainText('1 counted play');
+    await page.reload();
+    await expect(page.locator('.aq-counts:visible')).toContainText('1 counted play', {timeout: 15000});
+    await expect(page.locator('.aq-receipt:visible')).toHaveCount(0);
+  });
+
   test('the submit response shows a deployment without waiting for a live event', async ({ page }) => {
     test.skip(!haveTuner, 'no tuner: set TUNER_HTTPS_URL/TUNER_HTTP_URL or MELODICA_TUNER_DIR');
     await longAudio(page);
@@ -1787,4 +1810,136 @@ test('a blocked close handoff offers one-tap Resume without fetching another pla
   await remote.click('#bar-resume');
   await expect.poll(() => remote.locator('#audio').evaluate((a) => !a.paused)).toBe(true);
   expect(relay.seen.length).toBe(baseline);
+});
+
+test('walk journal records the route and real player changes, keeps the audio across views, and restores the cover', async ({page, context}) => {
+  test.skip(!haveTuner, 'The local tuner is required.');
+  await context.grantPermissions(['geolocation']);
+  await context.setGeolocation({latitude: 33.51, longitude: -86.81, accuracy: 5});
+  const evidence = await begin(page, {every: 0, listedInserts: false});
+  await page.waitForFunction(() => document.querySelector('#audio').currentTime > 0);
+  const first = await page.locator('#np-title').innerText();
+  await page.locator('#site-nav a[data-k="walks"]').click();
+  await expect(page.getByRole('heading', {name: 'Walk records'})).toBeVisible();
+  const w = key => page.locator('[data-w="' + key + '"]');
+  await expect(w('empty')).toBeVisible();
+  await expect(w('now')).toContainText(first);
+  await expect(w('record')).toBeHidden();
+  await w('music').click();
+  await expect.poll(() => page.locator('#audio').evaluate(a => a.paused)).toBe(true);
+  await w('start').click();
+  await expect.poll(() => page.locator('#audio').evaluate(a => !a.paused && a.currentTime > 0)).toBe(true);
+  await expect(w('songs')).toContainText(first);
+  await expect(w('fix')).toContainText('GPS accuracy');
+  await context.setGeolocation({latitude: 33.5103, longitude: -86.81, accuracy: 5});
+  await expect(w('stats')).toContainText('33 m');
+  await page.locator('#btn-play').click();
+  await expect(w('song')).toHaveText('Waiting for music');
+  await page.locator('#btn-play').click();
+  await page.locator('#btn-next').click();
+  await page.waitForFunction(name => document.querySelector('#np-title').textContent !== name, first);
+  const second = await page.locator('#np-title').innerText();
+  await expect(w('songs')).toContainText(second);
+  await context.setGeolocation({latitude: 33.5106, longitude: -86.81, accuracy: 5});
+  await page.locator('#site-nav a[data-k="app"]').click();
+  await expect(page.locator('#app')).toHaveAttribute('data-route', 'app');
+  await page.locator('#site-nav a[data-k="walks"]').click();
+  await expect(w('finish')).toBeVisible();
+  await w('finish').click();
+  await expect(w('notice')).toContainText('Walk saved');
+  await expect(w('playStation')).toBeVisible();
+  // A deep link from the journal opens the right category while the station plays.
+  await page.locator('summary').filter({hasText: 'Walking with an iPhone or Android'}).click();
+  await page.getByRole('link', {name: 'Browse Melodica’s Android apps'}).click();
+  await expect(page).toHaveURL(/\/melodica\/apps\/#android$/);
+  await expect(page.getByRole('heading', {name: 'Android', exact: true})).toBeInViewport();
+  await expect(page.locator('#site-nav a[data-k="apps"]')).toHaveAttribute('aria-current', 'page');
+  await page.getByRole('navigation', {name: 'App categories'}).getByText('Desktop').click();
+  await expect(page).toHaveURL(/\/melodica\/apps\/#desktop$/);
+  await expect(page.getByRole('heading', {name: 'Desktop', exact: true})).toBeInViewport();
+  await expect(page.locator('#app')).toHaveAttribute('data-route', 'apps');
+  await expect.poll(() => page.locator('#audio').evaluate(a => !a.paused)).toBe(true);
+  await page.locator('#site-nav a[data-k="walks"]').click();
+  await page.reload();
+  await expect(w('songs')).toContainText(second);
+  await w('songs').getByRole('button').filter({hasText:first}).first().click();
+  await expect(w('song')).toHaveText(first);
+  const waiting = page.waitForEvent('download');
+  await w('export').click();
+  const file = await waiting;
+  expect(file.suggestedFilename()).toMatch(/^melodica-walk-.*\.png$/);
+  const bytes = await readFile(await file.path());
+  expect(bytes.readUInt32BE(16)).toBe(1200);
+  expect(bytes.readUInt32BE(20)).toBe(1200);
+  expect(evidence.errors).toEqual([]);
+});
+
+test('walk journal imports timed GPX privately, matches personal listens, and leaves GPS gaps open', async ({page}) => {
+  test.skip(!haveTuner, 'The local tuner is required.');
+  await page.setViewportSize({width: 390, height: 844});
+  const requests = [];
+  page.on('request', r => requests.push(r.url() + (r.postData() || '')));
+  const at = 1762000000;
+  await page.route('**/scrobble/api/me/listens?**', r => r.fulfill({json: {listens: [
+    {listened_at: at + 100, duration_ms: 40000, title: 'Later song', artist: 'Second artist'},
+    {listened_at: at - 5, duration_ms: 55000, title: 'Opening song', artist: 'First artist'}
+  ], next_cursor: null}}));
+  await page.goto(new URL('/melodica/track/', appUrl).href);
+  const w = key => page.locator('[data-w="' + key + '"]');
+  const fix = (s, lat) => '<trkpt lat="'+lat+'" lon="-86.812345"><time>'+new Date((at+s)*1000).toISOString()+'</time></trkpt>';
+  const xml = '<gpx xmlns="http://www.topografix.com/GPX/1/1"><trk><trkseg>'+fix(0,33.612345)+fix(30,33.612545)+'</trkseg><trkseg>'+fix(100,33.617545)+fix(130,33.617745)+'</trkseg></trk></gpx>';
+  await w('file').setInputFiles({name:'walk.gpx',mimeType:'application/gpx+xml',buffer:Buffer.from(xml)});
+  await expect(w('notice')).toHaveText('Listening history matched by time.');
+  await expect(w('stats')).toContainText('44 m');
+  await expect(w('songs')).toContainText('Opening song');
+  await w('songs').getByRole('button', {name:/Later song/}).click();
+  await expect(w('song')).toHaveText('Later song');
+  await w('scrub').evaluate(el => { el.value = '500'; el.dispatchEvent(new Event('input', {bubbles:true})); });
+  await expect(w('song')).toHaveText('No song recorded here');
+  await expect(w('fix')).toHaveText('GPS gap at this time');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.reload();
+  await expect(w('songs')).toContainText('Later song');
+  await w('manage').locator('summary').click();
+  const backupReady = page.waitForEvent('download');
+  await w('backup').click();
+  const backup = await backupReady;
+  expect(backup.suggestedFilename()).toMatch(/\.gpx$/);
+  const saved = await readFile(await backup.path());
+  expect(saved.toString()).toContain('Opening song');
+  const count = requests.filter(url => url.includes('/me/listens?')).length;
+  await w('file').setInputFiles({name:'from-melodica.gpx',mimeType:'application/gpx+xml',buffer:saved});
+  await expect(w('notice')).toHaveText('Walk and song times restored on this device.');
+  await expect(w('songs')).toContainText('Later song');
+  expect(requests.filter(url => url.includes('/me/listens?')).length).toBe(count);
+  // Reopening an older record must not silently switch to a newer walk on reload.
+  const previous = await w('library').inputValue();
+  const earlier = xml.replaceAll('2025-11-01', '2025-10-31');
+  await w('file').setInputFiles({name:'previous-day.gpx',mimeType:'application/gpx+xml',buffer:Buffer.from(earlier)});
+  await expect(w('notice')).toContainText('No saved listens overlap');
+  const older = await w('library').inputValue();
+  expect(older).not.toBe(previous);
+  await page.reload();
+  await expect(w('library')).toHaveValue(older);
+  expect(requests.join('\n')).not.toContain('33.612345');
+  expect(requests.join('\n')).not.toContain('-86.812345');
+});
+
+test('walk journal opens on Android with personal sign-in, an empty library and no demo songs', async ({page}) => {
+  test.skip(!haveTuner, 'The local tuner is required.');
+  await page.setViewportSize({width:360,height:780});
+  const media = [];
+  page.on('request', r => { if (r.resourceType() === 'media') media.push(r.url()); });
+  await page.goto(new URL('/melodica/track/?walk=old#calls',appUrl).href);
+  const w = key => page.locator('[data-w="'+key+'"]');
+  await expect(w('music')).toHaveText('Sign in to play');
+  await expect(w('empty')).toBeVisible();
+  await expect(w('record')).toBeHidden();
+  await expect(page.locator('.walks')).not.toContainText(/Soft Current|Blue Hour|The long way home/);
+  await page.getByText('Walking with an iPhone or Android').click();
+  await expect(page.getByRole('link',{name:'GPSLogger for Android'})).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await w('music').click();
+  await expect(page).toHaveURL(url => url.pathname === '/melodica/app/');
+  expect(media).toEqual([]);
 });

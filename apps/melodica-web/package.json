@@ -5,10 +5,14 @@
   "description": "Pandora client in the browser: melodica.h compiled to WebAssembly",
   "license": "MIT",
   "scripts": {
-    "test": "node --test tests/listen-uri.test.mjs tests/rooms.test.mjs && node tests/node-unit.mjs && node tests/bridge-unit.mjs && node tests/account-unit.mjs && node tests/inserts-unit.mjs && node tests/scrobble-unit.mjs && node tests/node-smoke.mjs",
-    "test:browser": "playwright test"
+    "test": "node --test tests/listen-uri.test.mjs tests/rooms.test.mjs tests/lastplay.test.mjs && node tests/node-unit.mjs && node tests/bridge-unit.mjs && node tests/account-unit.mjs && node tests/inserts-unit.mjs && node tests/scrobble-unit.mjs && node tests/node-smoke.mjs",
+    "test:browser": "playwright test",
+    "build:site": "node scripts/compile-imba.mjs site",
+    "build:web": "node scripts/compile-imba.mjs web"
   },
   "devDependencies": {
-    "@playwright/test": "^1.49.0"
+    "@playwright/test": "^1.49.0",
+    "acorn": "8.19.0",
+    "imba": "2.0.0-alpha.253"
   }
 }

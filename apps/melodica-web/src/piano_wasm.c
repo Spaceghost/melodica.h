@@ -172,6 +172,8 @@ typedef enum {
     MW_ACT_SEARCH,
     MW_ACT_CREATE_STATION,
     MW_ACT_DELETE_STATION,
+    MW_ACT_STATION_INFO, MW_ACT_ADD_SEED, MW_ACT_DELETE_SEED,
+    MW_ACT_MODES, MW_ACT_SET_MODE, MW_ACT_QUICKMIX, MW_ACT_SETTINGS, MW_ACT_SET_FILTER,
     MW_ACT_INSERT_INFO,
     MW_ACT_INSERT_PLAYED,
 } mw_action;
@@ -192,6 +194,16 @@ static PianoRequestDataRateSong_t g_rate;
 static PianoRequestDataExplain_t g_explain;
 static PianoRequestDataSearch_t g_search;
 static PianoRequestDataCreateStation_t g_create;
+static PianoRequestDataGetStationInfo_t g_info;
+static PianoRequestDataAddSeed_t g_add_seed;
+static PianoRequestDataDeleteSeed_t g_delete_seed;
+static PianoRequestDataGetStationModes_t g_modes;
+static PianoRequestDataSetStationMode_t g_mode;
+static PianoSettings_t g_settings;
+static PianoRequestDataChangeSettings_t g_filter;
+/* A temporary station list lets libpiano build Shuffle without changing the user's
+ * current list if the request is interrupted or Pandora declines the edit. */
+static PianoStation_t *g_mix = NULL;
 static PianoSong_t g_tmp_song;           /* stand-in song for rate/tired/explain */
 static PianoSong_t *g_target_song = NULL;/* song the feedback applies to */
 static char *g_login_user = NULL;
@@ -203,6 +215,7 @@ static PianoAudioQuality_t g_insert_quality = PIANO_AQ_HIGH;
 static void free_tmp_song(void) {
     free(g_tmp_song.trackToken);
     free(g_tmp_song.stationId);
+    free(g_tmp_song.seedId);
     memset(&g_tmp_song, 0, sizeof(g_tmp_song));
 }
 
@@ -217,6 +230,20 @@ static void clear_request_state(void) {
     free_tmp_song();
     free(g_explain.retExplain);
     g_target_song = NULL;
+    PianoDestroyStationInfo(&g_info.info);
+    PianoDestroyStationMode(g_modes.retModes);
+    free(g_settings.username);
+    while (g_mix != NULL) {
+        PianoStation_t *next = (PianoStation_t *)g_mix->head.next;
+        free(g_mix); /* id is borrowed from g_ph.stations */
+        g_mix = next;
+    }
+    memset(&g_info, 0, sizeof(g_info));
+    memset(&g_modes, 0, sizeof(g_modes));
+    memset(&g_settings, 0, sizeof(g_settings));
+    memset(&g_filter, 0, sizeof(g_filter));
+    memset(&g_add_seed, 0, sizeof(g_add_seed));
+    memset(&g_delete_seed, 0, sizeof(g_delete_seed));
     memset(&g_login, 0, sizeof(g_login));
     memset(&g_playlist_req, 0, sizeof(g_playlist_req));
     memset(&g_rate, 0, sizeof(g_rate));
@@ -281,6 +308,7 @@ static const char *format_name(PianoAudioFormat_t f) {
 
 static void emit_song(mw_buf *b, const PianoSong_t *s) {
     buf_putc(b, '{');
+    buf_kv_string(b, "seedId", s->seedId); buf_putc(b, ',');
     buf_kv_string(b, "title", s->title); buf_putc(b, ',');
     buf_kv_string(b, "artist", s->artist); buf_putc(b, ',');
     buf_kv_string(b, "album", s->album); buf_putc(b, ',');
@@ -667,6 +695,14 @@ static char *issue(void) {
         case MW_ACT_SEARCH: data = &g_search; break;
         case MW_ACT_CREATE_STATION: data = &g_create; break;
         case MW_ACT_DELETE_STATION: data = g_playlist_req.station; break;
+        case MW_ACT_STATION_INFO: data = &g_info; break;
+        case MW_ACT_ADD_SEED: data = &g_add_seed; break;
+        case MW_ACT_DELETE_SEED: data = &g_delete_seed; break;
+        case MW_ACT_MODES: data = &g_modes; break;
+        case MW_ACT_SET_MODE: data = &g_mode; break;
+        case MW_ACT_QUICKMIX: break;
+        case MW_ACT_SETTINGS: data = &g_settings; break;
+        case MW_ACT_SET_FILTER: data = &g_filter; break;
         default: return error_reply(PIANO_RET_ERR, "No request in progress.");
     }
     free(g_req.postData);
@@ -675,7 +711,10 @@ static char *issue(void) {
     g_req.responseData = NULL;
     g_req.urlPath[0] = '\0';
     g_req.data = data;
+    PianoStation_t *saved_stations = g_ph.stations;
+    if (g_action == MW_ACT_QUICKMIX) g_ph.stations = g_mix;
     PianoReturn_t ret = PianoRequest(&g_ph, &g_req, g_type);
+    g_ph.stations = saved_stations;
     if (ret != PIANO_RET_OK) {
         clear_request_state();
         return error_reply(ret, ret == PIANO_RET_ERR ? "Request could not be built (not logged in?)." : NULL);
@@ -804,6 +843,68 @@ MW_EXPORT char *mw_begin(const char *requestJson) {
             g_action = MW_ACT_DELETE_STATION;
             g_type = PIANO_REQUEST_DELETE_STATION;
         }
+    } else if (!strcmp(action,"stationInfo") || !strcmp(action,"addSeed") ||
+               !strcmp(action,"deleteSeed") || !strcmp(action,"modes") || !strcmp(action,"setMode")) {
+        char *id = json_field(&doc, "stationId");
+        PianoStation_t *station = id ? PianoFindStationById(g_ph.stations,id) : NULL;
+        free(id);
+        if (!station || station->isQuickMix) {
+            reply = error_reply(PIANO_RET_ERR, "Choose a station first.");
+        } else if (!strcmp(action,"stationInfo")) {
+            g_action = MW_ACT_STATION_INFO; g_type = PIANO_REQUEST_GET_STATION_INFO; g_info.station = station;
+        } else if (!strcmp(action,"modes")) {
+            g_action = MW_ACT_MODES; g_type = PIANO_REQUEST_GET_STATION_MODES; g_modes.station = station;
+        } else if (!strcmp(action,"setMode")) {
+            long mode_id = -1;
+            if (!melodica_json_long(&doc,melodica_json_object_get(&doc,0,"mode"),&mode_id) || mode_id < 0)
+                reply = error_reply(PIANO_RET_ERR, "Choose an available station mode.");
+            else {
+                g_action = MW_ACT_SET_MODE; g_type = PIANO_REQUEST_SET_STATION_MODE;
+                g_mode.station = station; g_mode.id = (unsigned int)mode_id;
+            }
+        } else if (!strcmp(action,"addSeed")) {
+            g_add_seed.musicId = g_create_token = json_field(&doc,"musicId");
+            if (!g_create_token || !*g_create_token) reply = error_reply(PIANO_RET_ERR, "Choose an artist or song.");
+            else {
+                g_action = MW_ACT_ADD_SEED; g_type = PIANO_REQUEST_ADD_SEED; g_add_seed.station = station;
+            }
+        } else {
+            g_tmp_song.seedId = json_field(&doc,"seedId");
+            if (!g_tmp_song.seedId || !*g_tmp_song.seedId) reply = error_reply(PIANO_RET_ERR, "Choose a seed to remove.");
+            else {
+                g_action = MW_ACT_DELETE_SEED; g_type = PIANO_REQUEST_DELETE_SEED; g_delete_seed.song = &g_tmp_song;
+            }
+        }
+    } else if (!strcmp(action,"setShuffle")) {
+        size_t ids = melodica_json_object_get(&doc,0,"ids");
+        if (ids == MELODICA_JSON_NONE || doc.tokens[ids].type != MELODICA_JSON_ARRAY || !melodica_json_array_count(&doc,ids)) {
+            reply = error_reply(PIANO_RET_ERR,"Choose at least one station for Shuffle.");
+        } else {
+            for (size_t i = ids + 1; i < doc.count && doc.tokens[i].start < doc.tokens[ids].end; ++i) {
+                if (doc.tokens[i].parent != ids) continue;
+                char *id = melodica_json_string_dup(&doc,i);
+                PianoStation_t *station = id ? PianoFindStationById(g_ph.stations,id) : NULL;
+                free(id);
+                if (!station || station->isQuickMix) { reply = error_reply(PIANO_RET_ERR,"Unknown Shuffle station."); break; }
+                PianoStation_t *item = calloc(1,sizeof(*item));
+                if (!item) { reply = error_reply(PIANO_RET_OUT_OF_MEMORY,NULL); break; }
+                item->id = station->id; item->useQuickMix = true;
+                item->head.next = (PianoListHead_t *)g_mix; g_mix = item;
+            }
+            g_action = MW_ACT_QUICKMIX; g_type = PIANO_REQUEST_SET_QUICKMIX;
+        }
+    } else if (!strcmp(action,"getFilter")) {
+        g_action = MW_ACT_SETTINGS; g_type = PIANO_REQUEST_GET_SETTINGS;
+    } else if (!strcmp(action,"setFilter")) {
+        int enabled = 0;
+        g_filter.currentUsername = g_login_user = json_field(&doc,"user");
+        g_filter.currentPassword = g_login_pass = json_field(&doc,"password");
+        if (!g_login_user || !g_login_pass || !melodica_json_bool(&doc,melodica_json_object_get(&doc,0,"enabled"),&enabled))
+            reply = error_reply(PIANO_RET_ERR,"Confirm your Pandora sign-in to change this account setting.");
+        else {
+            g_filter.explicitContentFilter = enabled ? PIANO_TRUE : PIANO_FALSE;
+            g_action = MW_ACT_SET_FILTER; g_type = PIANO_REQUEST_CHANGE_SETTINGS;
+        }
     } else if (strcmp(action, "insertInfo") == 0) {
         char *token = json_field(&doc, "token");
         if (token == NULL) {
@@ -903,6 +1004,29 @@ static char *success_reply(int cont) {
                 free(g_explain.retExplain);
                 g_explain.retExplain = NULL;
                 break;
+            case MW_ACT_STATION_INFO:
+                emit_artists(&b,g_info.info.artistSeeds); buf_putc(&b, ',');
+                emit_songs(&b,"songs",g_info.info.songSeeds); buf_putc(&b, ',');
+                buf_puts(&b,"\"stations\":[");
+                for (PianoStation_t *s = g_info.info.stationSeeds; s; s = (PianoStation_t *)s->head.next) {
+                    if (s != g_info.info.stationSeeds) buf_putc(&b, ',');
+                    buf_putc(&b,'{'); buf_kv_string(&b,"name",s->name); buf_putc(&b, ',');
+                    buf_kv_string(&b,"seedId",s->seedId); buf_putc(&b,'}');
+                }
+                buf_putc(&b,']'); break;
+            case MW_ACT_MODES:
+                buf_puts(&b,"\"modes\":[");
+                for (PianoStationMode_t *m = g_modes.retModes; m; m = (PianoStationMode_t *)m->head.next) {
+                    if (m != g_modes.retModes) buf_putc(&b,',');
+                    buf_putc(&b,'{'); buf_kv_long(&b,"id",m->id); buf_putc(&b,',');
+                    buf_kv_string(&b,"name",m->name); buf_putc(&b,','); buf_kv_bool(&b,"active",m->active); buf_putc(&b,'}');
+                }
+                buf_putc(&b,']'); break;
+            case MW_ACT_QUICKMIX:
+                for (PianoStation_t *s = g_ph.stations; s; s = (PianoStation_t *)s->head.next)
+                    s->useQuickMix = PianoFindStationById(g_mix, s->id) != NULL;
+                break;
+            case MW_ACT_SETTINGS: buf_kv_bool(&b,"enabled",g_settings.explicitContentFilter); break;
             case MW_ACT_SEARCH:
                 emit_artists(&b, g_search.searchResult.artists); buf_putc(&b, ',');
                 emit_songs(&b, "songs", g_search.searchResult.songs);

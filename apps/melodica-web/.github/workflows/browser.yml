@@ -26,9 +26,14 @@ on:
         type: boolean
         default: false
 
+# Development fixtures use a deterministic SemVer. The exact source ref remains
+# recorded by checkout/job metadata; release builds set their actual tag version.
+env:
+  MELODICA_WEB_VERSION: 0.0.0
+
 jobs:
   local-dist:
-    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '"ubuntu-latest"') }}
+    runs-on: [self-hosted, Linux, X64, fedora]
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +48,7 @@ jobs:
           node-version: 22
       - name: Fetch the shared Scrobbles UI (pinned, sha256-checked)
         run: scripts/fetch-scrobble-ui.sh
+      - run: npm ci --no-audit --no-fund
       - name: Build dist/
         run: scripts/build.sh
       - name: Static checks
@@ -52,8 +58,7 @@ jobs:
         # already provides them, so avoid its extra package-mirror dependency.
         timeout-minutes: 15
         run: |
-          npm install --no-audit --no-fund
-          npx playwright install ${{ runner.environment == 'self-hosted' && '--with-deps' || '' }} chromium
+          npx playwright install chromium
       - name: Browser test (local dist, live relay)
         run: npx playwright test tests/browser.spec.mjs
         env:
@@ -65,7 +70,9 @@ jobs:
       - name: Browser test (spacegho.st sign-in against a local account server, no network)
         run: npx playwright test tests/account.spec.mjs
       - name: Browser test (remote mode against a fake background player, no network)
-        run: npx playwright test tests/remote.spec.mjs
+        run: npx playwright test tests/remote.spec.mjs tests/audio-source.spec.mjs
+      - name: Mobile walk journal, device handoff and phone audio
+        run: npx playwright test tests/mobile-walks.spec.mjs tests/mobile-player.spec.mjs
       - name: Design screenshots (every view at 390x844 and 1280x800, one centered column)
         run: npx playwright test tests/design.spec.mjs
       - name: Design against v0.4.0 (the player at 1920x1080 and 2560x1440 next to the v0.4.0 release)
@@ -77,6 +84,7 @@ jobs:
           tar xzf "$RUNNER_TEMP/v040/melodica-web-0.4.0.tar.gz" -C "$RUNNER_TEMP/v040"
           MELODICA_V040_DIST="$RUNNER_TEMP/v040/dist" npx playwright test tests/design-v040.spec.mjs
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         if: always()
         with:
           name: browser-local-dist
@@ -84,7 +92,7 @@ jobs:
           if-no-files-found: ignore
 
   smoke:
-    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '"ubuntu-latest"') }}
+    runs-on: [self-hosted, Linux, X64, fedora]
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -99,6 +107,7 @@ jobs:
           node-version: 22
       - name: Fetch the shared Scrobbles UI (pinned, sha256-checked)
         run: scripts/fetch-scrobble-ui.sh
+      - run: npm ci --no-audit --no-fund
       - name: Build dist/
         run: scripts/build.sh
       - name: Install Playwright
@@ -106,8 +115,7 @@ jobs:
         # already provides them, so avoid its extra package-mirror dependency.
         timeout-minutes: 15
         run: |
-          npm install --no-audit --no-fund
-          npx playwright install ${{ runner.environment == 'self-hosted' && '--with-deps' || '' }} chromium
+          npx playwright install chromium
       - uses: Spaceghost/melodica-tuner@v1
         id: tuner
         with:
@@ -139,6 +147,7 @@ jobs:
             --out "$GITHUB_WORKSPACE/tests/artifacts/smoke-web-playback-report.json"
           cat "$GITHUB_WORKSPACE/tests/artifacts/smoke-web-playback-report.json"
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: dist
           path: dist/
@@ -146,6 +155,7 @@ jobs:
         if: always()
         run: cat tests/artifacts/smoke-web.json || true
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         if: always()
         with:
           name: smoke-web
@@ -168,18 +178,24 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
         with:
-          name: dist
-          path: dist
+          submodules: recursive
+      # Rebuild this exact ref instead of transferring through the quota-limited
+      # Actions artifact service. All browser checks below remain required.
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.74
+          actions-cache-folder: emsdk-cache
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - run: npm ci --no-audit --no-fund
+      - name: Rebuild the exact tested client
+        run: scripts/fetch-scrobble-ui.sh && scripts/build.sh
       - name: Install Playwright
         timeout-minutes: 15
         run: |
-          npm install --no-audit --no-fund
-          npx playwright install ${{ runner.environment == 'self-hosted' && '--with-deps' || '' }} chromium
+          npx playwright install chromium
       - uses: Spaceghost/melodica-tuner@v1
         id: tuner
         with:
@@ -204,6 +220,7 @@ jobs:
           TUNER_USER: ${{ steps.tuner.outputs.user }}
           TUNER_PASSWORD: ${{ steps.tuner.outputs.password }}
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         if: always()
         with:
           name: extension-real
@@ -215,7 +232,7 @@ jobs:
 
   hosted:
     if: github.event_name == 'workflow_dispatch' && inputs.hosted
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, fedora]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -226,14 +243,15 @@ jobs:
         # already provides them, so avoid its extra package-mirror dependency.
         timeout-minutes: 15
         run: |
-          npm install --no-audit --no-fund
-          npx playwright install ${{ runner.environment == 'self-hosted' && '--with-deps' || '' }} chromium
+          npm ci --no-audit --no-fund
+          npx playwright install chromium
       - name: Browser test (hosted page)
         run: npx playwright test tests/browser.spec.mjs
         env:
           MELODICA_APP_URL: https://spacegho.st/melodica/app/
           MELODICA_BROWSER_ALLOW_RELAY_BLOCK: '1'
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         if: always()
         with:
           name: browser-hosted

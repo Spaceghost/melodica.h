@@ -1,0 +1,75 @@
+name: Melodica
+options:
+  deploymentTarget:
+    iOS: "17.0"
+    watchOS: "10.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  Melodica:
+    type: application
+    platform: iOS
+    sources:
+      - Player
+      - Shared
+      - path: ../shared/bridge.js
+        buildPhase: resources
+    info:
+      path: Generated/Player-Info.plist
+      properties:
+        CFBundleDisplayName: Melodica Mobile
+        UILaunchScreen: {}
+        NSLocationWhenInUseUsageDescription: Record your walk while you listen, including with the screen locked.
+        UIBackgroundModes: [audio, location]
+        CFBundleURLTypes:
+          - CFBundleURLSchemes: [melodica-radio, listen, web+listen]
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: Phone
+                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).PhoneScene
+            CPTemplateApplicationSceneSessionRoleApplication:
+              - UISceneConfigurationName: Car
+                UISceneClassName: CPTemplateApplicationScene
+                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).CarScene
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: st.spacegho.melodica.mobile
+        CODE_SIGN_ENTITLEMENTS: Player.entitlements
+    dependencies:
+      - target: StationWidget
+        embed: true
+      - target: MelodicaWrist
+        embed: true
+      - sdk: libsqlite3.tbd
+  StationWidget:
+    type: app-extension
+    platform: iOS
+    sources: [StationWidget, Shared]
+    info:
+      path: Generated/Widget-Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: st.spacegho.melodica.mobile.station
+        CODE_SIGN_ENTITLEMENTS: Player.entitlements
+        SKIP_INSTALL: YES
+  MelodicaWrist:
+    type: application
+    platform: watchOS
+    sources: [Wrist]
+    info:
+      path: Generated/Wrist-Info.plist
+      properties:
+        WKApplication: true
+        WKCompanionAppBundleIdentifier: st.spacegho.melodica.mobile
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: st.spacegho.melodica.mobile.wrist
+        SKIP_INSTALL: YES

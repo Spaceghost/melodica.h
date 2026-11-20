@@ -1,6 +1,7 @@
+import { readAppSource } from './tools/app-source.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRoomHost, isRoomsPath, roomIdFromPath, roomPositionMs, roomBlocksSource } from '../web/rooms.js';
+import { createRoomHost, isRoomsPath, roomIdFromPath, roomPositionMs, roomBlocksSource } from '../dist/rooms.js';
 const id='room1234567890123456';
 const state={id,seq:1,you:'listener',closed_at:0,members:[{account:'listener'}],play:null};
 
@@ -32,6 +33,8 @@ test('remote room intents create no socket or audio session',async(t)=>{
   const f=fixture(t,{remote:true});
   await f.host.command('room-join',{id});await f.host.command('room-pause');
   assert.equal(f.made(),0);assert.equal(f.calls.filter(x=>x[0]==='remote').length,2);
+  assert.equal(f.calls.find(x=>x[1]==='room-join')[2].roomId,id, 'room identity survives bridge request ID assignment');
+  assert.equal(f.calls.find(x=>x[1]==='room-pause')[2].roomId,id, 'player controls are bound to the room on screen');
   assert.equal(f.host.getState().state.seq,1);
 });
 
@@ -113,14 +116,14 @@ test('room progress uses server anchors independently of local clock and stops w
   assert.equal(roomPositionMs(snapshot,999000),60000);
 });
 
-test('only the current DJ without a broadcast can choose an initial source while joined',()=>{
+test('the broadcasting DJ can choose stations while listeners and secondary devices cannot',()=>{
   assert.equal(roomBlocksSource(null),false);
   assert.equal(roomBlocksSource({id,state:null}),true);
   assert.equal(roomBlocksSource({id,state:{you:'me',current_dj:'other',play:null}}),true);
   assert.equal(roomBlocksSource({id,state:{you:'me',current_dj:'me',play:null}}),false);
   assert.equal(roomBlocksSource({id,state:{you:'me',current_dj:'me',play:null,you_broadcasting:true}}),false);
   assert.equal(roomBlocksSource({id,state:{you:'me',current_dj:'me',play:null,you_broadcasting:false}}),true);
-  assert.equal(roomBlocksSource({id,state:{you:'me',current_dj:'me',play:{id:'play'},you_broadcasting:true}}),true);
+  assert.equal(roomBlocksSource({id,state:{you:'me',current_dj:'me',play:{id:'play'},you_broadcasting:true}}),false);
   assert.equal(roomBlocksSource({id,state:{you:'me',current_dj:'me',play:{id:'play'},you_broadcasting:false}}),true);
   assert.equal(roomBlocksSource({id,state:{closed_at:123,play:{id:'play'}}}),false);
 });
@@ -138,4 +141,30 @@ test('room leave commands retain authentication until the shared shutdown comple
     assert.equal(completed,false,'account sign-out must wait for the server departure');
     finish();await leaving;assert.equal(completed,true);
   }
+});
+
+test('the local page cannot switch away from its active DJ broadcast', async t => {
+  const f=fixture(t);await f.host.command('room-join',{id});
+  const session=f.host.localSession();
+  session.getState=()=>({...state,you:'dj',current_dj:'dj',you_broadcasting:true,play:{id:'playing',dj:'dj'}});
+  session.dispatchEvent(new CustomEvent('state',{detail:session.getState()}));
+  await assert.rejects(f.host.command('room-join',{id:'anotherRoom123456789'}),/Leave your DJ room/);
+  assert.equal(f.host.getState().id,id);
+  assert.equal(f.calls.some(call=>Array.isArray(call)&&call[0]==='close'),false);
+  await f.host.leave();
+});
+
+test('web DJ station selection waits for the next track and discards the old station queue',async()=>{
+  const vm=await import('node:vm');
+  const fn=readAppSource(new URL('../dist/app.js',import.meta.url));
+  const song={title:'Current'},station={id:'old'},calls=[];
+  const state={station,song,pendingStation:null,playGen:1,queue:[{title:'Old queued song'}],rooms:{getState:()=>({id,state:{you:'dj',current_dj:'dj',play:{id:'play',dj:'dj'}}})},tabs:{owner:true,publish:()=>calls.push('publish')}};
+  const context=vm.createContext({state,el:{app:{dataset:{ready:'true'}}},roomBlocksSource,checkpointEngine:()=>calls.push('checkpoint'),
+    playerMessage:text=>calls.push(text),store:{set:()=>{}},STORAGE:{station:'station'},markActiveStation:()=>{},renderUpNext:()=>{},urlExpired:()=>false,
+    fetchPlaylist:async()=>{calls.push('fetch '+state.station.id);return [{title:'New song'}];},playSong:track=>{state.song=track;},PianoError:Error});
+  vm.runInContext(fn('playStation')+'\n'+fn('nextSong')+'\nglobalThis.select=playStation;globalThis.advance=nextSong;',context);
+  await context.select({id:'new',name:'New radio'});
+  assert.equal(state.song,song);assert.equal(state.station,station);assert.equal(state.pendingStation.id,'new');assert.equal(calls.some(x=>x.startsWith('fetch')),false);
+  assert.ok(calls.includes('New radio queued for your next DJ track.'));
+  await context.advance();assert.equal(state.station.id,'new');assert.equal(state.song.title,'New song');assert.equal(state.pendingStation,null);assert.ok(calls.includes('fetch new'));
 });

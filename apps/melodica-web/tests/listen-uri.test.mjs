@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { parseListenUri, listenUri, routeOf } from '../web/listen-uri.js';
+import { parseListenUri, listenUri, routeOf } from '../dist/listen-uri.js';
 
 test('parses every target in all three forms', () => {
   const cases = [

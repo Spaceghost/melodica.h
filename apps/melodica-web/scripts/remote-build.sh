@@ -8,10 +8,10 @@ HOST=${MW_HOST:-bak}
 CONTAINER=${MW_CONTAINER:-melodica-emsdk}
 DEST=${MW_DEST:-/work/melodica-web}
 cd "$ROOT"
-tar cf - --exclude=dist --exclude=.git --exclude='vendor/melodica.h/.git' --exclude='vendor/melodica.h/build' . \
+tar cf - --exclude=dist --exclude=node_modules --exclude=.build --exclude=.git --exclude='vendor/melodica.h/.git' --exclude='vendor/melodica.h/build' . \
   | ssh "$HOST" "incus --project ${MW_PROJECT:-default} exec $CONTAINER -- bash -c 'mkdir -p $DEST && cd $DEST && tar xf - && \
       export PATH=/opt/emsdk/upstream/emscripten:\$(echo /opt/emsdk/node/*/bin):\$PATH && \
-      MELODICA_WEB_VERSION=${MELODICA_WEB_VERSION:-} scripts/build.sh && scripts/check.sh && \
+      npm ci --no-audit --no-fund && MELODICA_WEB_VERSION=${MELODICA_WEB_VERSION:-} scripts/build.sh && scripts/check.sh && \
       PANDORA_USER=\"${PANDORA_USER:-}\" PANDORA_PASSWORD=\"${PANDORA_PASSWORD:-}\" node tests/node-smoke.mjs && node tests/node-unit.mjs && node tests/bridge-unit.mjs && node tests/account-unit.mjs && node tests/inserts-unit.mjs && node tests/scrobble-unit.mjs'"
 rm -rf dist
 ssh "$HOST" "incus --project ${MW_PROJECT:-default} exec $CONTAINER -- bash -c 'cd $DEST && tar cf - dist'" | tar xf -

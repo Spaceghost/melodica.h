@@ -6,6 +6,7 @@
 <meta name="referrer" content="no-referrer">
 <meta name="color-scheme" content="dark light">
 <title>melodica — Pandora in the browser</title>
+<link rel="preload" as="fetch" href="melodica.wasm" type="application/wasm" crossorigin>
 <link rel="stylesheet" href="vendor/scrobble-ui/scrobble-ui.css">
 <link rel="stylesheet" href="app.css">
 <link rel="icon" href="data:,">
@@ -15,21 +16,28 @@
   <a class="brand" data-k="home" href="https://spacegho.st/melodica/" aria-label="melodica home">melodica <span class="brand-tag">web</span></a>
   <div id="site-nav" class="site-nav"><nav class="sui-nav" aria-label="melodica">
     <a href="https://spacegho.st/melodica/app/" data-k="app" aria-current="page">Player</a>
+    <a href="https://spacegho.st/melodica/track/" data-k="walks">Walks</a>
     <a href="https://spacegho.st/melodica/rooms/" data-k="rooms">Rooms</a>
     <a href="https://spacegho.st/melodica/listens/" data-k="listens">Listens</a>
     <a href="https://spacegho.st/melodica/leaderboard/" data-k="leaderboard">Leaderboard</a>
     <a href="https://spacegho.st/melodica/map/" data-k="map">Map</a>
+    <a href="https://spacegho.st/melodica/garden/" data-k="garden">Garden</a>
+    <a href="https://spacegho.st/melodica/aquarium/" data-k="aquarium">Aquarium</a>
     <a href="https://spacegho.st/melodica/extension/" data-k="extension">Extension</a>
+    <a href="https://spacegho.st/melodica/apps/" data-k="apps">Apps</a>
     <a href="https://spacegho.st/melodica/account/" data-k="account">Account</a>
   </nav></div>
   <div class="top-right">
     <details class="listen-links">
       <summary>Listen links</summary>
       <form id="listen-open" class="panel">
-        <label class="field" for="listen-input"><span>Open a listen link</span></label>
+        <label class="field" for="listen-input"><span>Open a listen link or shared recording</span></label>
         <input id="listen-input" type="text" maxlength="1024" placeholder="listen://artist/Modest%20Mouse" autocomplete="off" spellcheck="false">
         <button type="submit" class="quiet">Open link</button>
         <button id="listen-register" type="button" class="quiet" hidden>Open web+listen links here</button>
+        <button id="share-track" type="button" class="quiet">Share current song</button>
+        <button id="share-room" type="button" class="quiet">Share current room</button>
+        <button id="link-desktop" type="button" class="quiet">Link a desktop player</button>
         <button id="listen-share-artist" type="button" class="quiet">Copy artist link</button>
         <button id="listen-share-station" type="button" class="quiet">Copy station link</button>
         <p id="listen-message" class="message" role="status"></p>
@@ -49,6 +57,8 @@
         <div id="scrobble-settings" class="scrobble-settings" hidden>
           <label class="check menu-check"><input id="scrobble-on" type="checkbox"><span>Scrobble to spacegho.st</span></label>
           <label class="check menu-check"><input id="scrobble-board" type="checkbox"><span>Show me on the leaderboard</span></label>
+          <button type="button" id="private-session">Start private session</button>
+          <p class="fine">A private session pauses submissions and Now Playing for your spacegho.st account until you end it.</p>
           <p id="scrobble-message" class="message" role="status"></p>
           <p class="scrobble-links fine"><a id="scrobble-dashboard" href="https://spacegho.st/melodica/listens/" rel="noopener">Your listens</a> ·
             <a id="scrobble-leaderboard" href="https://spacegho.st/melodica/leaderboard/" rel="noopener">Leaderboard</a><span id="scrobble-crew-wrap" hidden> ·
@@ -135,6 +145,16 @@
         <progress id="progress" value="0" max="1" aria-label="Playback position"></progress>
         <span id="time-len">0:00</span>
       </div>
+      <details id="song-lyrics" class="song-lyrics" hidden>
+        <summary>Lyrics from LRCLIB</summary>
+        <p role="status" class="fine"></p>
+        <button type="button" class="quiet" hidden>Retry lyric lookup</button>
+        <div data-words hidden>
+          <p></p>
+          <p aria-current="true"></p>
+          <p></p>
+        </div>
+      </details>
     </section>
 
     <div class="deck">
@@ -174,6 +194,18 @@
     </aside>
 
     <section class="shelf">
+      <section id="player-rooms" class="panel player-rooms" aria-labelledby="player-rooms-head">
+        <div class="panel-head"><h3 id="player-rooms-head">Rooms</h3><a href="https://spacegho.st/melodica/rooms/">All rooms</a></div>
+        <div id="player-room-current" hidden>
+          <p><a id="player-room-link" href="https://spacegho.st/melodica/rooms/"></a> <span id="player-room-status" class="fine" role="status"></span></p>
+          <p id="player-room-source" class="fine"></p>
+          <div class="room-actions">
+            <button id="player-room-stop-dj" type="button" class="quiet" hidden>Stop DJing</button>
+            <button id="player-room-leave" type="button" class="quiet">Leave room</button>
+          </div>
+        </div>
+        <details id="player-rooms-browse"><summary>Recent rooms and search</summary><div id="player-rooms-list" class="sui-host"></div></details>
+      </section>
       <blockquote id="explain-panel" class="panel pull" hidden tabindex="-1" aria-labelledby="explain-head">
         <p id="explain-text" class="pull-text"></p>
         <footer class="pull-foot">
@@ -187,7 +219,7 @@
         <p id="up-next-empty" class="fine">Nothing queued yet.</p>
       </section>
       <section class="panel recent" aria-labelledby="history-head">
-        <div class="panel-head"><h3 id="history-head">Play log</h3><span class="fine nowrap">this session</span></div>
+        <div class="panel-head"><h3 id="history-head">Play log</h3><span id="history-context" class="fine nowrap">this session</span></div>
         <ol id="history" class="history"></ol>
         <p id="history-empty" class="fine">Songs you hear will collect here, with their ratings.</p>
       </section>
@@ -196,6 +228,8 @@
           <div class="tabs" role="tablist" aria-label="Scrobbles">
             <button id="tab-listens" type="button" role="tab" class="tab" aria-selected="true" aria-controls="pane-listens" data-pane="listens">Your listens</button>
             <button id="tab-leaderboard" type="button" role="tab" class="tab" aria-selected="false" aria-controls="pane-leaderboard" data-pane="leaderboard" tabindex="-1">Leaderboard</button>
+            <button id="tab-garden" type="button" role="tab" class="tab" aria-selected="false" aria-controls="pane-garden" data-pane="garden" tabindex="-1">Garden</button>
+            <button id="tab-aquarium" type="button" role="tab" class="tab" aria-selected="false" aria-controls="pane-aquarium" data-pane="aquarium" tabindex="-1">Aquarium</button>
             <button id="tab-map" type="button" role="tab" class="tab" aria-selected="false" aria-controls="pane-map" data-pane="map" tabindex="-1" hidden>Map</button>
           </div>
           <span id="live-state" class="fine nowrap live-state" role="status"></span>
@@ -213,6 +247,8 @@
         <div id="pane-leaderboard" class="pane" role="tabpanel" aria-labelledby="tab-leaderboard" hidden>
           <div id="sui-leaderboard" class="sui-host"></div>
         </div>
+        <div id="pane-garden" class="pane" role="tabpanel" aria-labelledby="tab-garden" hidden><div id="sui-garden" class="sui-host"></div></div>
+        <div id="pane-aquarium" class="pane" role="tabpanel" aria-labelledby="tab-aquarium" hidden><div id="sui-aquarium" class="sui-host"></div></div>
         <div id="pane-map" class="pane" role="tabpanel" aria-labelledby="tab-map" hidden>
           <div id="sui-map" class="sui-host sui-map-host"></div>
         </div>

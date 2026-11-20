@@ -37,10 +37,10 @@ const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.wasm': 'application/wasm', '.md': 'text/markdown; charset=utf-8',
 };
-// The site worker's APP_CSP, unchanged: remote mode needs nothing new.
+// Mirror the site worker's player policy, including the optional lyric lookup.
 const csp = (nonce) => `default-src 'none'; script-src 'self' 'nonce-${nonce}' 'wasm-unsafe-eval'; ` +
   `style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; media-src https: http: blob:; ` +
-  `connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; worker-src 'self'`;
+  `connect-src 'self' https://lrclib.net/api/get; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; worker-src 'self'`;
 
 let server = null;
 let base = '';
@@ -111,7 +111,7 @@ test.afterAll(async () => {
 // ready says session: 1), holding `opts.extSession` (or none), `opts.credential` and
 // `opts.revoked`; window.__ext.logout() signs it out as its popup would.
 function fakeExtension(opts) {
-  const log = window.__remote = { sent: [], commands: [], pushes: 0, gets: 0, offers: [], logouts: [], accountSignouts: 0 };
+  const log = window.__remote = { sent: [], commands: [], intents: [], pushes: 0, gets: 0, offers: [], logouts: [], accountSignouts: 0 };
   const tracks = [
     { title: 'Slow Light', artist: 'Aurora Fields', album: 'Northern', trackToken: 'T1', duration: 200, rating: 0, coverArt: '' },
     { title: 'Second Song', artist: 'Band Two', album: 'Album Two', trackToken: 'T2', duration: 180, rating: 0, coverArt: '' },
@@ -129,12 +129,13 @@ function fakeExtension(opts) {
       { token: 'S2', name: 'Band Two Radio', isQuickMix: false, allowDelete: true },
     ],
   };
+  if (opts.room) st.room = opts.room;
   let subscribed = false;
   let firstAsked = 0;
   let idx = 0;
   const born = Date.now();
   const ready = () => post({ type: 'ready', name: 'melodica-extension', version: opts.player === false ? '0.2.0' : opts.session ? '0.6.0' : '0.3.0',
-    ...(opts.player === false ? {} : { player: true }), ...(opts.session ? { session: 1 } : {}) });
+    ...(opts.player === false ? {} : { player: true }), ...(opts.room || opts.rooms ? { rooms: 1 } : {}), ...(opts.session ? { session: 1 } : {}) });
   let sess = opts.extSession || null;
   let credential = opts.credential || null;
   const revoked = [...(opts.revoked || [])];
@@ -144,7 +145,7 @@ function fakeExtension(opts) {
     if (sid && !revoked.includes(sid)) revoked.push(sid);
     if (sess && (!sid || sess.sid === sid)) { if (!revoked.includes(sess.sid)) revoked.push(sess.sid); sess = null; credential = null; st.loggedIn = false; st.status = 'idle'; st.track = null; }
   };
-  window.__ext = { logout() { signOut(sess && sess.sid); post(sessionMsg()); push(); } };
+  window.__ext = { snapshot: () => JSON.parse(JSON.stringify(st)), setState(patch) { Object.assign(st, patch); push(); }, roomClock(room, clock) { const next = { ...room, state: { ...room.state, play: { ...room.state.play, id: clock.play_id, position_ms: clock.position_ms, server_time: clock.server_time } } }; post({ type: 'room-clock', room: next, state: { ...st, room: next } }); }, logout() { signOut(sess && sess.sid); post(sessionMsg()); push(); } };
   if (opts.lateReady) setTimeout(ready, opts.lateReady);
   const post = (m) => window.postMessage({ melodica: 1, ...m }, location.origin);
   const push = () => {
@@ -158,6 +159,7 @@ function fakeExtension(opts) {
     st.position = 0;
     st.duration = st.track.duration;
     st.status = 'playing';
+    st.history = [st.track, ...st.history.filter((song) => song.trackToken !== st.track.trackToken)].slice(0, 40);
     st.queueLength = 3;
     if (opts.queue) st.queue = [1, 2, 3].map((offset) => ({ ...tracks[(idx + offset) % tracks.length], coverArt: opts.queueArt || '', art: opts.queueArt || '' }));
   };
@@ -205,12 +207,21 @@ function fakeExtension(opts) {
     if (d.type !== 'command') return;
     const { id, action } = d;
     log.commands.push(action === 'play' && d.station ? `play ${d.station.token}` : action === 'volume' || action === 'quality' ? `${action} ${d.value}` : action);
+    if (action.startsWith('room-')) log.intents.push({ action, roomId: d.roomId || '', body: d.body || null });
     let ok = true;
     let error = '';
     if (action === 'open-login') { ok = !!opts.openLogin; error = ok ? '' : `unknown action ${action}`; }
+    else if (action === 'room-command') {
+      if (d.body?.action === 'react') st.room.reaction = d.body.reaction;
+      else if (d.body?.action === 'leave-dj') { st.room.state.you_broadcasting = false; st.room.audio = { state: 'listening', paused: false }; }
+      else if (d.body?.action === 'leave') st.room = null;
+    } else if (action === 'room-leave') st.room = null;
+    else if (action === 'room-pause') { if (st.room?.state?.play) st.room.state.play.paused_at = Date.now(); st.room.audio = { state: 'listening', paused: true }; }
+    else if (action === 'room-resume') { if (st.room?.state?.play) delete st.room.state.play.paused_at; st.room.audio = { state: 'listening', paused: false }; }
     else if (!st.loggedIn) { ok = false; error = 'Not signed in to Pandora in the extension.'; }
     else if (action === 'play') {
-      if (d.station) { st.station = { token: d.station.token, name: d.station.name }; idx = 0; startTrack(); } else st.status = 'playing';
+      if (d.station && st.room?.state?.play) st.pendingStation = d.station;
+      else if (d.station) { st.station = { token: d.station.token, name: d.station.name }; idx = 0; startTrack(); } else st.status = 'playing';
     } else if (action === 'pause') st.status = 'paused';
     else if (action === 'toggle') st.status = st.status === 'playing' ? 'paused' : 'playing';
     else if (action === 'next' || action === 'tired' || action === 'ban') {
@@ -799,4 +810,217 @@ test('first paint as a remote after a reload: the player in under 100 ms of DOMC
     expect(out[width].interactive, `${width}: controls live`).toBeLessThan(Number(process.env.MW_INTERACTIVE_MS || 300));
   }
   await finish(page, evidence, info);
+});
+
+
+test('Now Playing looks up lyrics on request and follows the audible track position', async ({page},info) => {
+  const requests = [];
+  await page.setViewportSize({width:390,height:844});
+  await page.route('https://lrclib.net/api/get?**', async route => {
+    const params = new URL(route.request().url()).searchParams;
+    requests.push(Object.fromEntries(params));
+    const syncedLyrics = params.get('track_name') === 'Slow Light'
+      ? '[ar:Test]\n[offset:250]\n[00:01.25][00:20.25]First test line\n[00:06.25]Second test line\n[00:11.25]'
+      : null;
+    await route.fulfill({json:{syncedLyrics},headers:{'access-control-allow-origin':'*'}});
+  });
+  const evidence = await open(page);
+  try {
+    await page.locator('#station-list button.station',{hasText:'Aurora Fields Radio'}).click();
+    await expect(page.locator('#np-title')).toHaveText('Slow Light');
+    const lyrics = page.locator('#song-lyrics');
+    expect(requests).toEqual([]);
+    await page.evaluate(() => window.__ext.setState({position:0,status:'paused'}));
+    await lyrics.locator('summary').click();
+    await expect(lyrics.locator('[data-words] p').last()).toHaveText('First test line');
+    expect(requests).toEqual([{artist_name:'Aurora Fields',track_name:'Slow Light',album_name:'Northern',duration:'200'}]);
+    const current = lyrics.locator('[aria-current]');
+    for (const [position, text] of [[6,'Second test line'],[12,''],[20,'First test line'],[1,'First test line']]) {
+      await page.evaluate(pos => window.__ext.setState({position:pos,status:'paused'}),position);
+      await expect(current).toHaveText(text);
+    }
+    await page.locator('#btn-next').click();
+    await expect(lyrics.getByRole('status')).toHaveText('No timed lyrics for this recording.');
+    await expect(current).toBeHidden();
+    expect(requests).toHaveLength(2);
+  } finally { await finish(page,evidence,info); }
+});
+
+test('mobile broadcasting DJ can select a radio station', async ({page},info)=>{
+  await page.setViewportSize({width:390,height:844});
+  const room={id:'room1234567890123456',locked:true,role:'dj',state:{you:'dj',current_dj:'dj',you_broadcasting:true,closed_at:0,
+    play:{id:'play-1',dj:'dj',duration_ms:120000,started_at:Date.now(),track_metadata:{track_name:'Room song',artist_name:'DJ artist'}}},audio:{state:'broadcasting'}};
+  const evidence=await open(page,{room});
+  try {
+    const station=page.locator('#station-list button.station',{hasText:'Aurora Fields Radio'});
+    await expect(station).toBeEnabled();await station.click();
+    await expect.poll(()=>page.evaluate(()=>window.__remote.commands)).toContain('play S1');
+    expect(apiHits).toEqual([]);
+    await expect(page.locator('#player-message')).toContainText('queued for your next DJ track');
+    const owner=await page.evaluate(()=>window.__ext.snapshot());
+    expect(owner.pendingStation.token).toBe('S1');expect(owner.room.state.play.id).toBe('play-1');
+  } finally {await finish(page,evidence,info);}
+});
+
+
+test('mobile room listeners cannot replace the DJ station', async ({page},info)=>{
+ await page.setViewportSize({width:390,height:844});
+ const room={id:'room1234567890123456',locked:false,role:'listener',state:{you:'listener',current_dj:'dj',you_broadcasting:false,closed_at:0,
+   play:{id:'play-1',dj:'dj',duration_ms:120000,started_at:Date.now(),track_metadata:{track_name:'Room song',artist_name:'DJ artist'}}},audio:{state:'listening'}};
+ const evidence=await open(page,{room});
+ try {await expect(page.locator('#station-list button.station',{hasText:'Aurora Fields Radio'})).toBeDisabled();
+ expect(await page.evaluate(()=>window.__remote.commands)).toEqual([]);
+ }finally{await finish(page,evidence,info);}
+});
+
+// Extension-owned room state is authoritative for the app remote. Exercise both
+// role variants and state pushes without starting a local room socket or player.
+function remoteRoom({ you = 'listener', dj = 'dj', broadcasting = false, paused = false } = {}) {
+  const now = Date.now();
+  return {
+    id: 'room1234567890123456', role: broadcasting ? 'dj' : 'listener',
+    state: {
+      id: 'room1234567890123456', name: 'Night Radio', you, current_dj: dj,
+      you_broadcasting: broadcasting, closed_at: 0, members: [],
+      play: {
+        id: 'room-play-1', dj, position_ms: 20_000, server_time: now,
+        started_at: now - 20_000, duration_ms: 180_000,
+        ...(paused ? { paused_at: now, paused_ms: 0 } : {}),
+        track_metadata: { track_name: 'Room song', artist_name: 'Room artist', release_name: 'Room album', additional_info: { art_url: '' } },
+      },
+      past: [],
+    },
+    audio: { state: broadcasting ? 'broadcasting' : 'listening', paused },
+  };
+}
+
+test('room listener remote shows room playback and never asks the extension for private stations', async ({page}, info) => {
+  const evidence = await open(page, { room: remoteRoom(), loggedIn: false });
+  try {
+    await expect(page.locator('#app')).toHaveAttribute('data-mode', 'remote');
+    await expect(page.locator('#np-title')).toHaveText('Room song');
+    await expect(page.locator('#np-artist')).toHaveText('Room artist');
+    await expect(page.locator('#np-album')).toHaveText('Room album');
+    await expect(page.locator('.stage')).not.toHaveClass(/idle/);
+    await expect(page.locator('#remote-signin')).toBeHidden();
+    await expect(page.locator('#btn-tired')).toBeDisabled();
+    await expect(page.locator('#btn-explain')).toBeDisabled();
+    await expect(page.locator('#time-len')).toHaveText('3:00');
+    expect(await page.evaluate(() => window.__remote.commands)).not.toContain('stations');
+    expect(apiHits).toEqual([]);
+  } finally { await finish(page, evidence, info); }
+});
+
+test('room remote refreshes same-title metadata and history, and room clock updates its progress', async ({page}, info) => {
+  const room = remoteRoom();
+  const evidence = await open(page, { room });
+  try {
+    await expect(page.locator('#np-title')).toHaveText('Room song');
+    const first = await page.locator('#progress').evaluate((el) => el.value);
+    await page.evaluate(() => window.__ext.setState({ room: {
+      ...window.__ext.snapshot().room,
+      state: { ...window.__ext.snapshot().room.state,
+        play: { ...window.__ext.snapshot().room.state.play, id: 'room-play-2', position_ms: 50_000,
+          server_time: Date.now(), track_metadata: { track_name: 'Room song', artist_name: 'New artist', release_name: 'New album', additional_info: { art_url: '' } } },
+        past: [{ id: 'room-play-1', track_metadata: { track_name: 'Earlier room song', artist_name: 'Earlier artist', release_name: 'Earlier album', additional_info: {} } }],
+      },
+    } }));
+    await expect(page.locator('#np-artist')).toHaveText('New artist');
+    await expect(page.locator('#np-album')).toHaveText('New album');
+    await expect(page.locator('#history')).toContainText('Earlier room song');
+    await page.waitForTimeout(700);
+    const advanced = Number(await page.locator('#progress').evaluate((el) => el.value));
+    expect(advanced).toBeGreaterThan(Number(first));
+    await page.evaluate(() => {
+      const room = window.__ext.snapshot().room;
+      window.__ext.roomClock(room, { play_id: room.state.play.id, position_ms: 65_000, server_time: room.state.play.server_time + 1_000 });
+    });
+    await expect.poll(() => page.locator('#progress').evaluate((el) => Number(el.value))).toBeGreaterThan(64);
+    const clockAdvanced = Number(await page.locator('#progress').evaluate((el) => el.value));
+    await page.evaluate(() => {
+      const room = window.__ext.snapshot().room;
+      window.__ext.roomClock(room, { play_id: room.state.play.id, position_ms: 1_000, server_time: room.state.play.server_time });
+    });
+    await page.waitForTimeout(100);
+    expect(Number(await page.locator('#progress').evaluate((el) => el.value))).toBeGreaterThanOrEqual(clockAdvanced);
+    await page.evaluate(() => {
+      const room = window.__ext.snapshot().room;
+      window.__ext.setState({ room: { ...room, audio: { state: 'listening', paused: true }, state: {
+        ...room.state, play: { ...room.state.play, paused_at: Date.now(), position_ms: 70_000, server_time: room.state.play.server_time + 2_000 },
+      } } });
+    });
+    await expect.poll(() => page.locator('#progress').evaluate((el) => Number(el.value))).toBeGreaterThan(69);
+    const pausedAt = Number(await page.locator('#progress').evaluate((el) => el.value));
+    await page.waitForTimeout(700);
+    expect(Number(await page.locator('#progress').evaluate((el) => el.value))).toBe(pausedAt);
+  } finally { await finish(page, evidence, info); }
+});
+
+test('the app room remote exposes current room navigation and DJ leave controls', async ({page}, info) => {
+  const evidence = await open(page, { room: remoteRoom({ you: 'dj', dj: 'dj', broadcasting: true }) });
+  try {
+    await expect(page.locator('#player-rooms')).toBeVisible();
+    await expect(page.locator('#player-room-link')).toBeVisible();
+    await expect(page.locator('#player-room-stop-dj')).toBeVisible();
+    await expect(page.locator('#player-room-leave')).toBeVisible();
+    await page.locator('#player-room-stop-dj').click();
+    await expect.poll(() => page.evaluate(() => window.__remote.intents.at(-1))).toMatchObject({ action: 'room-command', roomId: 'room1234567890123456', body: { action: 'leave-dj' } });
+    await expect.poll(() => page.evaluate(() => window.__ext.snapshot().room.audio.state)).toBe('listening');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator('#player-rooms')).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  } finally { await finish(page, evidence, info); }
+});
+
+
+test('same-account room listener rates the room play, hides private controls, and can leave', async ({page}, info) => {
+  const room = remoteRoom({ you: 'same-account', dj: 'same-account', broadcasting: false });
+  room.state.you_broadcasting = false;
+  room.audio = { state: 'listening', paused: false };
+  const evidence = await open(page, { room });
+  try {
+    const station = page.locator('#station-list button.station', { hasText: 'Aurora Fields Radio' });
+    await expect(station).toBeDisabled();
+    await expect(page.locator('#btn-tired')).toBeDisabled();
+    await expect(page.locator('#btn-explain')).toBeDisabled();
+    await page.locator('#btn-love').click();
+    await expect.poll(() => page.evaluate(() => window.__remote.intents.at(-1))).toMatchObject({ action: 'room-command', roomId: 'room1234567890123456', body: { action: 'react', reaction: 'like' } });
+    expect(await page.evaluate(() => window.__remote.commands)).not.toContain('love');
+    await expect(page.locator('#player-room-leave')).toBeVisible();
+    await page.locator('#player-room-leave').click();
+    await expect.poll(() => page.evaluate(() => window.__remote.intents.at(-1))).toMatchObject({ action: 'room-leave', roomId: 'room1234567890123456' });
+    await expect.poll(() => page.evaluate(() => window.__ext.snapshot().room)).toBeNull();
+  } finally { await finish(page, evidence, info); }
+});
+
+
+test('leaving an idle room restores private playback at its authoritative position', async ({page}, info) => {
+  const evidence = await open(page, { rooms: true });
+  try {
+    await page.locator('#station-list button.station', { hasText: 'Aurora Fields Radio' }).click();
+    await expect(page.locator('#np-title')).toHaveText('Slow Light');
+    await page.evaluate(() => {
+      const room = {
+        id: 'room1234567890123456', role: 'dj', locked: false,
+        state: { id: 'room1234567890123456', name: 'Night Radio', you: 'dj', current_dj: 'dj', you_broadcasting: true,
+          closed_at: 0, members: [], play: { id: 'room-play-1', dj: 'dj', position_ms: 20_000,
+            server_time: Date.now(), started_at: Date.now() - 20_000, duration_ms: 180_000,
+            track_metadata: { track_name: 'Room song', artist_name: 'Room artist', release_name: 'Room album', additional_info: {} } }, past: [] },
+        audio: { state: 'broadcasting', paused: false },
+      };
+      window.__ext.setState({ room, position: 74 });
+    });
+    await expect(page.locator('#np-title')).toHaveText('Room song');
+    await expect(page.locator('#history')).not.toContainText('Slow Light');
+    await page.evaluate(() => {
+      const room = window.__ext.snapshot().room;
+      window.__ext.setState({ room: { ...room, state: { ...room.state, play: null, past: [] }, audio: { state: 'broadcasting', paused: false } } });
+    });
+    await expect(page.locator('#np-title')).toHaveText('Waiting for the DJ');
+    await page.locator('#player-room-leave').click();
+    await expect(page.locator('#np-title')).toHaveText('Slow Light');
+    await expect(page.locator('#progress').evaluate((el) => Number(el.value))).resolves.toBeGreaterThanOrEqual(73);
+    await expect(page.locator('#history')).not.toContainText('Room song');
+    expect(await page.evaluate(() => window.__remote.intents.at(-1))).toMatchObject({ action: 'room-leave', roomId: 'room1234567890123456' });
+  } finally { await finish(page, evidence, info); }
 });

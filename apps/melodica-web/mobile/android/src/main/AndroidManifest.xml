@@ -1,0 +1,37 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.INTERNET"/>
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+  <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+  <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+  <queries><intent><action android:name="android.intent.action.TTS_SERVICE"/></intent></queries>
+  <application android:name=".MobileApp" android:label="Melodica Mobile" android:icon="@drawable/record"
+      android:allowBackup="false" android:usesCleartextTraffic="false" android:theme="@android:style/Theme.Material.NoActionBar">
+    <activity android:name=".PlayerActivity" android:launchMode="singleTop" android:exported="true"
+        android:configChanges="keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize">
+      <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW"/>
+        <category android:name="android.intent.category.DEFAULT"/>
+        <category android:name="android.intent.category.BROWSABLE"/>
+        <data android:scheme="listen"/>
+        <data android:scheme="web+listen"/>
+      </intent-filter>
+      <intent-filter>
+        <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH"/>
+        <category android:name="android.intent.category.DEFAULT"/>
+      </intent-filter>
+    </activity>
+    <service android:name=".RadioService" android:exported="true" android:foregroundServiceType="mediaPlayback|location">
+      <intent-filter><action android:name="android.media.browse.MediaBrowserService"/></intent-filter>
+    </service>
+    <receiver android:name=".StationWidget" android:exported="false">
+      <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/></intent-filter>
+      <meta-data android:name="android.appwidget.provider" android:resource="@xml/station_widget"/>
+    </receiver>
+    <meta-data android:name="com.google.android.gms.car.application" android:resource="@xml/automotive"/>
+  </application>
+</manifest>

@@ -1,12 +1,50 @@
 # HANDOFF (melodica-web)
 
+## Walk records — 2026-11-19
+
+Walk records at `/melodica/track/` opens the listener's own Melodica stations and saved walks. The web player records timestamped song changes and private foreground GPS, shows the station a recorded song came from when known, exports a cover and restores GPX with song times. A signed-out visitor can start recording or sign in to play. Both iPhone and Android can import a timed GPX from a separate GPS recorder for screen-locked walks. Legacy game entry links open the journal. `/melodica/apps/` lists all Melodica clients by platform with downloads from the public release mirror. The old Android directory redirects to `/melodica/apps/#android`. Current Epimetheus and Pandoroid APKs play radio independently of the web walking journal.
+
+## Playback regression repair — 2026-11-10
+
+- Web 0.13.14 introduced an unconditional anonymous-CORS media load even though `AudioCopies` already documented that Pandora CDN responses can omit CORS headers. This breaks direct radio playback and the DJ source. Published 0.13.15 restores ordinary media loading and prepares an origin-clean local blob only for DJ capture, using the existing authenticated audio relay. It works without Remember me or Cache API storage and guards pause, stale track and room transitions.
+- Shared pin 1c4e3a130d5df8fe (source/build 759176a) is live on Worker 747deac9-f4ba-45dc-a678-2b7619539525. Relay correction waits for a genuinely buffered target rather than seeking to the moving buffer edge; the backend also avoids repeated media account lookups with a bounded one-second lease while always checking live membership/source ownership. The full no-ACAO audio source → RoomHub → audible listener/D1 receipt proof passes. Normal multi-device spread was 83 ms, with temporary 1108 ms spread during an injected network gap.
+- All 46 existing local browser checks passed across the normal run and an isolated rerun after concurrent artifact-directory cleanup interfered with account teardown. The new no-ACAO browser proof passes, including audible muted capture, pause cancellation and stale-track protection. Audio-copy/room unit tests pass (19), with the existing Node suites green. New source tests are mandatory release/browser gates. Release CI 42834456948 passed; all 20 official files match the local tested build and the live files (/var/home/jack/workspaces/melodica-cors-repair-web-live.json). Signed extension 0.9.19 and its eight mirrored package checksums/feeds are verified by publisher 42837785705. No CSS or player controls changed.
+
+## Room audio recovery — 2026-11-10
+
+- Web 0.13.14 and signed extension 0.9.18 are released and live. Both use shared UI c29f401fcdc2db66 (source 183061f). Both players load CDN audio in anonymous CORS mode before assigning a source, fixing SecurityError during real media-element capture. Safari sources use the cached Web Audio capture path with a separate speaker monitor and explicit gesture unlock.
+- Relay supports ManagedMediaSource, starts receiving on Resume, confirms initialization uploads, and recovers a lost stream header. Publish and monitor stream identities are separate. Polling receivers recognize a recorder restart, including when their old cursor exceeds the new stream sequence. RoomHub preserves only the active play's header and bounded short replay window through hibernation and removes it at play end.
+- Room presentation keeps the existing palette/fonts and adds artwork/DJ identity, clock timing, on-air lineup, audience, public sharing and visible Play/Resume/Reconnect actions.
+- Validation: 166 shared service unit tests, actual Chromium and Firefox source/CORS capture proofs, WebKit fallback capture, independent four-receiver relay audio with late join/network gap/same-account secondary device, and native extension room tests passed. Web CI 42757477235 and exact-tag extension recovery CI 42760988456 passed. Publisher 42763448991 verified both catalogs/feeds and eight package checksums. All 20 production app files match the official archive (HTML normalized only for Cloudflare security injection); /var/home/jack/workspaces/melodica-room-audio-web-live.json records the checks. The optional combined local RoomSession/RoomHub receipt proof still times out with local media RPC calls taking up to 7.5 seconds; do not call it passed. Physical iPhone/iPad devices are unverified; the iOS IPA build was blocked before startup by GitHub billing.
+
+
+## Extension remote reconciliation — web 0.13.13
+
+- The app uses the extension's complete room snapshot for the current song, authoritative duration, room play identity, metadata, play log and clock. Listeners see room playback without private Pandora login/station prompts. Room controls and expandable recent/search discovery sit below the existing player.
+- Stop DJing keeps room listening; Leave room restores the owner's private track, history and exact reported position. Station selection while broadcasting still queues the next DJ track. Same-account secondary devices use room reactions and cannot change the broadcast's station.
+- Room commands carry the active room ID. Command replies repaint the remote immediately. Empty local audio events cannot overwrite the owner's progress or play icon; OS media controls forward to the owner too. Room clocks reject stale updates and retain their receipt anchor across other state pushes.
+- Existing typography, palette, artwork and player controls remain. CSS additions only arrange the room controls and hide the private station rail for listeners.
+- Web 0.13.13 is released and live. Official build, playback and mandatory remote checks passed in release workflow 42750175765. All 46 local browser checks and Node/unit checks passed. Actual extension 0.9.17 proof includes room progress, metadata, inline recent/search discovery through the owner, route navigation, hidden Pandora prompt, no page audio source, and phone/desktop screenshots. The live scripts/styles/core match all 19 static release files; HTML matches after the normal Cloudflare security-script injection. The filtered web sync preserved extension 0.9.17 and all 11 other projects. Verification: /var/home/jack/workspaces/melodica-remote-01313-live-verification.json.
+
+
+## Mobile DJ station selection — 2026-11-09
+
+- Web 0.13.12 is published and live. Release workflow 42709500997 passed build, browser smoke and release; all served JS/shared UI hashes match the official release archive.
+
+- The broadcasting DJ can select a radio station during a live room play. Per the user’s choice, selection queues that station for their next DJ track; the current audio, play ID and DJ rotation are unchanged.
+- The current track keeps its station and queued songs until the next turn. The next song consumes the selected station and discards the old station’s queue. Pending selection survives the web owner handoff; native selection is persisted with the current engine/last-play record.
+- DJ station choices remain visible during room broadcasts; private choices stay hidden from listeners. Existing stylesheets are unchanged. UI confirms “queued for your next DJ track.”
+- Uses the existing shared UI b5d4feddc03ab557; the experimental immediate-source replacement was reverted. The v0.13.11 release was cancelled before publication. Ship web 0.13.12 with extension 0.9.14; Mozilla signing remains throttled until about 2026-11-09 23:49 UTC.
+- Tests: actual compiled native queue and player-view contracts, production web queue/next-song functions, mobile DJ/listener browser controls, and native room lifecycle. Physical mobile devices and real Pandora login are not claimed.
+
 <!-- extension-publication:start -->
 ## Extension catalog publication
 
-- v0.9.7 is published at https://spacegho.st/extensions/#melodica-extension and https://spacegho.st/melodica/extension/.
+- v0.9.19 is published at https://spacegho.st/extensions/#melodica-extension and https://spacegho.st/melodica/extension/.
 - Mozilla unlisted signing is preserved. Both browser update feeds and eight public installable downloads passed checksum verification.
-- Both catalogs passed browser checks at 390 and 1280 pixels, without overflow or browser errors.
-- Evidence: https://github.com/Spaceghost/melodica-extension/actions/runs/42631500171.
+- Both catalogs passed browser checks at 390 and 1280 pixels; the Melodica catalog contains only its browser extension and keeps the player bar pinned.
+- The Worker release manifests were updated in R2; all other Melodica projects were preserved. No player or Worker code was deployed by this publication.
+- Evidence: https://github.com/Spaceghost/melodica-extension/actions/runs/42837785705.
 <!-- extension-publication:end -->
 
 Updated 2026-11-09 PT. Production is web 0.13.3 (GET verified), source/tag
@@ -139,3 +177,9 @@ The actual Cloudflare SFU provider check passed with the shipped adapter/gateway
 ## Web departure command propagation (0.13.7)
 
 The final sign-out audit found that the web RoomHost wrapper discarded the shared session's shutdown promise. Both room-leave and room-command leave now await that returned departure attempt before account sign-out continues; the local room view still clears immediately. A deferred-shutdown regression failed on the old wrapper and passes after the fix; all nine focused room-host checks passed. No styles changed.
+
+## Room experience polish (0.13.10)
+
+Web 0.13.10 (`b0e8e5b576674321ae14db216d0b8f9fb2cf3054`) is deployed and released with shared UI pin `b5d4feddc03ab557` (`spaceghost-scrobble` UI commit `9e62510e9c6510ce03f7be3828dd7425f00c9a96`). First-page discovery, latest-search precedence, pagination deduplication, pending actions, durable errors, invitation confirmation and audio-state copy are corrected. The shared UI browser checks pass at 390/1280px, ten web room-host checks pass, and live asset digests match. Both stylesheets remain unchanged; app CSS SHA256 is still `79ab46d34d468595cc15dc04ba60223f0de1ca6b4dc0d242fae65ac02d34ea59`. The UI-only deployment reuses the published 0.13.8 core after verifying identical SDK gitlink, wrapper and build script. Do not replace this app deployment with the older queued 0.13.9 build. Extension tag v0.9.11 carries the same pin, layered over the concurrent player-first/volume/step-down changes.
+
+The official 0.13.10 CI build subsequently matched all 20 deployed files byte-for-byte. Extension 0.9.11 signing hit Mozilla's 429 throttle after its build checks passed: CI `42694425132`, at 20:44:16 UTC on November 9, retry window approximately 23:48:42 UTC. No extension release was created by this task. The signing upload may already exist because validation polling started before the throttle; inspect that version after the cooldown before resubmitting it. The local publication helper stopped without publishing unsigned files.

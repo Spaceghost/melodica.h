@@ -20,7 +20,7 @@ left out of the public melodica.h snapshot.
 ## Access through the spacegho.st relay
 
 The spacegho.st relay can run open (anyone may log in) or by allow-list
-(`docs/ACCOUNT.md`, "Relay"); the page handles both. The page side is in `web/piano.js`:
+(`docs/ACCOUNT.md`, "Relay"); the page handles both. The page side is in `web/piano.imba`:
 
 - In allow-list mode, `auth.userLogin` for a login that is not on the list fails with HTTP 403 and
   the relay's message, shown as is under the login form; Pandora is not contacted.
@@ -41,7 +41,7 @@ check (`docs/ACCOUNT.md`, "Access check").
 
 A small "Sign in with spacegho.st" link under the Pandora login connects an
 optional spacegho.st account; it is not needed to use melodica. The contract
-is `docs/ACCOUNT.md`, the page side is `web/account.js`:
+is `docs/ACCOUNT.md`, the page side is `web/account.imba`:
 
 - The account server is the page's own origin. On spacegho.st (and on
   `localhost`, for development and the tests) the page reads
@@ -71,8 +71,8 @@ is `docs/ACCOUNT.md`, the page side is `web/account.js`:
 After each Pandora login the page asks `GET /oauth/melodica/me`
 (`docs/ACCOUNT.md`, "Usernames") with the spacegho.st account's token when one
 is signed in, else the relay's access token. The page side is
-`web/account.js` (`me`, `setUsername`) and the username section of
-`web/app.js`:
+`web/account.imba` (`me`, `setUsername`) and the username section of
+`web/app.imba`:
 
 - The account chip shows "Signed in" until the answer comes, then the
   username: a generated `listener-…` until one is chosen. Never the email;
@@ -131,10 +131,10 @@ browser                                   relay                     Pandora
   from `vendor/melodica.h/compat` in a handful of C functions that take and
   return UTF-8 JSON strings. All libpiano state (partner session, user
   session, station list, current playlist) stays in C.
-- `web/piano.js` loads the module and runs the request/response cycle,
+- `web/piano.imba` loads the module and runs the request/response cycle,
   including the two-step login (`auth.partnerLogin`, then
   `auth.userLogin`) and the automatic re-login on an expired session.
-- `web/app.js` is the UI: login, station list, now playing, play/pause, skip,
+- `web/app.imba` is the UI: login, station list, now playing, play/pause, skip,
   thumbs up/down, tired, explain, search + create station, delete station,
   volume (scaled by the track's replay gain), quality, keyboard shortcuts
   like pianobar (`space`, `n`, `+`, `-`, `t`, `e`, `(`, `)`, `s`, `/` to
@@ -143,11 +143,11 @@ browser                                   relay                     Pandora
   when the queue runs out.
 - The relay only forwards bytes. Pandora's audio URLs are plain https CDN
   links that an `<audio>` element plays cross-origin without CORS.
-- `web/bridge.js` is the link to the
+- `web/bridge.imba` is the link to the
   [melodica browser extension](https://spacegho.st/melodica/#melodica-extension):
   when it is installed it plays in the background and this page is its
   remote ("The melodica extension", "Remote mode" below).
-- `web/account.js` is the optional spacegho.st account (see above): PKCE
+- `web/account.imba` is the optional spacegho.st account (see above): PKCE
   sign-in, tokens, the playback policy.
 
 ### Exported C API (`dist/melodica.js`, `createMelodica()`)
@@ -182,6 +182,7 @@ not on the workstation:
 ```sh
 git clone --recursive https://github.com/Spaceghost/melodica-web
 cd melodica-web
+npm ci                  # install the pinned Imba compiler
 scripts/build.sh        # emcc on PATH, or an emsdk checkout at $EMSDK (default /opt/emsdk)
 scripts/check.sh        # parses the modules, checks relative URLs / no inline script
 ```
@@ -190,7 +191,9 @@ scripts/check.sh        # parses the modules, checks relative URLs / no inline s
 (`bak`/`melodica-emsdk` by default), builds and tests there and pulls `dist/`
 back, so nothing is compiled on the workstation.
 
-`dist/` then holds `index.html`, `app.js`, `piano.js`, `bridge.js`, `account.js`, `app.css`,
+The Imba compiler emits browser modules under their existing JavaScript URLs.
+`dist/` holds `index.html`, `app.js`, `piano.js`, `bridge.js`, `account.js`, `app.css`,
+`imba-runtime.js`,
 `melodica.js`, `melodica.wasm`, `LICENSE`, `LICENSE.libpiano`,
 `THIRD_PARTY_NOTICES.md`, `VERSION`.
 
@@ -376,7 +379,7 @@ When the melodica extension is installed it is the player, and the page is
 only its view and remote (see "Remote mode" below). The page never plays
 through the extension on its own, and never uses it as a transport for
 Pandora calls: local playback happens only through the relay, when no
-extension (0.3.0+) answers. The page side is `web/bridge.js`, same-window
+extension (0.3.0+) answers. The page side is `web/bridge.imba`, same-window
 `postMessage` (no `connect-src` change, no extension permission):
 
 - The page posts `{melodica: 1, type: 'hello'}` to `location.origin` at
@@ -435,7 +438,7 @@ The melodica extension 0.3.0 and later plays music in its background, with no
 tab needed. When it is installed the page is an optional view of that
 playback and a remote for it, instead of running its own loop. The protocol
 is `docs/BRIDGE.md` (owned here; section 3, "Remote control"); the page side is
-in `web/bridge.js` (`subscribe`, `command`) and `web/app.js` ("remote mode"):
+in `web/bridge.imba` (`subscribe`, `command`) and `web/app.imba` ("remote mode"):
 
 - On `ready` the page shows the player view at once ("Connecting to the
   melodica extension…") and sends `{melodica: 1, type: 'subscribe'}`, again
@@ -490,12 +493,14 @@ The page works under:
 
 ```
 default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline';
-img-src 'self' data: https:; media-src https: http: blob:; connect-src 'self'; font-src 'self'
+img-src 'self' data: https:; media-src https: http: blob:; connect-src 'self' https://lrclib.net/api/get; font-src 'self'
 ```
 
 `'wasm-unsafe-eval'` is required to compile the module; `img-src https:` for
 cover art; `media-src https:` for Pandora's CDN and `blob:` for a saved copy (Resume); `connect-src` must include
 the relay's origin if it is not same-origin.
+
+Opening **Lyrics from LRCLIB** sends the track title, artist, album and duration to LRCLIB to match the recording. The player uses the playback clock to highlight the current line. Closing the panel stops further lookups.
 
 ### Hosting notes (spacegho.st)
 
@@ -527,7 +532,7 @@ track tokens, other Pandora ids or stream URLs. Nothing else leaves the browser.
 
 ## Remember me on this device
 
-`web/vault.js`, `docs/BRIDGE.md` section 5:
+`web/vault.imba`, `docs/BRIDGE.md` section 5:
 
 - "Remember me on this device" (on the login card and in the account menu)
   keeps `{session, credential, relay}` in IndexedDB `melodica-vault`: one
@@ -620,7 +625,7 @@ Spaceghost/melodica-scrobble (`ui/dist`), pinned by commit and sha256 in
 is bundled in `dist/vendor/scrobble-ui/` and the release tarball but not kept in
 this repository.
 
-`web/scrobble.js`, against Spacegho.st Scrobbles
+`web/scrobble.imba`, against Spacegho.st Scrobbles
 (`https://spacegho.st/scrobble/`, on the page's own origin):
 
 - On by default for everyone signed in; turn it off with "Scrobble to
@@ -681,7 +686,7 @@ explicit **Open web+listen links here** button asks the browser to register the
 handler. Browsers that cannot register it can use HTTPS links.
 
 The site Worker routes `/listen/<path>` and `/listen/?uri=<encoded-link>` through
-`web/listen-uri.js`, copied from melodica-scrobble's reference parser. The route
+`web/listen-uri.imba`, copied from melodica-scrobble's reference parser. The route
 returns 302 only to the closed Melodica route table, and 404 for invalid targets.
 Tests: `node --test tests/listen-uri.test.mjs site/tests/listen.test.mjs` and the
 three listen-link cases in `tests/remote.spec.mjs`.

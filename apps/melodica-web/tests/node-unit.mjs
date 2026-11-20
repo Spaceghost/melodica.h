@@ -81,6 +81,41 @@ assert.equal(reply.result.stations.length, 3);
 assert.equal(client.cachedStations().length, 3);
 log('stations ok');
 
+// Selected mobile station edits use the same authenticated WASM protocol as the player.
+function stationEdit(input, method, result = {}) {
+  const request = client.begin(input);
+  assert.equal(request.ok, true, request.error);
+  assert.ok(request.urlPath.includes('method=' + method + '&'), request.urlPath.split('&')[0]);
+  const response = client.finish(JSON.stringify({stat:'ok',result}));
+  assert.equal(response.ok,true,response.error);
+  return response.result;
+}
+const seeds = stationEdit({action:'stationInfo',stationId:'S1'},'station.getStation', {
+  music:{artists:[{artistName:'Oriole',seedId:'a1'}],songs:[{songName:'Sunset',artistName:'Rain',seedId:'s1'}]}
+});
+assert.equal(seeds.artists[0].seedId,'a1');
+assert.equal(seeds.songs[0].seedId,'s1');
+stationEdit({action:'addSeed',stationId:'S1',musicId:'a2'},'station.addMusic');
+stationEdit({action:'deleteSeed',stationId:'S1',seedId:'s1'},'station.deleteMusic');
+const modes = stationEdit({action:'modes',stationId:'S1'},'interactiveradio.v1.getAvailableModesSimple',{
+  currentModeId:2,availableModes:[{modeId:2,modeName:'Discovery'}]
+});
+assert.equal(modes.modes[0].name,'Discovery');
+assert.equal(modes.modes[0].active,true);
+stationEdit({action:'setMode',stationId:'S1',mode:2},'interactiveradio.v1.setAndGetAvailableModes',{currentModeId:2});
+assert.equal(client.begin({action:'setMode',stationId:'missing',mode:2}).ok,false);
+assert.equal(client.begin({action:'setShuffle',ids:[]}).ok,false);
+stationEdit({action:'setShuffle',ids:['S1']},'user.setQuickMix');
+assert.deepEqual(client.cachedStations().filter(s=>s.useQuickMix).map(s=>s.id),['S1']);
+assert.equal(client.begin({action:'setShuffle',ids:['S2']}).ok,true);
+assert.equal(client.finish(JSON.stringify({stat:'fail',code:1001,message:'Request failed'})).ok,false);
+assert.deepEqual(client.cachedStations().filter(s=>s.useQuickMix).map(s=>s.id),['S1']);
+assert.equal(stationEdit({action:'getFilter'},'user.getSettings',{isExplicitContentFilterEnabled:true}).enabled,true);
+assert.equal(client.begin({action:'setFilter',enabled:true}).ok,false);
+stationEdit({action:'setFilter',enabled:false,user:'unit@example.invalid',password:'sample'},'user.changeSettings');
+log('station seeds, modes, shuffle and content filter ok');
+
+
 // --- playlist -------------------------------------------------------------
 const song = (n) => ({
   artistName: `Artist ${n}`, albumName: `Album ${n}`, songName: `Song\t${n}\n"quoted"\\`,
