@@ -57,6 +57,7 @@ def run op, args
 		when 'pause' then engine.pause()
 		when 'toggle' then await engine.toggle()
 		when 'next' then await engine.skip()
+		when 'undo-skip' then await engine.undoSkip()
 		when 'stop' then engine.stop()
 		when 'rate' then await engine.rate(!!args[0])
 		when 'tired' then await engine.tired()

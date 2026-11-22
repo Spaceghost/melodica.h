@@ -126,10 +126,10 @@ await rm(common, { recursive: true, force: true });
 await mkdir(resolve(common, 'core'), { recursive: true });
 await mkdir(resolve(common, 'icons'), { recursive: true });
 
-for (const [entry, out] of [['src/bg.imba', 'bg.js'], ['src/popup.imba', 'popup.js'], ['src/player.imba', 'player.js'], ['src/options.imba', 'options.js'], ['src/rooms.imba', 'rooms.js'], ['src/content.imba', 'content.js'], ['src/offscreen.imba', 'offscreen.js']]) {
+for (const [entry, out] of [['src/bg.imba', 'bg.js'], ['src/sidebar.imba', 'sidebar.js'], ['src/popup.imba', 'popup.js'], ['src/player.imba', 'player.js'], ['src/options.imba', 'options.js'], ['src/rooms.imba', 'rooms.js'], ['src/content.imba', 'content.js'], ['src/offscreen.imba', 'offscreen.js']]) {
   await bundle(entry, resolve(common, out));
 }
-for (const name of ['popup.html', 'player.html', 'options.html', 'rooms.html', 'offscreen.html', 'theme.css']) {
+for (const name of ['popup.html', 'player.html', 'options.html', 'rooms.html', 'offscreen.html', 'sidebar.html', 'sidebar.css', 'theme.css']) {
   await cp(resolve(root, 'public', name), resolve(common, name));
 }
 await cp(corePath, resolve(common, 'core/melodica_core.wasm'));
@@ -149,14 +149,14 @@ await cp(resolve(root, 'LICENSE'), resolve(common, 'LICENSE'));
 for (const size of [48, 128]) await writeFile(resolve(common, `icons/icon-${size}.png`), iconPng(size));
 
 // Guard: no inline scripts or event handler attributes in the pages (MV3 CSP).
-for (const name of ['popup.html', 'player.html', 'options.html', 'rooms.html', 'offscreen.html']) {
+for (const name of ['popup.html', 'player.html', 'options.html', 'rooms.html', 'offscreen.html', 'sidebar.html']) {
   const html = await readFile(resolve(common, name), 'utf8');
   if (/<script(?![^>]*\ssrc=)[^>]*>/.test(html) || /\son[a-z]+=/i.test(html)) throw new Error(`${name}: inline script`);
 }
 // Guard: no eval/new Function in the bundles, no innerHTML in our sources
 // (the Imba runtime keeps an innerHTML path for <template> content and SSR
 // hydration that nothing here calls).
-for (const name of ['bg.js', 'popup.js', 'player.js', 'options.js', 'rooms.js', 'content.js', 'offscreen.js']) {
+for (const name of ['bg.js', 'sidebar.js', 'popup.js', 'player.js', 'options.js', 'rooms.js', 'content.js', 'offscreen.js']) {
   const js = await readFile(resolve(common, name), 'utf8');
   for (const bad of [/\beval\(/, /new Function\(/]) {
     if (bad.test(js)) throw new Error(`${name}: forbidden construct ${bad}`);
@@ -184,9 +184,11 @@ const STORE = 'https://spacegho.st/extensions/dl/melodica-extension';
 const chrome = structuredClone(manifest);
 delete chrome.browser_specific_settings;
 delete chrome.background.scripts;
-chrome.permissions = [...chrome.permissions, 'offscreen', 'scripting'];
+chrome.permissions = [...chrome.permissions, 'offscreen', 'scripting', 'sidePanel'];
+chrome.side_panel = {default_path: "sidebar.html"};
 chrome.update_url = `${STORE}/update.xml`;
 const firefox = structuredClone(manifest);
+firefox.sidebar_action = {default_title: "Melodica lyrics", default_panel: "sidebar.html", open_at_install: false};
 delete firefox.version_name;
 delete firefox.background.service_worker;
 firefox.background.persistent = true;

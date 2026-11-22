@@ -506,6 +506,8 @@ tag Player
 								<div.card.now>
 									<NowPlaying now=now idleTitle=(currentRoom() and currentRoom().role !== 'dj' ? 'Waiting for the DJ' : 'Pick a station')>
 									<Transport now=now allowTired=!currentRoom() @control=control(e.detail)>
+									if player and player.undoUntil > Date.now() and !currentRoom()
+										<button type="button" @click=command({action:'undo-skip'})> "Undo skip"
 									<CopyListen song=(now and now.song)>
 									<p#player-status.ext-state> statusLine
 									<div.deck>

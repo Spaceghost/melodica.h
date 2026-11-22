@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Melodica lyrics</title>
+  <link rel="stylesheet" href="theme.css">
+  <link rel="stylesheet" href="sidebar.css">
+</head>
+<body>
+  <main class="lyric-sidebar">
+    <header class="side-track">
+      <img id="cover" alt="" hidden>
+      <div><h1 id="song">Melodica</h1><p id="artist"></p></div>
+    </header>
+    <section class="side-lyrics" aria-label="Lyrics" tabindex="0">
+      <p role="status"></p>
+      <p id="before"></p>
+      <p id="line" aria-current="true"></p>
+      <p id="after"></p>
+    </section>
+    <footer>
+      <div class="side-progress" hidden>
+        <time id="elapsed">0:00</time>
+        <progress id="track-progress" aria-label="Song progress"></progress>
+        <time id="duration"></time>
+      </div>
+      <div class="side-controls">
+        <button id="toggle" type="button" class="primary">Play</button>
+        <button id="next" type="button">Next song</button>
+        <button id="undo" type="button" hidden>Undo skip</button>
+      </div>
+    </footer>
+  </main>
+  <script type="module" src="sidebar.js"></script>
+</body>
+</html>

@@ -476,9 +476,10 @@ html.ext-player .ext-desk.room-listener { grid-template-columns: minmax(0, 1fr);
    washes the now-playing card (melodica-web v0.4.0). */
 .ext-desk .ext-stations { box-shadow: var(--shadow); }
 .now { position: relative; isolation: isolate; overflow: hidden; }
-html.ext-popup .brand { white-space: nowrap; }
-html.ext-popup .brand-tag { display: block; margin: 0.15rem 0 0; }
-html.ext-popup .top-right { flex-wrap: nowrap; }
+html.ext-popup .top { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.45rem; }
+html.ext-popup .brand-tag { margin-left: 0.35rem; }
+html.ext-popup .ext-nav { width: 100%; flex-wrap: wrap; justify-content: flex-start; }
+html.ext-popup .ext-nav button.pill { padding-inline: 0.6rem; }
 /* "Pick a username" card and the options page's "Change username" row. */
 .ext-username-pick { padding: 1rem 1.1rem; margin-bottom: 12px; }
 .ext-username-pick h3 { font-size: 1.3rem; margin-bottom: 0.3rem; }

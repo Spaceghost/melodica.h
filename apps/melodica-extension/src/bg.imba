@@ -46,7 +46,7 @@ const SIGNIN_PENDING_FOR = 10 * 60 * 1000
 let engineWaiters = []
 const SESSION_KEYS = {session: null, stations: [], player: null, log: [], melodica: null, meta: null, room: null}
 const PLAYER_IDLE = {status: 'idle', station: null, track: null, position: 0, duration: 0, volume: 80, quality: 'high', queueLength: 0, queue: [], error: '', history: [], changedAt: 0}
-const PLAYER_ACTIONS = new Set(['play', 'resume', 'pause', 'toggle', 'next', 'love', 'ban', 'tired', 'sleep', 'stop', 'volume', 'quality'])
+const PLAYER_ACTIONS = new Set(['play', 'resume', 'pause', 'toggle', 'next', 'undo-skip', 'love', 'ban', 'tired', 'sleep', 'stop', 'volume', 'quality'])
 const LOG_MAX = 200
 # The spacegho.st account's policy is asked again at least this often while the
 # extension is in use (every boot, every page open past this age).
@@ -1787,6 +1787,7 @@ def engineCall op, args = []
 			when 'pause' then e.pause()
 			when 'toggle' then await e.toggle()
 			when 'next' then await e.skip()
+			when 'undo-skip' then await e.undoSkip()
 			when 'stop' then e.stop()
 			when 'rate' then await e.rate(!!args[0])
 			when 'tired' then await e.tired()
@@ -1908,6 +1909,7 @@ def playerCommand msg, sender
 			const wasPlaying = player.status === 'playing' or player.status === 'loading'
 			await engineCall(wasPlaying ? 'pause' : 'resume')
 		when 'next' then await engineCall('next')
+		when 'undo-skip' then await engineCall('undo-skip')
 		when 'love'
 			const t = player.track
 			await engineCall('rate', [yes])

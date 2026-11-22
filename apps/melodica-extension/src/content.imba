@@ -186,6 +186,12 @@ def handleCommand data
 # message port closed"), which used to drop this tab from the subscribers until its
 # next subscribe, up to a second later.
 browser.runtime.onMessage.addListener do(msg, sender, sendResponse)
+	if msg and msg.type === 'take-tab-playback'
+		const button = document.getElementById('move-to-extension')
+		const ready = location.origin === ORIGIN and location.pathname.startsWith(PATH) and button and !button.hidden and !button.disabled
+		button.click() if ready
+		sendResponse({ok:!!ready})
+		return no
 	if msg and msg.type === 'bridge-ping'
 		sendResponse({ok: yes})
 		return no

@@ -1,0 +1,21 @@
+name: Memory leaks
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  leaks:
+    runs-on: [self-hosted, Linux, X64, fedora, ubuntu-noble]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --expose-gc --test tests/room-memory.test.mjs

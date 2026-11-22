@@ -256,9 +256,26 @@ const CSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src
   "img-src 'self' data: https: http:; media-src https: http: blob:; connect-src 'self'; font-src 'self'; " +
   "base-uri 'none'; form-action 'none'; frame-ancestors 'none'; worker-src 'self'";
 
-let web = { server: null, port: 0, dir: null };
+let web = { server: null, port: 0, dir: null, callbackHost: null };
 let context = null;
 let userDataDir = null;
+
+// Keep the full browser redirect and PKCE exchange inside the disposable
+// fixture, including the extension-owned callback origin.
+async function authorizeAccount(begin) {
+  const expected = new URL(begin.redirectUri);
+  web.callbackHost = expected.hostname;
+  const tab = await context.newPage();
+  try {
+    await tab.goto(begin.url);
+    await tab.click('#sg-github');
+    await tab.click('#gh-octo-ci', {noWaitAfter:true});
+    await tab.waitForURL(url => url.origin === expected.origin && url.pathname === expected.pathname && url.searchParams.has('code'));
+    return tab.url();
+  } finally {
+    await tab.close();
+  }
+}
 
 test.beforeAll(async () => {
   await mkdir(ARTIFACTS, { recursive: true });
@@ -276,6 +293,11 @@ test.beforeAll(async () => {
     // The account server lives on the same "spacegho.st": the extension's default
     // https://spacegho.st/oauth/... lands here through --host-resolver-rules.
     const url = new URL(req.url, `https://${WEB_HOST}`);
+    if (web.callbackHost && req.headers.host === web.callbackHost && url.pathname === '/oauth') {
+      res.writeHead(200, {'content-type':'text/plain','cache-control':'no-store'});
+      res.end('Return to the extension.');
+      return;
+    }
     if (LIVE && url.pathname.startsWith('/scrobble/')) {
       try { await liveForward(req, res, url, await readBody(req)); } catch (e) { res.writeHead(502); res.end(String(e && e.message)); }
       return;
@@ -351,7 +373,7 @@ function launchBrowser() {
       `--disable-extensions-except=${EXT}`,
       `--load-extension=${EXT}`,
       '--ignore-certificate-errors',
-      `--host-resolver-rules=MAP ${WEB_HOST} 127.0.0.1:${web.port}`,
+      `--host-resolver-rules=MAP ${WEB_HOST} 127.0.0.1:${web.port}, MAP *.chromiumapp.org 127.0.0.1:${web.port}`,
       '--autoplay-policy=no-user-gesture-required',
       '--no-first-run',
       '--no-default-browser-check',
@@ -1178,19 +1200,12 @@ test('signs in through the popup, plays a station with no tab, bridges the web a
     // page opened in a tab, the GitHub sign-in done there, and the redirect to the
     // extension's https://<id>.chromiumapp.org/oauth address handed back.
     // (launchWebAuthFlow opens a window Playwright cannot drive; it runs the same steps.)
-    const redirects = [];
-    await context.route('https://*.chromiumapp.org/**', (route) => { redirects.push(route.request().url()); route.fulfill({ status: 200, contentType: 'text/plain', body: 'ok' }); });
     const begin = await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'account-begin' }));
     expect(begin.ok, `account-begin (${begin.error})`).toBe(true);
     expect(begin.redirectUri).toBe(`https://${id}.chromiumapp.org/oauth`);
-    const tab = await context.newPage();
-    await tab.goto(begin.url);
-    await tab.click('#sg-github');
-    await tab.click('#gh-octo-ci');
-    await expect.poll(() => redirects.length, { timeout: 20_000 }).toBeGreaterThan(0);
-    await tab.close();
+    const callback = await authorizeAccount(begin);
     acct.setSpots('github', false);
-    const fin = await ctl.evaluate((url) => chrome.runtime.sendMessage({ type: 'account-finish', url }), redirects[redirects.length - 1]);
+    const fin = await ctl.evaluate((url) => chrome.runtime.sendMessage({ type: 'account-finish', url }), callback);
     expect(fin.ok, `account-finish (${fin.error})`).toBe(true);
     expect(fin.account.signedIn).toBe(true);
     expect(fin.account.label, 'the account shows its display name').toBe('octo-ci');
@@ -1529,10 +1544,16 @@ test('resume: the last song continues where it was', async () => {
     const shown = await stateNowFrom(pop);
     await pop.click('#play');
     let s = null;
+    let firstPlaying = 0;
     const t0 = Date.now();
     while (Date.now() - t0 < 20_000) {
       s = await stateNowFrom(pop);
-      if (s.status === 'playing' && s.track && s.track.trackToken === want.trackToken && s.position > 0) break;
+      if (s.status === 'playing' && s.track?.trackToken === want.trackToken && s.position > 0) {
+        firstPlaying ||= Date.now();
+        // A media element can emit "playing" just before its pending seek
+        // resolves. One second cannot play forward to the five-second mark.
+        if (Math.abs(s.position-want.position)<1.5 || Date.now()-firstPlaying>1000) break;
+      }
       await pop.waitForTimeout(100);
     }
     // The audio really plays on from there: the position moves.
@@ -1700,6 +1721,53 @@ test('handoff: bridge exports and imports the live song without refetching Pando
     noPandoraMethodsDuringImport: true, noPandoraMethodsDuringSessionOffer: true,
   } }, null, 2) + '\n');
   await page.close(); await ctl.close();
+});
+
+test('the persistent sidebar follows live playback and controls it across tab changes', async () => {
+  test.skip(LIVE || !haveTuner, 'requires the local tuner');
+  const id = await extensionId();
+  const options = await context.newPage();
+  const side = await context.newPage();
+  const send = message => options.evaluate(m=>chrome.runtime.sendMessage(m),message);
+  const words = '**/melodica/lyrics/get?**';
+  await side.route(words,route=>route.fulfill({json:{syncedLyrics:'[00:00.00]At the river\n[00:00.70]Wings rise\n[01:00.00]Over the water'}}));
+  try {
+    await options.goto('chrome-extension://'+id+'/options.html');
+    await options.locator('#endpoint').fill(tuner.https+'/services/json/');
+    await options.locator('#save').click();
+    await expect(options.locator('#options-message')).toContainText('Saved');
+    acct.allow(tuner.user);
+    const login = await send({type:'login',email:tuner.user,password:tuner.password});
+    expect(login.ok,login.error).toBe(true);
+    const {stations} = await send({type:'stations'});
+    await side.goto('chrome-extension://'+id+'/sidebar.html');
+    await send({type:'player',action:'play',station:stations[0]});
+    await expect(side.locator('#line')).toHaveText('Wings rise');
+    await expect(side.locator('#before')).toHaveText('At the river');
+    await options.bringToFront();
+    await side.bringToFront();
+    await side.getByRole('button',{name:'Pause',exact:true}).click();
+    await expect.poll(async()=>(await send({type:'player-get'})).state.status).toBe('paused');
+    const original = (await send({type:'player-get'})).state.track.trackToken;
+    await side.getByRole('button',{name:'Next song'}).click();
+    await expect.poll(async()=>(await send({type:'player-get'})).state.track.trackToken).not.toBe(original);
+    const successor = (await send({type:'player-get'})).state.track;
+    if (successor.ad) {
+      await expect(side.getByRole('button',{name:'Next song'})).toBeDisabled();
+      await expect(side.getByRole('button',{name:'Undo skip'})).toBeHidden();
+    } else {
+      await side.getByRole('button',{name:'Undo skip'}).click();
+      await expect.poll(async()=>{
+        const {state} = await send({type:'player-get'});
+        return [state.track.trackToken,state.status];
+      }).toEqual([original,'paused']);
+    }
+  } finally {
+    await send({type:'player',action:'stop'}).catch(()=>{});
+    await send({type:'logout'}).catch(()=>{});
+    await side.close();
+    await options.close();
+  }
 });
 
 test('copy: the bridge transfers exact private cached bytes after the song URL expires', async () => {
@@ -1987,18 +2055,11 @@ test('rooms: an extension-owned room session keeps live audio through page unmou
     await ctl.goto(`chrome-extension://${id}/options.html`);
     await useTuner(ctl);
     const send = (message) => ctl.evaluate((m) => chrome.runtime.sendMessage(m), message);
-    const redirects = [];
-    await context.route('https://*.chromiumapp.org/**', (route) => { redirects.push(route.request().url()); route.fulfill({ status: 200, contentType: 'text/plain', body: 'ok' }); });
     const begin = await send({ type: 'account-begin' });
     expect(begin.ok, `account-begin (${begin.error})`).toBe(true);
-    const auth = await context.newPage();
-    await auth.goto(begin.url);
-    await auth.click('#sg-github');
-    await auth.click('#gh-octo-ci');
-    await expect.poll(() => redirects.length, { timeout: 20_000 }).toBeGreaterThan(0);
-    const finish = await send({ type: 'account-finish', url: redirects.at(-1) });
+    const callback = await authorizeAccount(begin);
+    const finish = await send({ type:'account-finish', url:callback });
     expect(finish.ok && finish.account.signedIn).toBe(true);
-    await auth.close();
 
     const recentBefore = await send({ type: 'room-recent' });
     expect(recentBefore.recentRoomIds).toEqual([]);

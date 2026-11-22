@@ -22,7 +22,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NELUA_REPO: https://github.com/Spaceghost/nelua-lang
+  NELUA_REPO: https://github.com/edubart/nelua-lang
   NELUA_SHA: 7fe8132893f9f2bbce3a7b23247ad8bde2c216ed
 
 jobs:
@@ -48,12 +48,13 @@ jobs:
         with:
           path: ${{ runner.temp }}/nelua-lang
           key: nelua-${{ runner.os }}-${{ env.NELUA_SHA }}
-      - name: Toolchain (clang + lld for wasm32, Jack's Nelua fork)
+      - name: Toolchain (clang + lld for wasm32, pinned Nelua compiler)
         run: |
           for i in 1 2 3 4 5; do sudo apt-get update -qq && sudo apt-get install -y -qq lld clang && break; sleep 20; done
           if [[ ! -x "$RUNNER_TEMP/nelua-lang/nelua" ]]; then
             rm -rf "$RUNNER_TEMP/nelua-lang"
-            git clone -q "$NELUA_REPO" "$RUNNER_TEMP/nelua-lang"
+            git init -q "$RUNNER_TEMP/nelua-lang"
+            git -C "$RUNNER_TEMP/nelua-lang" fetch -q --depth=1 "$NELUA_REPO" "$NELUA_SHA"
             git -C "$RUNNER_TEMP/nelua-lang" checkout -q "$NELUA_SHA"
             make -C "$RUNNER_TEMP/nelua-lang" -j"$(nproc)" >/dev/null
           fi

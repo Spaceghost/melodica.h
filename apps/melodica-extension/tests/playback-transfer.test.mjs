@@ -318,3 +318,27 @@ test('a late play event cannot undo a held pause and reports have a strict order
   await e.resume();
   assert.equal(e.snapshot.status, 'playing');
 });
+
+test('undoing a skip restores a paused track without starting audio', async () => {
+  const {e} = engine();
+  await e.importPlayback(validatePlayback(playback({status:'paused'}),sid));
+  await e.skip();
+  await e.undoSkip();
+  assert.equal(e.snapshot.track.trackToken,'T1');
+  assert.equal(e.snapshot.status,'paused');
+  assert.equal(e.audio.currentTime,37.5);
+});
+
+test('undo restores the skipped recording and its position, with the successor queued once', async () => {
+  const {e,calls} = engine();
+  const original = validatePlayback(playback(),sid);
+  await e.importPlayback(original);
+  await e.skip();
+  assert.ok(e.snapshot.undoUntil > Date.now());
+  await e.undoSkip();
+  assert.equal(e.snapshot.track.trackToken,'T1');
+  assert.equal(e.audio.currentTime,37.5);
+  assert.deepEqual(e.exportPlayback().queue.map(s=>s.trackToken),['T2','T3']);
+  assert.equal(e.snapshot.undoUntil,0);
+  assert.equal(calls(),0);
+});

@@ -2,9 +2,9 @@
 
 ## Playback regression repair — 2026-11-10
 
-- Candidate 0.9.19 removes the unconditional CORS requirement introduced in 0.9.18. Ordinary radio loads directly again; DJ preparation uses the current cached copy or an extension-origin byte fetch, then loads a local blob into the same player at the current position. Cache absence, explicit pause, track changes and failed blob loading have coverage. Pandora's p-cdn.us/com audio domains now have explicit host permissions alongside pandora.com.
+- Published 0.9.19 removes the unconditional CORS requirement introduced in 0.9.18. Ordinary radio loads directly again; DJ preparation uses the current cached copy or an extension-origin byte fetch, then loads a local blob into the same player at the current position. Cache absence, explicit pause, track changes and failed blob loading have coverage. Pandora's p-cdn.us/com audio domains now have explicit host permissions alongside pandora.com.
 - New shared pin 1c4e3a130d5df8fe is deployed and retains previous immutable pins. Its relay alignment waits for a buffered clock target instead of repeatedly seeking to the buffer edge; actual RoomHub audio/receipts and multi-device recovery checks passed.
-- The targeted native suites pass (34 tests). A real browser fixture bundles the actual Engine into an extension, plays three tracks from a no-ACAO server with CacheStorage disabled, prepares clean bytes and measures capture RMS. This regression test is part of the desktop browser gates. Candidate publication is pending; the existing v0.9.18 tag remains untouched.
+- The targeted native suites pass (34 tests). A real browser fixture bundles the actual Engine into an extension, plays three tracks from a no-ACAO server with CacheStorage disabled, prepares clean bytes and measures capture RMS while muted. This regression test is part of the desktop browser gates. CI 42834478400 passed build, AMO signing, Chromium, Brave, Firefox and release; publisher 42837785705 verified both catalogs/feeds and eight package checksums. The existing v0.9.18 tag remains untouched. Web 0.13.15 is live with all 20 official files verified. The retried iOS 0.9.19 build remains blocked before macOS startup by GitHub billing (run 42834478395); physical iPhone/iPad devices remain unverified.
 
 ## Room audio recovery — 2026-11-10
 
@@ -54,11 +54,11 @@
 <!-- extension-publication:start -->
 ## Extension catalog publication
 
-- v0.9.19 is published at https://spacegho.st/extensions/#melodica-extension and https://spacegho.st/melodica/extension/.
+- v0.9.21 is published at https://spacegho.st/extensions/#melodica-extension and https://spacegho.st/melodica/extension/.
 - Mozilla unlisted signing is preserved. Both browser update feeds and eight public installable downloads passed checksum verification.
 - Both catalogs passed browser checks at 390 and 1280 pixels; the Melodica catalog contains only its browser extension and keeps the player bar pinned.
 - The Worker release manifests were updated in R2; all other Melodica projects were preserved. No player or Worker code was deployed by this publication.
-- Evidence: https://github.com/Spaceghost/melodica-extension/actions/runs/42837785705.
+- Evidence: https://github.com/Spaceghost/melodica-extension/actions/runs/45076732937.
 <!-- extension-publication:end -->
 
 Updated 2026-11-09. Self-hosted 0.9.2 published and verified; full tag browser suites remain in progress.

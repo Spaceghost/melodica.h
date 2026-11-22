@@ -46,6 +46,7 @@ export class Engine
 		# The current track came from a saved record: {cacheTried, url}.
 		self.restored = null
 		self.copyUrl = null
+		self.skipped = null
 		self.copyTask = null
 		self.copyToken = null
 		self.preparingSource = null
@@ -392,6 +393,8 @@ export class Engine
 			log("next failed: {e and e.message or e}")
 
 	def start song
+		skipped = null
+		state.undoUntil = 0
 		unless song.ad
 			state.history.unshift(song)
 			state.history = state.history.slice(0, HISTORY_MAX)
@@ -417,6 +420,8 @@ export class Engine
 		updateMediaSession()
 
 	def stop
+		skipped = null
+		state.undoUntil = 0
 		saveLast()
 		generation += 1
 		audio.pause()
@@ -428,9 +433,20 @@ export class Engine
 	# Next is not available while `track.ad` is set.
 	def skip
 		return if state.track and state.track.ad
+		const previous = exportPlayback()
 		held = no
 		audio.pause()
 		await next()
+		if previous and state.track and !state.track.ad and previous.song.trackToken !== state.track.trackToken and state.station and previous.station.id === state.station.token
+			skipped = {previous,successor:state.track,generation}
+			set({undoUntil:Date.now()+8000})
+
+	def undoSkip
+		const entry = skipped
+		skipped = null
+		return unless entry and entry.generation === generation and state.undoUntil > Date.now() and state.track === entry.successor and !state.track.ad and !roomSnapshot
+		set({undoUntil:0})
+		await importPlayback({...entry.previous,queue:[state.track,...queue]})
 
 	# A track finished: a slot is registered with Pandora, then the next one plays.
 	def ended

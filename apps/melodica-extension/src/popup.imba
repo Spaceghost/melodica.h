@@ -33,6 +33,7 @@ tag Popup
 	prop roomClock = null
 
 	def mount
+		browser.windows.getCurrent().then(do(w) self.panelWindow = w.id) if browser.sidePanel
 		self.notice = do(msg, sender, sendResponse) onNotice(msg, sender, sendResponse)
 		browser.runtime.onMessage.addListener(self.notice)
 		refresh()
@@ -234,6 +235,27 @@ tag Popup
 		catch err
 			toast(String(err.message or err), 'error')
 
+	def takeTabPlayback
+		const tabs = await browser.tabs.query({url:'https://spacegho.st/melodica/*'})
+		for tab of tabs
+			try
+				const result = await browser.tabs.sendMessage(tab.id,{type:'take-tab-playback'})
+				return if result and result.ok
+			catch _
+				continue
+		toast('No Melodica tab has playback ready to move.', 'info')
+
+	def openSidebar
+		try
+			if browser.sidebarAction
+				await browser.sidebarAction.open()
+			elif browser.sidePanel and self.panelWindow != null
+				await browser.sidePanel.open({windowId:self.panelWindow})
+			else
+				toast('The browser side panel is unavailable.', 'error')
+		catch err
+			toast(err.message,'error')
+
 	def openPlayer
 		await send({type: 'open-player'})
 
@@ -336,6 +358,9 @@ tag Popup
 			<Top label="extension">
 				<nav.ext-nav>
 					<button#open-player.pill type="button" title="Open the full-size player tab (optional; the music plays without it)" @click=openPlayer> "Player"
+					if player and player.status !== 'playing' and !activeRoom
+						<button.pill type="button" @click=takeTabPlayback> "Move here"
+					<button#open-lyrics.pill type="button" @click=openSidebar> "Lyrics"
 					<button#open-rooms.pill type="button" title="Open the shared listening rooms" @click=openRooms> "Rooms"
 					<button#open-options.pill type="button" title="Options" @click=openOptions> "Options"
 			<main#app.app data-view=view data-status=(player and player.status or '')>
@@ -365,6 +390,8 @@ tag Popup
 						<div#popup-player.card.now.ext-compact>
 							<NowPlaying now=now compact=yes idleTitle=(activeRoom and activeRoom.role !== 'dj' ? 'Waiting for the DJ' : 'Pick a station')>
 							<Transport now=now allowTired=!activeRoom @control=control>
+							if player and player.undoUntil > Date.now() and !activeRoom
+								<button type="button" @click=control({detail:'undo-skip'})> "Undo skip"
 							<CopyListen song=(now and now.song)>
 							<p#player-status.ext-state> statusText
 							if activeRoom

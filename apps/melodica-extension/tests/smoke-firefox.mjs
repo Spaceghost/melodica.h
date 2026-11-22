@@ -165,13 +165,18 @@ const WEB_HOST = 'spacegho.st';
 const APP_PAGE = `<!doctype html><meta charset="utf-8"><title>melodica (smoke page)</title>
 <script>window.__ext=[];addEventListener('message',function(ev){var d=ev.data;if(ev.source===window&&d&&d.melodica===1&&['present','ready','state','result'].indexOf(d.type)>=0)window.__ext.push({type:d.type,id:d.id,ok:d.ok,error:d.error,rooms:d.rooms,state:d.state,at:performance.now()});});</script>
 <p>smoke page</p>`;
-const web = { server: null, proxy: null, port: 0, proxyPort: 0, dir: null };
+const web = { server: null, proxy: null, port: 0, proxyPort: 0, dir: null, callbackHost: null };
 async function startWeb() {
   web.dir = await mkdtemp(join(tmpdir(), 'melodica-web-'));
   const key = join(web.dir, 'key.pem'); const cert = join(web.dir, 'cert.pem');
   execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert,
     '-days', '2', '-subj', `/CN=${WEB_HOST}`, '-addext', `subjectAltName=DNS:${WEB_HOST}`], { stdio: 'ignore' });
   web.server = https.createServer({ key: await readFile(key), cert: await readFile(cert) }, (req, res) => {
+    if (web.callbackHost && req.headers.host === web.callbackHost && new URL(req.url,'https://localhost').pathname === '/oauth') {
+      res.writeHead(200, {'content-type':'text/plain','cache-control':'no-store'});
+      res.end('Return to the extension.');
+      return;
+    }
     if (!req.url.startsWith('/melodica/')) { res.writeHead(404); res.end(); return; }
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
     res.end(APP_PAGE);
@@ -182,7 +187,7 @@ async function startWeb() {
     client.once('data', (head) => {
       const m = /^CONNECT ([^:\s]+):(\d+) HTTP/.exec(String(head));
       if (!m) { client.end('HTTP/1.1 405 Method Not Allowed\r\n\r\n'); return; }
-      const [host, port] = m[1] === WEB_HOST ? ['127.0.0.1', web.port] : [m[1], Number(m[2])];
+      const [host, port] = (m[1] === WEB_HOST || m[1] === web.callbackHost) ? ['127.0.0.1', web.port] : [m[1], Number(m[2])];
       const up = net.connect(port, host, () => { client.write('HTTP/1.1 200 Connection Established\r\n\r\n'); up.pipe(client); client.pipe(up); });
       up.on('error', () => client.destroy());
       client.on('error', () => up.destroy());
@@ -451,26 +456,22 @@ try {
 
   // The optional spacegho.st sign-in: begun in the background, the authorize page
   // loaded in this tab, GitHub chosen there, and the redirect to the extension's
-  // https://<uuid>.extensions.allizom.org/oauth address (which does not resolve; the
+  // https://<uuid>.extensions.allizom.org/oauth address (served by the fixture; the
   // address is read from the tab) handed back.
   const begin = await ask(driver, { type: 'account-begin' });
   check(/^https:\/\/[a-z0-9-]+\.extensions\.allizom\.org\/oauth$/.test(begin.redirectUri), `Firefox redirect address (${begin.redirectUri})`);
-  const flowHandle = await driver.getWindowHandle();
+  web.callbackHost = new URL(begin.redirectUri).hostname;
   await driver.get(begin.url);
   await driver.wait(until.elementLocated(By.css('#sg-github')), 20_000);
   await driver.findElement(By.css('#sg-github')).click();
   await driver.wait(until.elementLocated(By.css('#gh-octo-ci')), 20_000);
-  // The redirect lands on Firefox's DNS error page; geckodriver reports that as an
-  // error whose text carries the address (its code is never printed).
-  let back = null;
-  try {
-    await driver.findElement(By.css('#gh-octo-ci')).click();
-  } catch (e) {
-    const m = /[?&]u=([^&\s]+)/.exec(String(e && e.message || ''));
-    if (!m) throw new Error('the GitHub step of the sign-in failed');
-    back = decodeURIComponent(m[1]);
-  }
-  if (!back) back = await waitFor(driver, async () => { const u = await driver.getCurrentUrl(); return u.startsWith(begin.redirectUri) ? u : null; }, 'redirect to the extension', 20_000);
+  // Firefox follows the test issuer's real redirect. Serve the reserved
+  // callback hostname locally, so an external DNS error page cannot hide it.
+  await driver.findElement(By.css('#gh-octo-ci')).click();
+  const back = await waitFor(driver, async () => {
+    const url = await driver.getCurrentUrl();
+    return url.startsWith(begin.redirectUri + '?') ? url : null;
+  }, 'redirect to the extension', 20_000);
   check(back.startsWith(begin.redirectUri + '?'), 'the sign-in came back to the extension address');
   await goExt(driver, `${ext}/popup.html`);
   const fin = await ask(driver, { type: 'account-finish', url: back });

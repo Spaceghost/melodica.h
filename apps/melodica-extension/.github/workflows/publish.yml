@@ -52,7 +52,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - run: node --test tests/release-publisher.test.mjs tests/release-sites.test.mjs
+      - run: node --test tests/release-publisher.test.mjs tests/release-sites.test.mjs scripts/release/registry.test.mjs
       - id: event
         run: node scripts/release/event.mjs
 
@@ -69,6 +69,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Retain publication evidence on the release runner
+        run: echo "MELODICA_RELEASE_OUTPUT=$RUNNER_TOOL_CACHE/melodica-publications/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
       - run: npm ci --prefix scripts/release --no-audit --no-fund
       - run: node scripts/release/node_modules/playwright/cli.js install chromium
       - name: Publish catalogs, feeds, evidence and snapshot
@@ -86,13 +88,14 @@ jobs:
           node --input-type=module - <<'JS'
           import {readFileSync,appendFileSync} from 'node:fs';
           try {
-            const r=JSON.parse(readFileSync('tests/artifacts/publication/report.json'));
+            const r=JSON.parse(readFileSync(process.env.MELODICA_RELEASE_OUTPUT+'/report.json'));
             appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Release ${r.tag}: **${r.status}**\n\n[Browser catalog](https://spacegho.st/extensions/#melodica-extension) · [Melodica install page](https://spacegho.st/melodica/extension/)\n\nPublication: ${r.publicationSeconds ?? 'unchanged'} seconds.\n`);
           } catch { appendFileSync(process.env.GITHUB_STEP_SUMMARY,'The publisher stopped before producing a completion report.\n'); }
           JS
       - uses: actions/upload-artifact@v4
         if: always()
+        continue-on-error: true
         with:
           name: release-publication-${{ github.run_id }}
-          path: tests/artifacts/publication/
+          path: ${{ env.MELODICA_RELEASE_OUTPUT }}/
           if-no-files-found: warn

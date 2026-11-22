@@ -16,18 +16,24 @@ on:
         type: string
         default: ''
 
+      browser_tag:
+        description: Cut a new signed browser release from master after all three browser checks
+        required: false
+        type: string
+        default: ''
+
 permissions:
   contents: write
 
 env:
-  NELUA_REPO: https://github.com/Spaceghost/nelua-lang
+  NELUA_REPO: https://github.com/edubart/nelua-lang
   NELUA_SHA: 7fe8132893f9f2bbce3a7b23247ad8bde2c216ed
   # Chrome extension id derived from CRX_PRIVATE_KEY (scripts/crx-id.mjs); the build fails if the secret derives another.
   CRX_ID: obbahflgghfemmpmjppeibnemibgblbd
 
 jobs:
   build:
-    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '"ubuntu-latest"') }}
+    runs-on: ${{ inputs.browser_tag && 'melodica-browser-release' || fromJSON(vars.LINUX_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 30
     env:
       # secrets are not allowed in a step's if:, so the check lives here.
@@ -50,7 +56,12 @@ jobs:
         run: |
           cp scripts/amo-recover.mjs "$RUNNER_TEMP/amo-recover.mjs"
           tag="${INPUT_RELEASE_TAG:-}"
-          if [[ -n "$tag" ]]; then
+          if [[ -n "$BROWSER_TAG" ]]; then
+            [[ -z "$tag" && "$GITHUB_REF" == refs/heads/master && "$BROWSER_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Use a new stable browser_tag on master"; exit 1; }
+            [[ "$HAS_AMO" == true ]] || { echo "::error::A browser release requires the Mozilla signer"; exit 1; }
+            if git show-ref --verify --quiet "refs/tags/$BROWSER_TAG"; then echo "::error::Release tag already exists"; exit 1; fi
+            tag="$BROWSER_TAG"
+          elif [[ -n "$tag" ]]; then
             [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::release_tag must match vMAJOR.MINOR.PATCH"; exit 1; }
             git fetch origin "refs/tags/$tag:refs/tags/$tag"
             git checkout --detach "$tag"
@@ -62,11 +73,13 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
         env:
           INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
-      - name: Toolchain (clang + lld for wasm32, Jack's Nelua fork)
+          BROWSER_TAG: ${{ inputs.browser_tag }}
+      - name: Toolchain (clang + lld for wasm32, pinned Nelua compiler)
         run: |
           for i in 1 2 3 4 5; do sudo apt-get update -qq && sudo apt-get install -y -qq lld clang && break; sleep 20; done
           clang --version | head -1; wasm-ld --version
-          git clone -q "$NELUA_REPO" "$RUNNER_TEMP/nelua-lang"
+          git init -q "$RUNNER_TEMP/nelua-lang"
+          git -C "$RUNNER_TEMP/nelua-lang" fetch -q --depth=1 "$NELUA_REPO" "$NELUA_SHA"
           git -C "$RUNNER_TEMP/nelua-lang" checkout -q "$NELUA_SHA"
           make -C "$RUNNER_TEMP/nelua-lang" -j"$(nproc)" >/dev/null
           "$RUNNER_TEMP/nelua-lang/nelua" --version
@@ -167,7 +180,7 @@ jobs:
             echo
             echo "**Access:** sign in with your Pandora account; access follows spacegho.st's allowlist. Optional spacegho.st sign-in links your listening and crew views. Installs and update feeds are served from spacegho.st/extensions (docs/STORES.md)."
             echo
-            echo "UI and extension scripts are written in [Imba](https://imba.io) and bundled to plain ES modules; the protocol core (Blowfish with Pandora's public partner keys, hex, syncTime, the JSON v5 request envelope) is freestanding [Nelua](https://github.com/Spaceghost/nelua-lang) compiled to WebAssembly with no imports. The extension talks to \`tuner.pandora.com\` directly through its host permission, so no relay sees the login, and it bridges the web client at https://spacegho.st/melodica/app/ so that page can skip its relay too."
+            echo "UI and extension scripts are written in [Imba](https://imba.io) and bundled to plain ES modules; the protocol core (Blowfish with Pandora's public partner keys, hex, syncTime, the JSON v5 request envelope) is freestanding [Nelua](https://github.com/edubart/nelua-lang) compiled to WebAssembly with no imports. The extension talks to \`tuner.pandora.com\` directly through its host permission, so no relay sees the login, and it bridges the web client at https://spacegho.st/melodica/app/ so that page can skip its relay too."
             echo
             echo "Install page with buttons, checksums and the CI proof: https://spacegho.st/melodica/extension/"
             echo
@@ -189,33 +202,44 @@ jobs:
           } > release/RELEASE_BODY.md
           ls -l release
       - uses: actions/upload-artifact@v4
+        if: ${{ !inputs.browser_tag }}
         with:
           name: melodica-extension-${{ steps.v.outputs.version }}
           path: release/
       - uses: actions/upload-artifact@v4
+        if: ${{ !inputs.browser_tag }}
         with:
           name: dist-${{ steps.v.outputs.version }}
           path: dist/
       # The Node bundles of the core wrapper and the Pandora client, for the no-account
       # probe against the real tuner.pandora.com in smoke-firefox (scripts/real-pandora-probe.mjs).
       - uses: actions/upload-artifact@v4
+        if: ${{ !inputs.browser_tag }}
         with:
           name: node-${{ steps.v.outputs.version }}
           path: |
             build/node/
             build/core/melodica_core.wasm
 
+      - name: Stage packages for this browser release
+        if: inputs.browser_tag
+        run: scripts/browser-release-files.sh save packages
+
   # Real-browser proof against melodica-tuner: options, popup login, stations,
   # playback in the player tab, and the bridge for the melodica-web page.
   smoke:
     needs: build
-    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '"ubuntu-latest"') }}
+    runs-on: ${{ inputs.browser_tag && 'melodica-browser-release' || fromJSON(vars.LINUX_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_tag || github.ref }}
+          ref: ${{ inputs.release_tag || github.sha }}
+      - name: Read packages for this browser release
+        if: inputs.browser_tag
+        run: scripts/browser-release-files.sh restore packages
       - uses: actions/download-artifact@v4
+        if: ${{ !inputs.browser_tag }}
         with:
           name: dist-${{ needs.build.outputs.version }}
           path: dist
@@ -247,8 +271,11 @@ jobs:
       - name: Show the report
         if: always()
         run: cat tests/artifacts/smoke-extension.json || true
+      - name: Stage smoke-extension for this browser release
+        if: inputs.browser_tag
+        run: scripts/browser-release-files.sh save smoke-extension
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && !inputs.browser_tag
         with:
           name: smoke-extension
           path: |
@@ -256,7 +283,7 @@ jobs:
             tests/artifacts/smoke-extension-*.png
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: failure() && !inputs.browser_tag
         with:
           name: smoke-extension-playwright
           path: tests/artifacts/playwright/
@@ -267,13 +294,17 @@ jobs:
   # lists every request Brave blocked; the job fails if one of them was ours.
   smoke-brave:
     needs: build
-    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '"ubuntu-latest"') }}
+    runs-on: ${{ inputs.browser_tag && 'melodica-browser-release' || fromJSON(vars.LINUX_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_tag || github.ref }}
+          ref: ${{ inputs.release_tag || github.sha }}
+      - name: Read packages for this browser release
+        if: inputs.browser_tag
+        run: scripts/browser-release-files.sh restore packages
       - uses: actions/download-artifact@v4
+        if: ${{ !inputs.browser_tag }}
         with:
           name: dist-${{ needs.build.outputs.version }}
           path: dist
@@ -311,8 +342,11 @@ jobs:
         run: |
           cat tests/artifacts/smoke-brave.json || true
           node -e 'const r=require("./tests/artifacts/smoke-brave.json"); if (r.ok!==true) { console.error("smoke-brave.json is not ok"); process.exit(1); }'
+      - name: Stage smoke-brave for this browser release
+        if: inputs.browser_tag
+        run: scripts/browser-release-files.sh save smoke-brave
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && !inputs.browser_tag
         with:
           name: smoke-brave
           path: |
@@ -320,7 +354,7 @@ jobs:
             tests/artifacts/smoke-brave-*.png
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: failure() && !inputs.browser_tag
         with:
           name: smoke-brave-playwright
           path: tests/artifacts/playwright/
@@ -334,17 +368,22 @@ jobs:
   # extension's popup. This is the only job that talks to Pandora itself.
   smoke-firefox:
     needs: build
-    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '"ubuntu-latest"') }}
+    runs-on: ${{ inputs.browser_tag && 'melodica-browser-release' || fromJSON(vars.LINUX_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_tag || github.ref }}
+          ref: ${{ inputs.release_tag || github.sha }}
+      - name: Read packages for this browser release
+        if: inputs.browser_tag
+        run: scripts/browser-release-files.sh restore packages
       - uses: actions/download-artifact@v4
+        if: ${{ !inputs.browser_tag }}
         with:
           name: dist-${{ needs.build.outputs.version }}
           path: dist
       - uses: actions/download-artifact@v4
+        if: ${{ !inputs.browser_tag }}
         with:
           name: node-${{ needs.build.outputs.version }}
           path: build
@@ -394,8 +433,11 @@ jobs:
         run: |
           cat tests/artifacts/smoke-firefox.json || true
           node -e 'const r=require("./tests/artifacts/smoke-firefox.json"); if (r.ok!==true) { console.error("smoke-firefox.json is not ok"); process.exit(1); }'
+      - name: Stage smoke-firefox for this browser release
+        if: inputs.browser_tag
+        run: scripts/browser-release-files.sh save smoke-firefox
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && !inputs.browser_tag
         with:
           name: smoke-firefox
           path: |
@@ -407,23 +449,51 @@ jobs:
   release:
     needs: [build, smoke, smoke-brave, smoke-firefox]
     if: needs.build.outputs.tag != ''
-    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '"ubuntu-latest"') }}
+    runs-on: ${{ inputs.browser_tag && 'melodica-browser-release' || fromJSON(vars.LINUX_RUNNER || '"ubuntu-latest"') }}
     steps:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - uses: actions/download-artifact@v4
+        if: ${{ !inputs.browser_tag }}
         with:
           name: melodica-extension-${{ needs.build.outputs.version }}
       - uses: actions/download-artifact@v4
+        if: ${{ !inputs.browser_tag }}
         with:
           name: smoke-extension
       - uses: actions/download-artifact@v4
+        if: ${{ !inputs.browser_tag }}
         with:
           name: smoke-brave
       - uses: actions/download-artifact@v4
+        if: ${{ !inputs.browser_tag }}
         with:
           name: smoke-firefox
+      - uses: actions/checkout@v4
+        if: inputs.browser_tag
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Read packages for this browser release
+        if: inputs.browser_tag
+        run: scripts/browser-release-files.sh restore packages
+      - name: Read smoke-extension for this browser release
+        if: inputs.browser_tag
+        run: scripts/browser-release-files.sh restore smoke-extension
+      - name: Read smoke-brave for this browser release
+        if: inputs.browser_tag
+        run: scripts/browser-release-files.sh restore smoke-brave
+      - name: Read smoke-firefox for this browser release
+        if: inputs.browser_tag
+        run: scripts/browser-release-files.sh restore smoke-firefox
+      - name: Assemble the signed packages and browser evidence
+        if: inputs.browser_tag
+        run: |
+          cp release/* .
+          cp tests/artifacts/smoke-*.json tests/artifacts/smoke-*.png .
+          test "$(cat SIGNED)" = amo
+          sha256sum -c SHA256SUMS
       - name: Check the three proofs and extend SHA256SUMS
         run: |
           for f in smoke-extension.json smoke-brave.json smoke-firefox.json; do
@@ -455,6 +525,7 @@ jobs:
           cat SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
+          target_commitish: ${{ github.sha }}
           tag_name: ${{ needs.build.outputs.tag }}
           name: melodica-extension ${{ needs.build.outputs.version }}
           body_path: RELEASE_BODY.md

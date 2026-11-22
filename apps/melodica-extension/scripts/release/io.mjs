@@ -46,6 +46,7 @@ export async function loadRegistry(cache, kind) {
   const prefix = kind === 'extensions' ? '' : 'site/';
   const show = path => run('git', ['show', `${sha}:${prefix}${path}`], { cwd: dir });
   const config = JSON.parse(show(kind === 'extensions' ? 'data/extensions.json' : 'data/projects.json'));
+  // Both catalogs track a standalone, precompiled classifier for publishing.
   const platformSource = show('src/platform.js');
   const module = join(cache, 'sources', `${repo}-${sha}.mjs`);
   await writeFile(module, platformSource);
