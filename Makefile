@@ -221,3 +221,9 @@ clean:
 
 include tests/reference/playlist.mk
 include mk/native-piano.mk
+
+.PHONY: test-leaks
+test-leaks: test-libpiano-sanitize
+	mkdir -p "$(BUILD)/sanitize"
+	$(CLANG) -std=c99 -O1 -g -fsanitize=address -fno-omit-frame-pointer -Iinclude tests/smoke.c impl/c/melodica.c -o "$(BUILD)/sanitize/melodica-smoke"
+	ASAN_OPTIONS=detect_leaks=1 "$(BUILD)/sanitize/melodica-smoke"

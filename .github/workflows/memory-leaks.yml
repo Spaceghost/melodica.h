@@ -1,0 +1,18 @@
+name: Memory leaks
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  leaks:
+    runs-on: [self-hosted, Linux, X64, fedora, ubuntu-noble]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: make test-leaks CLANG=gcc
